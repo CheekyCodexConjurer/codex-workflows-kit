@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"& (Join-Path $env:PLUGIN_ROOT 'scripts\\maintain-mcps.ps1') -Mode Audit -MaxAgeHours 24 -Hook\"",
+            "timeout": 20,
+            "statusMessage": "Checking MCP foundation"
+          }
+        ]
+      }
+    ]
+  }
+}
