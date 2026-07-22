@@ -1,0 +1,4 @@
+interface:
+  display_name: "Evidence First"
+  short_description: "Ground material claims before asserting or acting."
+  default_prompt: "Verify current, external, or high-impact claims before proceeding."

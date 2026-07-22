@@ -1,4 +1,4 @@
 interface:
   display_name: "Codex Workflows"
   short_description: "Compact workflow router for Matheus Codex modes."
-  default_prompt: "$codex-workflows mode=PLAN simple no-edits"
+  default_prompt: "$codex-workflows mode=PLAN.AUTO"

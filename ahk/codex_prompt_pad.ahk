@@ -33,29 +33,30 @@ ScrollLock:: {
 
 #HotIf GetKeyState("ScrollLock", "T")
 
-; Mapa escolhido
-Numpad0::PastePrompt("$codex-workflows mode=PLAN simple no-edits")
+Numpad1::PastePrompt("$codex-workflows mode=PLAN.AUTO")
 
-Numpad0 & Numpad1::PastePrompt("$codex-workflows mode=P.DEEP repo no-edits deep-plan parallel-ready")
+Numpad2::PastePrompt("$codex-workflows mode=DELIVER.AUTO")
 
-Numpad0 & Numpad2::PastePrompt("$codex-workflows mode=IMPL.PHASE approved-roadmap goal-managed phased parallel-safe")
+Numpad0 & Numpad3::PastePrompt("$codex-workflows mode=RESEARCH.DEEP")
 
-Numpad1::PastePrompt("$codex-workflows mode=IMPL approved smallest-safe-diff")
+Numpad3::PastePrompt("$codex-workflows mode=COMMIT")
 
-Numpad3::PastePrompt("$codex-workflows mode=COMMIT worktree")
+Numpad4::PastePrompt("$codex-workflows mode=BUG.INV")
 
-Numpad4::PastePrompt("$codex-workflows mode=BUG.INV no-edits evidence-first")
+Numpad5::PastePrompt("$codex-workflows mode=BUG.FIX")
 
-Numpad5::PastePrompt("$codex-workflows mode=BUG.FIX approved regression-safe")
+Numpad6::PastePrompt("$codex-workflows mode=DEBUG")
 
-Numpad6::PastePrompt("$codex-workflows mode=DEBUG e2e root-cause-first")
+Numpad7::PastePrompt("$codex-workflows mode=REWORK")
 
-Numpad2::PastePrompt("$codex-workflows mode=REVIEW diff no-edits strict")
+Numpad8::PastePrompt("$codex-workflows mode=R.A.F.V")
 
-Numpad7::PastePrompt("$codex-workflows mode=REWORK plan no-edits code-judo")
+Numpad9::PastePrompt("$codex-workflows mode=TN.SKILL")
 
-Numpad8::PastePrompt("$codex-workflows mode=R.A.F.V repo fix-until-P2 no-commit")
+Numpad0 & Numpad7::PastePrompt("$audiobook-codex stage=MAP native-only source{PDF|EPUB} library-root{E:\Pessoal\e-books} output{book-map.json|assets-manifest.json} visual-fallback{pdf|computer} swarm{bounded}")
 
-Numpad9::PastePrompt("$codex-workflows mode=TN.SKILL repo no-edits full-pass")
+Numpad0 & Numpad8::PastePrompt("$audiobook-codex stage=TRANSCRIBE native-only input{book-map.json|assets-manifest.json} output{text/source|epub-manifest.json} fidelity=strict ledger=required epub-profile{antique-paper}")
+
+Numpad0 & Numpad9::PastePrompt("$audiobook-codex stage=RENDER native-only input{text/source|epub-manifest.json} output{text/locutor|audio|epub|publish-root} tts{chatterbox-pt-br} voice-profile{feminina-v1} locutor{line-delimited-v1|max=320} language=pt-BR epub-profile{antique-paper} epub-images{original|approved-restored} restoration=review-required")
 
 #HotIf
