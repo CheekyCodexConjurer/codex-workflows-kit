@@ -70,3 +70,9 @@ Sequencing:
   broad work triggers `replan-gate`.
 - Finish code-changing work with `quality-delta`
   `{prevented,new-debt-fixed,paydown,deferred,reason}`.
+
+## Prevenção de Loops Infinitos & Debug Ledger
+
+1. Antes de autorizar uma nova tentativa de correção de bug que já falhou 1 vez, force a verificação do arquivo `.scratchpad/debug_ledger.md`.
+2. O agente deve registrar a tentativa em formato tabular: `[Tentativa #N] | Causa Assumida | Hash/Sintaxe do Patch | Erro Obtido`.
+3. É estritamente PROIBIDO repetir tentativas de solução com assinaturas sintaticamente idênticas ou similares às já registradas no ledger.

@@ -9,6 +9,8 @@ $ahkSource = Join-Path $repo 'ahk\codex_prompt_pad.ahk'
 $maintenanceSource = Join-Path $repo 'plugins\mcp-foundation\scripts\maintain-mcps.ps1'
 
 $skillsDest = 'C:\Users\mathe\.agents\skills'
+$antigravitySkillsDest1 = 'C:\Users\mathe\.gemini\antigravity\skills'
+$antigravitySkillsDest2 = 'C:\Users\mathe\.gemini\config\skills'
 $agentsDest = 'C:\Users\mathe\.codex\agents'
 $agentsMdDest = 'C:\Users\mathe\.codex\AGENTS.md'
 $ahkDest = 'C:\Users\mathe\Documents\Codex\2026-07-01\pod\outputs\codex_prompt_pad.ahk'
@@ -45,15 +47,16 @@ function Install-AgentEffortVariants {
     }
 }
 
-New-Item -ItemType Directory -Force $skillsDest, $agentsDest, (Split-Path -Parent $ahkDest), (Split-Path -Parent $maintenanceDest) | Out-Null
+New-Item -ItemType Directory -Force $skillsDest, $antigravitySkillsDest1, $antigravitySkillsDest2, $agentsDest, (Split-Path -Parent $ahkDest), (Split-Path -Parent $maintenanceDest) | Out-Null
 
 Get-ChildItem -Directory $skillsSource | ForEach-Object {
-    $skillDest = Join-Path $skillsDest $_.Name
-    if (Test-Path $skillDest) {
-        Remove-Item -Recurse -Force $skillDest
+    foreach ($targetBase in @($skillsDest, $antigravitySkillsDest1, $antigravitySkillsDest2)) {
+        $targetPath = Join-Path $targetBase $_.Name
+        if (Test-Path $targetPath) {
+            Remove-Item -Recurse -Force $targetPath
+        }
+        Copy-Item -Recurse -Force $_.FullName $targetPath
     }
-
-    Copy-Item -Recurse -Force $_.FullName $skillDest
 }
 
 Copy-Item -Force (Join-Path $agentsSource '*.toml') $agentsDest

@@ -1,11 +1,11 @@
 ---
 name: codex-workflows
-description: Matheus compact Codex workflow router for AHK shortcuts and prompts using $codex-workflows, compact aliases, PLAN.AUTO, PLAN, P.DEEP, RESEARCH.DEEP, earned-rework, passive TN quality ratchet, IMPL.AUTO, IMPL, IMPL.PHASE, DELIVER.AUTO implementation-wave and review-after-freeze, REVIEW, COMMIT intelligent commit series/push, BUG.INV, BUG.FIX, DEBUG feature bug loop, REWORK, R.A.F.V, TN.SKILL, size-scan, refactor-sizing-plan, CodeGraph, subagents, phase graphs, claim maps, and strict code-quality workflows.
+description: Matheus compact Codex and Antigravity workflow router for AHK shortcuts and prompts using $codex-workflows or $antigravity-workflows, compact aliases, PLAN.AUTO, PLAN, P.DEEP, RESEARCH.DEEP, earned-rework, passive TN quality ratchet, IMPL.AUTO, IMPL, IMPL.PHASE, DELIVER.AUTO implementation-wave and review-after-freeze, REVIEW, COMMIT intelligent commit series/push, BUG.INV, BUG.FIX, DEBUG feature bug loop, REWORK, R.A.F.V, TN.SKILL, size-scan, refactor-sizing-plan, CodeGraph, subagents, phase graphs, claim maps, and strict code-quality workflows.
 ---
 
-# Codex Workflows
+# Codex & Antigravity Workflows
 
-Use this skill when a prompt invokes `$codex-workflows` or uses Matheus compact workflow syntax.
+Use this skill when a prompt invokes `$codex-workflows`, `$antigravity-workflows`, or uses Matheus compact workflow syntax in Codex or Google Antigravity environments.
 
 Load references by need:
 

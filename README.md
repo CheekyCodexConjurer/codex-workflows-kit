@@ -96,23 +96,42 @@ exportador ou serviço externo sem escopo explícito.
 
 ## Atalhos
 
-Os atalhos `$codex-workflows` selecionam apenas o modo. O contrato completo de
+Os atalhos `$codex-workflows` e `$antigravity-workflows` selecionam apenas o modo. O contrato completo de
 cada modo vive na skill, em `references/mode-matrix.md`, no quality ratchet e
 na referência de observabilidade quando aplicável;
 mudanças de comportamento não exigem alterar o AHK.
 
 ```text
-NUM1   $codex-workflows mode=PLAN.AUTO
-NUM2   $codex-workflows mode=DELIVER.AUTO
-NUM0+3 $codex-workflows mode=RESEARCH.DEEP
-NUM3   $codex-workflows mode=COMMIT
-NUM4   $codex-workflows mode=BUG.INV
-NUM5   $codex-workflows mode=BUG.FIX
-NUM6   $codex-workflows mode=DEBUG
-NUM7   $codex-workflows mode=REWORK
-NUM8   $codex-workflows mode=R.A.F.V
-NUM9   $codex-workflows mode=TN.SKILL
-NUM0+7 $audiobook-codex stage=MAP
-NUM0+8 $audiobook-codex stage=TRANSCRIBE
-NUM0+9 $audiobook-codex stage=RENDER
+NUM1         $antigravity-workflows mode=PLAN.AUTO
+NUM2         $antigravity-workflows mode=DELIVER.AUTO
+NUM3         $antigravity-workflows mode=COMMIT
+NUM4         $antigravity-workflows mode=BUG.INV
+NUM5         $antigravity-workflows mode=BUG.FIX
+NUM6         $antigravity-workflows mode=DEBUG
+NUM7         $antigravity-workflows mode=REWORK
+NUM8         $antigravity-workflows mode=R.A.F.V
+NUM9         $antigravity-workflows mode=TN.SKILL
+NUM*         $antigravity-workflows mode=RESEARCH.DEEP
+
+NUM0+1       $codex-workflows mode=PLAN.AUTO
+NUM0+2       $codex-workflows mode=DELIVER.AUTO
+NUM0+3       $codex-workflows mode=COMMIT
+NUM0+4       $codex-workflows mode=BUG.INV
+NUM0+5       $codex-workflows mode=BUG.FIX
+NUM0+6       $codex-workflows mode=DEBUG
+NUM0+7       $codex-workflows mode=REWORK
+NUM0+8       $codex-workflows mode=R.A.F.V
+NUM0+9       $codex-workflows mode=TN.SKILL
+NUM0+*       $codex-workflows mode=RESEARCH.DEEP
+
+Alt+NUM1     /goal
+Alt+NUM2     /grill-me
+Alt+NUM3     /browser
+Alt+NUM4     /schedule
+Alt+NUM5     /teamwork-preview
+Alt+NUM6     /learn
+
+Ctrl+NUM7     $audiobook-codex stage=MAP
+Ctrl+NUM8     $audiobook-codex stage=TRANSCRIBE
+Ctrl+NUM9     $audiobook-codex stage=RENDER
 ```

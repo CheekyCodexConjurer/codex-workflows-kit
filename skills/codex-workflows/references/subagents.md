@@ -25,9 +25,9 @@ Lifecycle:
 
 Models:
 
-- `subA-model`: every custom profile uses 5.6 Sol. The custom-role spawn itself still omits `model` and `reasoning_effort`.
-- `subA-effort`: select the unsuffixed role for `medium`, or `<role>-{low|high|xhigh|max}` for the effort warranted by the current task.
-- `subA-worker-model`: apply the same 5.6 Sol effort selection to writable claim-mapped workers; select `max` only for a material, explicit decision gate.
+- `subA-model`: every custom profile uses 5.4 Mini. The custom-role spawn itself still omits `model` and `reasoning_effort`.
+- `subA-effort`: the unsuffixed role is pinned to the installation default, GPT-5.4 Mini with `xhigh`; use `<role>-{low|high|max}` only for an explicit effort override.
+- `subA-worker-model`: apply the same 5.4 Mini effort selection to writable claim-mapped workers; select `max` only for a material, explicit decision gate.
 
 Roles:
 

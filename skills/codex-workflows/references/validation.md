@@ -22,6 +22,7 @@ Check strategy:
 - Read-only validation/review agents must use their exact custom role. After a transient availability error, make one fresh same-role retry; never fall back to `default`, and keep a required gate blocked if that retry also fails.
 - If integrated validation passes and review has no actionable finding, finish without a redundant closure review.
 - After a nonempty deduplicated fix batch changes the diff, revalidate once and run a delta-focused closure review; repeat full review only after a material risk-surface change.
+- Validação Pré-Voo de Símbolos via AST: Antes da aplicação de um patch pelo worker, verificar se todas as novas chamadas de método, funções ou imports existem e correspondem à definição no banco SQLite (.codegraph/codegraph.db) via CodeGraph.
 - Final must include checks run, relevant failures, skipped checks with reason, files touched, and regression risk.
 
 AHK prompt pad:

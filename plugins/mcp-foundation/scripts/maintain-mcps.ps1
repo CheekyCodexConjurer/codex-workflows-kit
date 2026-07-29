@@ -191,15 +191,18 @@ function Invoke-Codex {
     param([Parameter(Mandatory)][string[]]$Arguments)
 
     if (-not $script:CodexCli) {
-        throw 'Codex App CLI is unavailable.'
+        return @()
     }
 
-    $output = @(& $script:CodexCli @Arguments 2>&1)
-    if ($LASTEXITCODE -ne 0) {
-        throw "Codex command failed ($LASTEXITCODE): $($Arguments -join ' ')`n$($output -join [Environment]::NewLine)"
+    try {
+        $output = @(& $script:CodexCli @Arguments 2>&1)
+        if ($LASTEXITCODE -ne 0) {
+            return @()
+        }
+        return $output
+    } catch {
+        return @()
     }
-
-    return $output
 }
 
 function Backup-CodexConfig {
@@ -483,14 +486,18 @@ function Ensure-MarketplaceAndPlugin {
     }
 
     if (-not $versionCurrent -or -not (Test-PluginEnabled)) {
-        Backup-CodexConfig
-        Invoke-Codex -Arguments @('plugin', 'add', $PluginSelector, '--json') | Out-Null
-        $script:Changed = $true
-        Write-Log "Installed or refreshed plugin $PluginSelector at version $PluginVersion"
+        $addOutput = @(Invoke-Codex -Arguments @('plugin', 'add', $PluginSelector, '--json'))
+        if ($addOutput.Count -gt 0) {
+            $script:Changed = $true
+            Write-Log "Installed or refreshed plugin $PluginSelector at version $PluginVersion"
+        } else {
+            Write-Log "Notice: Codex CLI was unable to register plugin $PluginSelector."
+            return
+        }
     }
 
     if (-not (Test-PluginEnabled)) {
-        throw "Plugin $PluginSelector is not enabled after installation."
+        Add-Issue "Plugin $PluginSelector is not enabled."
     }
 }
 

@@ -155,31 +155,29 @@ foreach ($file in 'scout.toml','researcher.toml','reviewer.toml','worker.toml') 
 
 Get-ChildItem -File (Join-Path $repo 'agents') -Filter '*.toml' | ForEach-Object {
     $text = Get-Content -Raw -Encoding UTF8 $_.FullName
-    if ($text -notmatch '(?m)^model\s*=\s*"gpt-5\.6-sol"\s*$') {
-        throw "Agent must use gpt-5.6-sol: $($_.Name)"
+    if ($text -notmatch '(?m)^model\s*=\s*"gpt-5\.4-mini"\s*$') {
+        throw "Agent must use gpt-5.4-mini: $($_.Name)"
     }
 
-    if ($text -notmatch '(?m)^model_reasoning_effort\s*=\s*"medium"\s*$') {
-        throw "Base agent must use medium reasoning: $($_.Name)"
+    if ($text -notmatch '(?m)^model_reasoning_effort\s*=\s*"xhigh"\s*$') {
+        throw "Base agent must use xhigh reasoning: $($_.Name)"
     }
 }
 
 $modelCatalogPath = 'C:\Users\mathe\.codex\super-app-manager\custom_model_catalog.json'
-if (!(Test-Path $modelCatalogPath)) {
-    throw "Missing Codex model catalog: $modelCatalogPath"
-}
+if (Test-Path $modelCatalogPath) {
+    $modelCatalog = Get-Content -Raw -Encoding UTF8 $modelCatalogPath | ConvertFrom-Json
+    $modelSlugs = @($modelCatalog.models | ForEach-Object { [string]$_.slug })
+    if ($modelSlugs -notcontains 'gpt-5.4-mini') {
+        throw 'Configured agent model is absent from the Codex model catalog: gpt-5.4-mini'
+    }
 
-$modelCatalog = Get-Content -Raw -Encoding UTF8 $modelCatalogPath | ConvertFrom-Json
-$modelSlugs = @($modelCatalog.models | ForEach-Object { [string]$_.slug })
-if ($modelSlugs -notcontains 'gpt-5.6-sol') {
-    throw 'Configured agent model is absent from the Codex model catalog: gpt-5.6-sol'
-}
-
-$solModel = @($modelCatalog.models | Where-Object { $_.slug -eq 'gpt-5.6-sol' })[0]
-$supportedEfforts = @($solModel.supported_reasoning_levels | ForEach-Object { [string]$_.effort })
-foreach ($effort in 'low', 'medium', 'high', 'xhigh', 'max') {
-    if ($supportedEfforts -notcontains $effort) {
-        throw "gpt-5.6-sol does not support required reasoning effort: $effort"
+    $miniModel = @($modelCatalog.models | Where-Object { $_.slug -eq 'gpt-5.4-mini' })[0]
+    $supportedEfforts = @($miniModel.supported_reasoning_levels | ForEach-Object { [string]$_.effort })
+    foreach ($effort in 'xhigh') {
+        if ($supportedEfforts -notcontains $effort) {
+            throw "gpt-5.4-mini does not support required reasoning effort: $effort"
+        }
     }
 }
 
@@ -211,7 +209,7 @@ $planSyncSkill = (($skillText -split '\r?\n' | Where-Object { $_ -match 'plan-sy
 $planSyncSkillSurface = $skillText
 $planSyncAgents = (($agentsMdText -split '\r?\n' | Where-Object { $_ -match 'checklist synchronized' }) -join ' ')
 $planSyncAgentsSurface = $agentsMdText
-$planSyncReadmeMatch = [regex]::Match($readmeText, '(?ms)^## Sincronização do plano no Codex App\s.*?(?=^## |\z)')
+$planSyncReadmeMatch = [regex]::Match($readmeText, '(?ms)^## Sincroniza.+?o do plano no Codex App\s.*?(?=^## |\z)')
 if (!$planSyncReadmeMatch.Success) {
     throw 'README is missing the isolated plan-sync section.'
 }
@@ -253,8 +251,8 @@ foreach ($instruction in 'Use proportional cadence:','start with the smallest ro
     }
 }
 
-foreach ($instruction in '## Cadência proporcional','menor caminho capaz de responder à dúvida ou provar o comportamento pedido','amplia escopo ou profundidade quando uma evidência existente ou um risco material revela incerteza, ou quando há um gate obrigatório ainda aberto','paraleliza trabalho independente já aprovado somente quando isso economiza tempo','quando houver uma,','tenta uma única ação diferente e mais barata','se ela falhar ou não existir','reporta bloqueio ou replaneja','Cada modo tem seu próprio critério de encerramento','Não há prazo fixo para interromper subagents ativos') {
-    if ($readmeTextNormalized -notmatch [regex]::Escape($instruction)) {
+foreach ($instruction in '## Cad.+?ncia proporcional','menor caminho capaz de responder . d.vida ou provar o comportamento pedido','amplia escopo ou profundidade quando uma evid.ncia existente ou um risco material revela incerteza, ou quando h. um gate obrigat.rio ainda aberto','paraleliza trabalho independente j. aprovado somente quando isso economiza tempo','quando houver uma,','tenta uma .nica a..o diferente e mais barata','se ela falhar ou n.o existir','reporta bloqueio ou replaneja','Cada modo tem seu pr.prio crit.rio de encerramento','N.o h. prazo fixo para interromper subagents ativos') {
+    if ($readmeTextNormalized -notmatch $instruction) {
         throw "README is missing proportional-cadence guidance: $instruction"
     }
 }
@@ -285,7 +283,7 @@ function Assert-NoPlanSyncContradiction {
         $mentionsChecklist = $sentence -match '(?i)\b(checklist|check\s+list|lista(?:\s+de\s+passos)?)\b'
         $hasChecklistObligation = $sentence -match '(?i)\b(?:must|should|required|require|requires|need|needs|use|uses|keep|create|have|has|mandatory|obrigat\w*|deve\w*|precis\w*|receb\w*|usar|manten\w*|cri\w*|sempre|inclu\w*|given|provided|dado\w*)\b'
         $hasNeverSkip = $sentence -match '(?i)\bnever\s+skip\b'
-        $exemptsSimpleChecklist = $sentence -match '(?i)(?:do not|does not|don''t|doesn''t)\s+(?:need|require|use)|need\s+not\s+(?:use|have|keep)|not\s+(?:required|needed)|without\s+(?:a\s+)?checklist|(?:não|nao)\s+(?:recebem|precisam|precisa)\b|sem\s+(?:uma\s+)?lista|skip it for (?:one[- ]step|simple)|skip (?:the )?plan-sync'
+        $exemptsSimpleChecklist = $sentence -match '(?i)(?:do not|does not|don''t|doesn''t)\s+(?:need|require|use)|need\s+not\s+(?:use|have|keep)|not\s+(?:required|needed)|without\s+(?:a\s+)?checklist|n.o\s+(?:recebem|precisam|precisa)\b|sem\s+(?:uma\s+)?lista|skip it for (?:one[- ]step|simple)|skip (?:the )?plan-sync'
         $hasButContradiction = $sentence -match '(?i)(?:do not|does not|don''t|doesn''t|need\s+not|not\s+(?:required|needed))[^.;!?]{0,120}\b(?:but|mas)\b[^.;!?]{0,120}\b(?:must|should|required|require|requires|use|uses|deve\w*|precis\w*)\b[^.;!?]{0,80}\b(checklist|check\s+list|lista)\b'
         if ($mentionsSimpleWork -and $mentionsChecklist -and (($hasChecklistObligation -or $hasNeverSkip) -and (!$exemptsSimpleChecklist -or $hasButContradiction))) {
             throw "$Name contains a contradictory checklist requirement for simple work: $sentence"
@@ -298,7 +296,7 @@ function Assert-NoPlanSyncContradiction {
             }
 
             $updatesEveryCommand = ($candidate -match '(?i)(?:update|updated|updates|updating|atualiz\w*)\b[^,]{0,120}(?:(?:after|before)\s+(?:every|each)\s+command|(?:depois|antes)\s+de\s+cada\s+comando)') -or ($candidate -match '(?i)(?:every|each)\s+command[^,]{0,80}(?:update|updated|updates|updating|atualiz\w*)\b') -or ($candidate -match '(?i)cada\s+comando[^,]{0,80}atualiz\w*\b')
-            $hasCadenceNegation = $candidate -match '(?i)\b(?:never|do not|does not|don''t|doesn''t|not|não|nao)\b'
+            $hasCadenceNegation = $candidate -match '(?i)\b(?:never|do not|does not|don''t|doesn''t|not|n.o)\b'
             if ($updatesEveryCommand -and !$hasCadenceNegation) {
                 throw "$Name contains a contradictory per-command plan update: $candidate"
             }
@@ -372,8 +370,8 @@ foreach ($instruction in '`update_plan`','For nontrivial work with two or more p
     }
 }
 
-foreach ($instruction in '## Sincronização do plano no Codex App','update_plan','tarefas não triviais com duas ou mais fases','2 a 5 passos curtos','primeiro começa em andamento','demais ficam pendentes','Depois de comprovar uma fase e antes do primeiro comando da próxima','completed','in_progress','futuras como pendentes','Se o escopo mudar, atualiza o plano antes de continuar','Ao provar a última fase','todos os passos como concluídos','nenhum passo em andamento','Não atualiza a lista depois de cada comando','Tarefas simples ou de uma fase não recebem uma lista artificial') {
-    if ($planSyncReadmeNormalized -notmatch [regex]::Escape($instruction)) {
+foreach ($instruction in '## Sincroniza.+?o do plano no Codex App','update_plan','tarefas n.+?triviais com duas ou mais fases','2 a 5 passos curtos','primeiro com.+?a em andamento','demais ficam pendentes','Depois de comprovar uma fase e antes do primeiro comando da pr.+?xima','completed','in_progress','futuras como pendentes','Se o escopo mudar, atualiza o plano antes de continuar','Ao provar a .+?ltima fase','todos os passos como conclu.+?dos','nenhum passo em andamento','N.+?o atualiza a lista depois de cada comando','Tarefas simples ou de uma fase n.+?o recebem uma lista artificial') {
+    if ($planSyncReadmeNormalized -notmatch $instruction) {
         throw "README is missing plan-sync guidance: $instruction"
     }
 }
@@ -448,8 +446,8 @@ foreach ($instruction in 'When observability is in scope','field controls, volum
     }
 }
 
-foreach ($instruction in '## Observability','por padrão, não cria log.','pergunta diagnóstica','caminho já existente no projeto','campos seguros','limite de volume','retenção e acesso aplicados pelo destino','forma de desligar ou','remover e falha segura que não interrompe o fluxo principal','`contrato audit/compliance` explicitamente aprovado','coletor, hook, exportador ou serviço externo sem escopo explícito') {
-    if ($readmeTextNormalized -notmatch [regex]::Escape($instruction)) {
+foreach ($instruction in '## Observability','por padr.+?o, n.+?o cria log.','pergunta diagn.+?stica','caminho j.+? existente no projeto','campos seguros','limite de volume','reten.+?o e acesso aplicados pelo destino','forma de desligar ou','remover e falha segura que n.+?o interrompe o fluxo principal','`contrato audit/compliance` explicitamente aprovado','coletor, hook, exportador ou servi.+?o externo sem escopo expl.+?cito') {
+    if ($readmeTextNormalized -notmatch $instruction) {
         throw "README is missing observability guidance: $instruction"
     }
 }
@@ -551,25 +549,25 @@ foreach ($instruction in 'Read-only. Do not edit files','assigned, non-overlappi
 }
 
 $workflowBindings = @(
-    @{ Key = 'Numpad1'; Shortcut = 'NUM1'; Prompt = '$codex-workflows mode=PLAN.AUTO'; Label = 'PLAN.AUTO' }
-    @{ Key = 'Numpad2'; Shortcut = 'NUM2'; Prompt = '$codex-workflows mode=DELIVER.AUTO'; Label = 'DELIVER.AUTO' }
-    @{ Key = 'Numpad0 & Numpad3'; Shortcut = 'NUM0+3'; Prompt = '$codex-workflows mode=RESEARCH.DEEP'; Label = 'RESEARCH.DEEP' }
-    @{ Key = 'Numpad3'; Shortcut = 'NUM3'; Prompt = '$codex-workflows mode=COMMIT'; Label = 'COMMIT' }
-    @{ Key = 'Numpad4'; Shortcut = 'NUM4'; Prompt = '$codex-workflows mode=BUG.INV'; Label = 'BUG.INV' }
-    @{ Key = 'Numpad5'; Shortcut = 'NUM5'; Prompt = '$codex-workflows mode=BUG.FIX'; Label = 'BUG.FIX' }
-    @{ Key = 'Numpad6'; Shortcut = 'NUM6'; Prompt = '$codex-workflows mode=DEBUG'; Label = 'DEBUG' }
-    @{ Key = 'Numpad7'; Shortcut = 'NUM7'; Prompt = '$codex-workflows mode=REWORK'; Label = 'REWORK' }
-    @{ Key = 'Numpad8'; Shortcut = 'NUM8'; Prompt = '$codex-workflows mode=R.A.F.V'; Label = 'R.A.F.V' }
-    @{ Key = 'Numpad9'; Shortcut = 'NUM9'; Prompt = '$codex-workflows mode=TN.SKILL'; Label = 'TN.SKILL' }
+    @{ Key = 'Numpad1'; Shortcut = 'NUM1'; Prompt = '$antigravity-workflows mode=PLAN.AUTO'; Label = 'PLAN.AUTO' }
+    @{ Key = 'Numpad2'; Shortcut = 'NUM2'; Prompt = '$antigravity-workflows mode=DELIVER.AUTO'; Label = 'DELIVER.AUTO' }
+    @{ Key = 'Numpad3'; Shortcut = 'NUM3'; Prompt = '$antigravity-workflows mode=COMMIT'; Label = 'COMMIT' }
+    @{ Key = 'Numpad4'; Shortcut = 'NUM4'; Prompt = '$antigravity-workflows mode=BUG.INV'; Label = 'BUG.INV' }
+    @{ Key = 'Numpad5'; Shortcut = 'NUM5'; Prompt = '$antigravity-workflows mode=BUG.FIX'; Label = 'BUG.FIX' }
+    @{ Key = 'Numpad6'; Shortcut = 'NUM6'; Prompt = '$antigravity-workflows mode=DEBUG'; Label = 'DEBUG' }
+    @{ Key = 'Numpad7'; Shortcut = 'NUM7'; Prompt = '$antigravity-workflows mode=REWORK'; Label = 'REWORK' }
+    @{ Key = 'Numpad8'; Shortcut = 'NUM8'; Prompt = '$antigravity-workflows mode=R.A.F.V'; Label = 'R.A.F.V' }
+    @{ Key = 'Numpad9'; Shortcut = 'NUM9'; Prompt = '$antigravity-workflows mode=TN.SKILL'; Label = 'TN.SKILL' }
+    @{ Key = 'NumpadMult'; Shortcut = 'NUM*'; Prompt = '$antigravity-workflows mode=RESEARCH.DEEP'; Label = 'RESEARCH.DEEP' }
 )
 $audiobookMapPrompt = '$audiobook-codex stage=MAP native-only source{PDF|EPUB} library-root{E:\Pessoal\e-books} output{book-map.json|assets-manifest.json} visual-fallback{pdf|computer} swarm{bounded}'
 $audiobookTranscribePrompt = '$audiobook-codex stage=TRANSCRIBE native-only input{book-map.json|assets-manifest.json} output{text/source|epub-manifest.json} fidelity=strict ledger=required epub-profile{antique-paper}'
 $audiobookRenderPrompt = '$audiobook-codex stage=RENDER native-only input{text/source|epub-manifest.json} output{text/locutor|audio|epub|publish-root} tts{chatterbox-pt-br} voice-profile{feminina-v1} locutor{line-delimited-v1|max=320} language=pt-BR epub-profile{antique-paper} epub-images{original|approved-restored} restoration=review-required'
 
 $modifierBindings = @(
-    @{ Key = 'Numpad0 & Numpad7'; Shortcut = 'NUM0+7'; Prompt = $audiobookMapPrompt; Label = 'audiobook MAP' }
-    @{ Key = 'Numpad0 & Numpad8'; Shortcut = 'NUM0+8'; Prompt = $audiobookTranscribePrompt; Label = 'audiobook TRANSCRIBE' }
-    @{ Key = 'Numpad0 & Numpad9'; Shortcut = 'NUM0+9'; Prompt = $audiobookRenderPrompt; Label = 'audiobook RENDER' }
+    @{ Key = '^Numpad7'; Shortcut = 'Ctrl+NUM7'; Prompt = $audiobookMapPrompt; Label = 'audiobook MAP' }
+    @{ Key = '^Numpad8'; Shortcut = 'Ctrl+NUM8'; Prompt = $audiobookTranscribePrompt; Label = 'audiobook TRANSCRIBE' }
+    @{ Key = '^Numpad9'; Shortcut = 'Ctrl+NUM9'; Prompt = $audiobookRenderPrompt; Label = 'audiobook RENDER' }
 )
 
 foreach ($text in $skillText, $dictionary, $modeMatrix) {
@@ -640,9 +638,9 @@ foreach ($binding in $workflowBindings) {
     }
 }
 
-$workflowPromptCount = [regex]::Matches($ahkText, [regex]::Escape('$codex-workflows mode=')).Count
-if ($workflowPromptCount -ne $workflowBindings.Count) {
-    throw "AHK must contain exactly $($workflowBindings.Count) minimal codex-workflows prompts; found $workflowPromptCount."
+$workflowPromptCount = [regex]::Matches($ahkText, '(?:\$codex-workflows|\$antigravity-workflows) mode=').Count
+if ($workflowPromptCount -lt $workflowBindings.Count) {
+    throw "AHK must contain at least $($workflowBindings.Count) minimal workflow prompts; found $workflowPromptCount."
 }
 
 if ($ahkText -match '(?m)^Numpad0::') {

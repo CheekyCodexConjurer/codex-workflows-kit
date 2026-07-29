@@ -32,7 +32,7 @@ Subagents:
 - Spawn/message subagents in background, continue useful local non-overlap work, then join at decision/final/merge gate.
 - Required subagents must reply before decision/final. Timeout/slow/not-in-time is not failure; wait again unless user cancels.
 - Never close active/waiting/required subagents before integrating their final reply. Close only completed/idle unrelated stale ones.
-- Read-only subagents default to 5.6 Sol Medium with medium reasoning effort.
+- Subagents default to GPT-5.4 Mini with xhigh reasoning effort; explicit low/high/max variants remain opt-in.
 - Every read-only spawn must select the exact custom role `scout`, `reviewer`, or `researcher`; never use `default` or omit `agent_type` for read-only work.
 - Custom-role spawns must omit `fork_context`, `model`, and `reasoning_effort`; never combine `fork_context=true` with `agent_type`. Full-history forks inherit the parent role/model/effort and are not custom-role spawns.
 - On a transient launch, stream, or account-availability error, continue useful local work and make one fresh retry with the same explicit role; never fall back to `default` or inherit the parent model/effort. If that retry fails, an optional scout may be skipped with evidence, but any required read-only gate remains blocked.
@@ -54,5 +54,11 @@ CodeGraph:
 - If `.codegraph` is missing, skip CodeGraph; repository indexing is the user's decision.
 - If unavailable/stale/no hits, fall back to `rg` and targeted reads.
 - Do not update or manage CodeGraph processes during normal repo work; only debug stale/orphan MCP processes when CodeGraph itself is the task.
+
+Diretrizes de Proteção Cognitiva & SOTA:
+
+- Separação Rígida de Fases: Fase de Análise (scout, researcher) é estritamente read-only (Plan Mode estrito, sem edições ou geração de patches). Fase de Execução (worker, reviewer) realiza edições cirúrgicas e auditorias.
+- Hand-off Mínimo: Proibido repassar a história inteira de conversa entre agentes; passar apenas resumo estruturado e ponteiros de símbolos do `.codegraph`.
+- Ledger de Depuração: Qualquer falha de compilação ou teste com mais de 1 tentativa exige registro em `.scratchpad/debug_ledger.md` (Contendo: `[Tentativa #N] | Causa Assumida | Hash/Sintaxe do Patch | Erro Obtido`). É proibido repetir patches sintaticamente equivalentes aos já registrados no ledger.
 
 When receiving compact prompts: preserve order, treat syntax as operational, choose the smallest safe interpretation if ambiguous, and report files, validation, risks, and remaining work.

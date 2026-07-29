@@ -35,3 +35,9 @@ Default outputs:
 - Implementations: changes, files, validation, `quality-delta`, observability outcome when relevant, risks, and remaining work.
 - Deliveries: changes, acceptance/validation evidence, review/fix cycles, observability outcome when relevant, residual nonblocking suggestions, risks, and remaining work.
 - Reviews: findings first, ordered severity, evidence, impact, smallest fix.
+
+## Matriz de Permissões por Papéis
+
+- `Scout` / `Researcher`: Permissão APENAS para Read/Search/Graph-Query. Ferramentas de Write/Edit/Patch estão BLOQUEADAS (Plan Mode Estrito).
+- `Worker`: Permissão para Edit/Apply-Patch/Run-Tests com diffs cirúrgicos de no máximo 300 linhas de diff ou 4 arquivos por task.
+- `Reviewer`: Permissão para Inspect-Diff/Run-Linter/Approval-Signoff (sem edição de arquivos). Rejeita código preguiçoso e violações de Slice-Guard.
