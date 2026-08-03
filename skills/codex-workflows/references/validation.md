@@ -8,6 +8,23 @@ Check strategy:
 - For UI, verify console/network/click path/state flow/responsive/a11y when feasible.
 - For bug fixes, preserve failure signature and show before/after delta.
 - For phased work, validate and checkpoint each independent unit before continuing.
+- For the internal backend policy, validate the default
+  `internal_subagent_backend=opencode`, the explicit
+  `internal_subagent_backend=native` override, the default
+  `internal_subagent_transport=native_relay`, the native `relay` profile, the
+  configured `opencode_worker` MCP server, pinned `sub-agents-mcp@0.12.0`,
+  absolute `AGENTS_DIR`, `AGENT_TYPE=opencode`, model
+  `opencode-go/deepseek-v4-flash`, `AGENT_EFFORT=max`/OpenCode `--variant max`,
+  bounded timeout, Windows `PATH` resolution for `opencode.exe`,
+  `AGENT_PERMISSION=yolo`, and each OpenCode definition's effective
+  `edit: deny`, `bash: deny`, `task: allow`, and `external_directory: allow`.
+  Run a direct MCP probe from a native relay before delegating required work;
+  prove that the relay preserves the response and that the worktree is
+  unchanged. A selected but failed relay/OpenCode route must remain blocked; it
+  must not silently fall back to native or a direct main-chat MCP call. The
+  configured `codegraph` MCP may stay enabled when explicitly authorized, but
+  unreviewed external tools must not be inferred safe from the permission
+  profile alone.
 - For nontrivial work shown in the Codex checklist with two or more phases, verify `update_plan` transitions at phase boundaries: at the start, the first phase is `in_progress` and future phases are `pending`; before the first command of the next phase, the previous phase is proven and `completed`, exactly one next phase is `in_progress`, and future phases remain `pending`; after the last phase is proven, every phase is `completed` and none is `in_progress`; scope changes update the checklist before work continues, and routine commands do not trigger updates. One-step or simple work does not need a checklist.
 - For approved temporary or durable instrumentation, validate the exact question it answers, canonical logger path, field allowlist/redaction, volume cap or sampling, sink-enforced retention and access, disable/removal path, and `failure-behavior`: fail-open by default, with fail-closed only under an explicitly approved audit/compliance contract, so a logging failure does not break the primary flow.
 - Do not accept a retention promise written only in source text; identify the real sink, rotation, cleanup, or lifecycle mechanism.

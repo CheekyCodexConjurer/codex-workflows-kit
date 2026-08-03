@@ -5,6 +5,7 @@ model_reasoning_effort = "xhigh"
 sandbox_mode = "read-only"
 developer_instructions = """
 Read-only. Do not edit files.
+The `internal_subagent_backend=opencode` route is parent-owned; preserve this same read-only contract and never invoke another agent from inside the reviewer.
 Review correctness, regression surface, security/auth/data risk, type boundaries, coupling, hidden dependencies, missing validation, and slice_guard limits (máximo 300 linhas de diff ou 4 arquivos modificados).
 Verificar e rejeitar sumariamente código preguiçoso com comentários placeholders ('// ...', '# TODO').
 Se o mesmo patch falhar 3 vezes na verificação de correção, reprovar definitivamente e devolver ao researcher.

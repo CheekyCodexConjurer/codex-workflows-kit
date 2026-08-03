@@ -13,6 +13,7 @@ $mcpManifestPath = Join-Path $mcpPluginRoot '.mcp.json'
 $mcpHookPath = Join-Path $mcpPluginRoot 'hooks\hooks.json'
 $mcpMaintenancePath = Join-Path $mcpPluginRoot 'scripts\maintain-mcps.ps1'
 $ahk = Join-Path $repo 'ahk\codex_prompt_pad.ahk'
+$opencodeAgentsRoot = Join-Path $repo 'agents\opencode'
 $ahkExe = 'E:\Programs\AHK\v2\AutoHotkey64.exe'
 
 $skillText = Get-Content -Raw -Encoding UTF8 $skill
@@ -138,19 +139,39 @@ if ($parseErrors.Count -gt 0) {
     throw "Invalid MCP maintenance PowerShell: $($parseErrors.Message -join '; ')"
 }
 
-foreach ($file in 'commit.md','dictionary.md','mode-matrix.md','observability.md','quality-ratchet.md','research.md','subagents.md','validation.md') {
+foreach ($file in 'backend-policy.md','commit.md','dictionary.md','mode-matrix.md','observability.md','quality-ratchet.md','research.md','subagents.md','validation.md') {
     $path = Join-Path $repo "skills\codex-workflows\references\$file"
     if (!(Test-Path $path)) {
         throw "Missing reference: $file"
     }
 }
 
-foreach ($file in 'scout.toml','researcher.toml','reviewer.toml','worker.toml') {
+foreach ($file in 'relay.toml','scout.toml','researcher.toml','reviewer.toml','worker.toml') {
     $path = Join-Path $repo "agents\$file"
     $text = Get-Content -Raw -Encoding UTF8 $path
     if ($text -notmatch 'name\s*=' -or $text -notmatch 'developer_instructions\s*=') {
         throw "Invalid agent profile: $file"
     }
+}
+
+$opencodeAgentFiles = @('scout.md', 'researcher.md', 'reviewer.md')
+foreach ($file in $opencodeAgentFiles) {
+    $path = Join-Path $opencodeAgentsRoot $file
+    if (!(Test-Path $path)) {
+        throw "Missing OpenCode agent definition: $file"
+    }
+
+    $text = Get-Content -Raw -Encoding UTF8 $path
+    foreach ($fragment in 'mode: subagent', 'edit: deny', 'bash: deny', 'task: allow', 'external_directory: allow', 'question: deny', 'skill: deny', 'todowrite: deny', 'lsp: deny') {
+        if ($text -notmatch [regex]::Escape($fragment)) {
+            throw "OpenCode agent $file is missing nested-read-only guardrail: $fragment"
+        }
+    }
+}
+
+$unexpectedOpenCodeAgents = @(Get-ChildItem -File $opencodeAgentsRoot -Filter '*.md' | Where-Object { $opencodeAgentFiles -notcontains $_.Name })
+if ($unexpectedOpenCodeAgents.Count -gt 0) {
+    throw "Unexpected OpenCode agent definitions: $($unexpectedOpenCodeAgents.Name -join ', ')"
 }
 
 Get-ChildItem -File (Join-Path $repo 'agents') -Filter '*.toml' | ForEach-Object {
@@ -188,23 +209,34 @@ foreach ($fragment in '$agentEfforts = @(''low'', ''high'', ''xhigh'', ''max'')'
     }
 }
 
+foreach ($fragment in 'opencodeAgentsSource', 'opencodeAgentsDest', 'opencode-agents', 'Copy-Item -Force (Join-Path $opencodeAgentsSource') {
+    if ($installerText -notmatch [regex]::Escape($fragment)) {
+        throw "Agent installer is missing OpenCode agent synchronization: $fragment"
+    }
+}
+
 $dictionary = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'skills\codex-workflows\references\dictionary.md')
 $modeMatrix = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'skills\codex-workflows\references\mode-matrix.md')
+$modeMatrixNormalized = $modeMatrix -replace '\s+', ' '
 $qualityRatchet = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'skills\codex-workflows\references\quality-ratchet.md')
 $qualityRatchetNormalized = $qualityRatchet -replace '\s+', ' '
 $observability = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'skills/codex-workflows/references/observability.md')
 $observabilityNormalized = $observability -replace '\s+', ' '
+$backendPolicy = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'skills/codex-workflows/references/backend-policy.md')
 $validationReference = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'skills/codex-workflows/references/validation.md')
 $subagents = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'skills\codex-workflows\references\subagents.md')
 $commitReference = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'skills\codex-workflows\references\commit.md')
 $research = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'skills\codex-workflows\references\research.md')
+$scout = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'agents\scout.toml')
 $researcher = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'agents\researcher.toml')
+$relay = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'agents\relay.toml')
 $worker = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'agents/worker.toml')
 $reviewer = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'agents/reviewer.toml')
 $workflowSkillInterfaceText = Get-Content -Raw -Encoding UTF8 $workflowSkillInterface
 $ahkText = Get-Content -Raw -Encoding UTF8 $ahk
 $readmeText = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'README.md')
 $readmeTextNormalized = $readmeText -replace '\s+', ' '
+$opencodeNativeProfiles = @($relay, $scout, $researcher, $reviewer, $worker)
 $planSyncSkill = (($skillText -split '\r?\n' | Where-Object { $_ -match 'plan-sync' }) -join ' ')
 $planSyncSkillSurface = $skillText
 $planSyncAgents = (($agentsMdText -split '\r?\n' | Where-Object { $_ -match 'checklist synchronized' }) -join ' ')
@@ -370,6 +402,81 @@ foreach ($instruction in '`update_plan`','For nontrivial work with two or more p
     }
 }
 
+foreach ($surface in @(
+    @{ Name = 'codex-workflows skill'; Text = $skillText }
+    @{ Name = 'dictionary'; Text = $dictionary }
+    @{ Name = 'mode matrix'; Text = $modeMatrix }
+    @{ Name = 'subagents reference'; Text = $subagents }
+    @{ Name = 'validation reference'; Text = $validationReference }
+    @{ Name = 'AGENTS.md'; Text = $agentsMdText }
+    @{ Name = 'README'; Text = $readmeText }
+)) {
+    if ($surface.Text -notmatch [regex]::Escape('internal_subagent_backend=opencode')) {
+        throw "$($surface.Name) is missing the internal OpenCode backend policy."
+    }
+}
+
+foreach ($surface in @(
+    @{ Name = 'codex-workflows skill'; Text = $skillText }
+    @{ Name = 'backend policy'; Text = $backendPolicy }
+    @{ Name = 'subagents reference'; Text = $subagents }
+    @{ Name = 'AGENTS.md'; Text = $agentsMdText }
+)) {
+    foreach ($instruction in 'multi_agent_v1__spawn_agent','agent_type=relay','{target_agent,cwd,task}') {
+        if ($surface.Text -notmatch [regex]::Escape($instruction)) {
+            throw "$($surface.Name) is missing the native relay spawn contract: $instruction"
+        }
+    }
+}
+
+foreach ($instruction in 'internal_subagent_backend=opencode','internal_subagent_backend=native','internal_subagent_transport=native_relay','opencode_worker','opencode-go/deepseek-v4-flash','AGENT_PERMISSION=yolo','task','external_directory','read-only','blocked','native','do not silently fall back') {
+    if ($subagents -notmatch [regex]::Escape($instruction)) {
+        throw "Subagents reference is missing internal-backend contract: $instruction"
+    }
+}
+
+foreach ($instruction in 'internal_subagent_backend=opencode','internal_subagent_backend=native','internal_subagent_transport=native_relay','native `relay`','opencode_worker','opencode-go/deepseek-v4-flash','variant=max','effective no-edit','task','external_directory','do not silently fall back') {
+    if ($modeMatrixNormalized -notmatch [regex]::Escape($instruction)) {
+        throw "Mode matrix is missing internal-backend contract: $instruction"
+    }
+}
+
+foreach ($instruction in 'internal_subagent_backend=opencode','internal_subagent_backend=native','internal_subagent_transport=native_relay','agents/relay.toml','not part of the user-facing compact syntax','Native workers remain','AGENT_PERMISSION=yolo','task','external_directory','edit','bash','preserve the required gate as blocked','sub-agent=opencode') {
+    if ($backendPolicy -notmatch [regex]::Escape($instruction)) {
+        throw "Backend policy is missing internal-route contract: $instruction"
+    }
+}
+
+foreach ($instruction in 'opencode_worker','native','relay','AGENT_TYPE = "opencode"','AGENT_MODEL = "opencode-go/deepseek-v4-flash"','AGENT_EFFORT = "max"','AGENT_PERMISSION = "yolo"','sub-agents-mcp@0.12.0','AGENTS_DIR = "E:\\Repositories\\codex-workflows-prompt-pad\\agents\\opencode"','PATH = "C:\\Users\\mathe\\AppData\\Roaming\\npm\\node_modules\\opencode-ai\\bin','opencode run --model opencode-go/deepseek-v4-flash --variant max "Responda somente OK"') {
+    if ($readmeText -notmatch [regex]::Escape($instruction)) {
+        throw "README is missing OpenCode activation evidence: $instruction"
+    }
+}
+
+$codexConfigPath = 'C:\Users\mathe\.codex\config.toml'
+if (Test-Path -LiteralPath $codexConfigPath) {
+    $codexConfigText = Get-Content -Raw -Encoding UTF8 $codexConfigPath
+    if ($codexConfigText -notmatch '(?m)^AGENT_PERMISSION\s*=\s*"yolo"\s*$') {
+        throw 'Configured opencode_worker must use AGENT_PERMISSION=yolo so task/external_directory can be delegated; agent frontmatter owns no-edit.'
+    }
+}
+
+foreach ($profile in $opencodeNativeProfiles) {
+    if ($profile -notmatch [regex]::Escape('internal_subagent_backend=opencode')) {
+        throw 'A native agent profile is missing the parent-owned OpenCode route guardrail.'
+    }
+}
+
+if ($relay -notmatch '(?m)^name\s*=\s*"relay"\s*$' -or $relay -notmatch '(?m)^sandbox_mode\s*=\s*"read-only"\s*$') {
+    throw 'Native relay profile must be named relay and use read-only sandbox.'
+}
+
+foreach ($instruction in 'mcp__opencode_worker__run_agent','RELAY_STATUS=success|blocked|error','RELAY_RESPONSE_BEGIN','never falls back') {
+    if ($relay -notmatch [regex]::Escape($instruction)) {
+        throw "Native relay profile is missing transport contract: $instruction"
+    }
+}
+
 foreach ($instruction in '## Sincroniza.+?o do plano no Codex App','update_plan','tarefas n.+?triviais com duas ou mais fases','2 a 5 passos curtos','primeiro com.+?a em andamento','demais ficam pendentes','Depois de comprovar uma fase e antes do primeiro comando da pr.+?xima','completed','in_progress','futuras como pendentes','Se o escopo mudar, atualiza o plano antes de continuar','Ao provar a .+?ltima fase','todos os passos como conclu.+?dos','nenhum passo em andamento','N.+?o atualiza a lista depois de cada comando','Tarefas simples ou de uma fase n.+?o recebem uma lista artificial') {
     if ($planSyncReadmeNormalized -notmatch $instruction) {
         throw "README is missing plan-sync guidance: $instruction"
@@ -382,8 +489,8 @@ foreach ($instruction in 'with two or more phases','at the start, the first phas
     }
 }
 
-foreach ($instruction in 'AHK launchers paste only `$codex-workflows mode=<MODE>`','canonical default execution contract') {
-    if ($modeMatrix -notmatch [regex]::Escape($instruction)) {
+foreach ($instruction in 'AHK launchers paste one of `$codex-workflows`, `$antigravity-workflows`, or `$opencode-workflows` with `mode=<MODE>`','canonical default execution contract') {
+    if ($modeMatrixNormalized -notmatch [regex]::Escape($instruction)) {
         throw "Mode matrix is missing the mode-only launcher contract: $instruction"
     }
 }
@@ -549,16 +656,16 @@ foreach ($instruction in 'Read-only. Do not edit files','assigned, non-overlappi
 }
 
 $workflowBindings = @(
-    @{ Key = 'Numpad1'; Shortcut = 'NUM1'; Prompt = '$antigravity-workflows mode=PLAN.AUTO'; Label = 'PLAN.AUTO' }
-    @{ Key = 'Numpad2'; Shortcut = 'NUM2'; Prompt = '$antigravity-workflows mode=DELIVER.AUTO'; Label = 'DELIVER.AUTO' }
-    @{ Key = 'Numpad3'; Shortcut = 'NUM3'; Prompt = '$antigravity-workflows mode=COMMIT'; Label = 'COMMIT' }
-    @{ Key = 'Numpad4'; Shortcut = 'NUM4'; Prompt = '$antigravity-workflows mode=BUG.INV'; Label = 'BUG.INV' }
-    @{ Key = 'Numpad5'; Shortcut = 'NUM5'; Prompt = '$antigravity-workflows mode=BUG.FIX'; Label = 'BUG.FIX' }
-    @{ Key = 'Numpad6'; Shortcut = 'NUM6'; Prompt = '$antigravity-workflows mode=DEBUG'; Label = 'DEBUG' }
-    @{ Key = 'Numpad7'; Shortcut = 'NUM7'; Prompt = '$antigravity-workflows mode=REWORK'; Label = 'REWORK' }
-    @{ Key = 'Numpad8'; Shortcut = 'NUM8'; Prompt = '$antigravity-workflows mode=R.A.F.V'; Label = 'R.A.F.V' }
-    @{ Key = 'Numpad9'; Shortcut = 'NUM9'; Prompt = '$antigravity-workflows mode=TN.SKILL'; Label = 'TN.SKILL' }
-    @{ Key = 'NumpadMult'; Shortcut = 'NUM*'; Prompt = '$antigravity-workflows mode=RESEARCH.DEEP'; Label = 'RESEARCH.DEEP' }
+    @{ Key = 'Numpad1'; Shortcut = 'NUM1'; Prompt = '$opencode-workflows mode=PLAN.AUTO'; Label = 'PLAN.AUTO' }
+    @{ Key = 'Numpad2'; Shortcut = 'NUM2'; Prompt = '$opencode-workflows mode=DELIVER.AUTO'; Label = 'DELIVER.AUTO' }
+    @{ Key = 'Numpad3'; Shortcut = 'NUM3'; Prompt = '$opencode-workflows mode=COMMIT'; Label = 'COMMIT' }
+    @{ Key = 'Numpad4'; Shortcut = 'NUM4'; Prompt = '$opencode-workflows mode=BUG.INV'; Label = 'BUG.INV' }
+    @{ Key = 'Numpad5'; Shortcut = 'NUM5'; Prompt = '$opencode-workflows mode=BUG.FIX'; Label = 'BUG.FIX' }
+    @{ Key = 'Numpad6'; Shortcut = 'NUM6'; Prompt = '$opencode-workflows mode=DEBUG'; Label = 'DEBUG' }
+    @{ Key = 'Numpad7'; Shortcut = 'NUM7'; Prompt = '$opencode-workflows mode=REWORK'; Label = 'REWORK' }
+    @{ Key = 'Numpad8'; Shortcut = 'NUM8'; Prompt = '$opencode-workflows mode=R.A.F.V'; Label = 'R.A.F.V' }
+    @{ Key = 'Numpad9'; Shortcut = 'NUM9'; Prompt = '$opencode-workflows mode=TN.SKILL'; Label = 'TN.SKILL' }
+    @{ Key = 'NumpadMult'; Shortcut = 'NUM*'; Prompt = '$opencode-workflows mode=RESEARCH.DEEP'; Label = 'RESEARCH.DEEP' }
 )
 $audiobookMapPrompt = '$audiobook-codex stage=MAP native-only source{PDF|EPUB} library-root{E:\Pessoal\e-books} output{book-map.json|assets-manifest.json} visual-fallback{pdf|computer} swarm{bounded}'
 $audiobookTranscribePrompt = '$audiobook-codex stage=TRANSCRIBE native-only input{book-map.json|assets-manifest.json} output{text/source|epub-manifest.json} fidelity=strict ledger=required epub-profile{antique-paper}'
@@ -638,7 +745,7 @@ foreach ($binding in $workflowBindings) {
     }
 }
 
-$workflowPromptCount = [regex]::Matches($ahkText, '(?:\$codex-workflows|\$antigravity-workflows) mode=').Count
+$workflowPromptCount = [regex]::Matches($ahkText, '(?:\$codex-workflows|\$antigravity-workflows|\$opencode-workflows) mode=').Count
 if ($workflowPromptCount -lt $workflowBindings.Count) {
     throw "AHK must contain at least $($workflowBindings.Count) minimal workflow prompts; found $workflowPromptCount."
 }

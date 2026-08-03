@@ -16,7 +16,7 @@ Lifecycle:
 - `subA-wait`: wait until replies arrive and integrate; tool timeout is polling noise, wait again unless cancelled.
 - `subA-life`: timeout/slow/not-in-time is not failure; never close active/waiting/required subA before final reply is integrated or explicit user cancel.
 - `subA-block`: if must-subA cannot return due tool/external failure, leave it open and report blocked; do not pretend gate passed.
-- `subA-role-lock`: every read-only spawn explicitly selects `scout`, `reviewer`, or `researcher`; never use `default` or omit the role for read-only work, because that inherits the parent model/effort.
+- `subA-role-lock`: every read-only spawn explicitly selects `scout`, `reviewer`, `researcher`, or the native transport role `relay`; never use `default` or omit the role for read-only work, because that inherits the parent model/effort.
 - `subA-custom-spawn`: custom-role spawns set only the exact `agent_type` plus their task input; omit `fork_context`, `model`, and `reasoning_effort`. Never combine `fork_context=true` with `agent_type`; full-history forks inherit the parent role/model/effort and are a separate operation.
 - `subA-retry`: on a transient launch, stream, or account-availability error, continue useful local work and make one fresh retry with the same exact role and the same valid custom-spawn shape; omit `fork_context`, `model`, and `reasoning_effort`, do not retry in a tight loop, and never fall back to `default`.
 - `subA-retry-block`: if the same-role retry fails, optional scouting may be skipped with evidence; any required read-only gate remains blocked and must be reported rather than bypassed.
@@ -36,6 +36,45 @@ Roles:
 - `subA?`: use if scope/risk/shared/multi-file/unclear and `subA-speed`; if used, `subA-bg/wait` applies.
 - `subA-gate`: use if high blast, unclear ownership, security/auth/data risk, multi-file/core, failed first validation, or clear wall-clock gain.
 - `subA-worker`: writable only with claim-map; edits direct; no revert others; no out-of-scope; final `{files,diff,val,risks}`.
+
+## Internal backend route
+
+- The private backend policy defaults to
+  `internal_subagent_backend=opencode`; users do not need to add a provider flag
+  to each prompt. An explicit maintenance change to
+  `internal_subagent_backend=native` restores the native route.
+- The default transport is `internal_subagent_transport=native_relay`: spawn the
+  native `relay` profile in background, pass `{target_agent,cwd,task}`, and join
+  the preserved MCP response only at the decision/final gate. Do not call the
+  OpenCode MCP directly from the main chat when the relay is available.
+- Use `multi_agent_v1__spawn_agent(agent_type=relay)` for this transport;
+  omit `fork_context`, `model`, and `reasoning_effort`, and put only
+  `{target_agent,cwd,task}` in the relay message.
+- The canonical MCP server name is `opencode_worker`, backed by the pinned
+  `sub-agents-mcp@0.12.0` package with `AGENT_TYPE=opencode`,
+  `AGENT_MODEL=opencode-go/deepseek-v4-flash`, `AGENT_EFFORT=max`,
+  `AGENT_PERMISSION=yolo` coarse launch profile, a bounded execution timeout,
+  and a Windows
+  `PATH` entry for the directory containing `opencode.exe`.
+- `AGENT_EFFORT` is forwarded to OpenCode as the provider-specific
+  `--variant`. Validate that `max` is accepted by the selected model before
+  treating the route as ready; do not degrade silently to another variant.
+- `sub-agents-mcp@0.8.0` is incompatible with OpenCode; official support began
+  at `0.11.0`, and `0.12.0` is the explicit stable pin for this route.
+- Use this route for any configured read-only OpenCode sidecar. All such agents
+  may use `task` and `external_directory`; their agent definitions must deny
+  `edit` and `bash`, while `question`, `skill`, `todowrite`, and `lsp` remain
+  denied by default. Native `worker` profiles own all writes, patches, tests,
+  and claim-map implementation. The parent owns routing and synthesis.
+- `AGENT_PERMISSION=yolo` is only the coarse package launch profile required to
+  remove the package's hardcoded `task`/`external_directory` denials. Effective
+  no-edit behavior comes from each OpenCode agent definition and is validated
+  before delegation. These permissions are not an OS-level sandbox; do not pass
+  secrets or rely on them to contain arbitrary child-process side effects. The
+  normal `codegraph` MCP is an explicitly authorized exception and may remain
+  available; review any other custom/MCP tool separately before enabling it.
+- If the requested MCP server, CLI, credentials, model, or variant is missing,
+  preserve the gate as blocked and report the exact preflight failure. Do not silently fall back or switch provider, model, effort, permission, or native/external route.
 
 Delivery loop:
 

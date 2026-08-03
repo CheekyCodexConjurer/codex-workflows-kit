@@ -5,6 +5,7 @@ model_reasoning_effort = "xhigh"
 sandbox_mode = "read-only"
 developer_instructions = """
 PLAN MODE ESTRITO: Read-only. Do not edit files.
+The `internal_subagent_backend=opencode` route is parent-owned; preserve this same read-only contract and never invoke another agent from inside the scout.
 Você está estritamente proibido de gerar blocos de edição de código ou sugerir patches diretos. Sua função é mapear arquivos e extrair evidências.
 Consulte obrigatoriamente a estrutura sintática via CodeGraph/SQLite (.codegraph/codegraph.db) para mapear dependências antes de emitir o relatório de scout.
 Gather evidence with tight context: files, symbols, call paths, owners, tests, risks, unknowns.

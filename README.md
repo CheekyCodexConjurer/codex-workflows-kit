@@ -14,7 +14,7 @@ Projeto local para versionar o fluxo de atalhos NUM do Codex:
 ```text
 skills/codex-workflows/   Codex skill instalavel em ~/.agents/skills
 skills/evidence-first/    Grounding e verificacao condicional, sem atalho
-agents/                   Perfis de subagents para ~/.codex/agents
+agents/                   Perfis nativos e definições OpenCode read-only
 codex/AGENTS.md           Instrucoes globais compactas
 plugins/mcp-foundation/   MCPs allowlisted, hook de auditoria e manutencao
 ahk/codex_prompt_pad.ahk  Prompt pad AutoHotkey
@@ -48,6 +48,80 @@ existente sem encerrar processos MCP ativos. O hook de inicio faz somente uma
 auditoria local com TTL de 24 horas. O Codex exige revisao unica do hook em
 `/hooks`, e o Context7 remoto exige autenticacao unica em
 **Settings > MCP servers > Authenticate**.
+
+## Roteamento interno dos sub-agents
+
+O backend interno padrão é `internal_subagent_backend=opencode` com transporte
+`internal_subagent_transport=native_relay`, definido em
+`skills/codex-workflows/references/backend-policy.md`. Você não precisa incluir
+uma flag no prompt. Quando o modo precisar de um sidecar read-only, o chat
+principal abre o perfil nativo `relay` em background; ele chama o MCP
+`opencode_worker`, preserva a resposta e a repassa como resposta de sub-agent
+nativo. O chat principal continua livre até o gate de decisão/final.
+
+Todos os sub-agents OpenCode configurados podem chamar outros sub-agents e ler
+diretórios externos. A escrita continua bloqueada por `edit: deny` e
+`bash: deny` nos perfis OpenCode. Workers nativos continuam responsáveis por
+patches, testes e qualquer escrita.
+
+Para voltar ao backend nativo, peça explicitamente a um agente para alterar a
+política para `internal_subagent_backend=native`. Se o OpenCode estiver
+selecionado mas indisponível, o workflow reporta bloqueio; não há fallback
+silencioso.
+
+O diretório canônico das definições OpenCode neste projeto é
+`E:\\Repositories\\codex-workflows-prompt-pad\\agents\\opencode`. O
+instalador também mantém uma cópia em `C:\Users\mathe\.codex\opencode-agents`.
+Registre manualmente o servidor em `C:\Users\mathe\.codex\config.toml`:
+
+```toml
+[mcp_servers.opencode_worker]
+command = "npx.cmd"
+args = ["-y", "sub-agents-mcp@0.12.0"]
+startup_timeout_sec = 30
+tool_timeout_sec = 600
+
+[mcp_servers.opencode_worker.env]
+AGENTS_DIR = "E:\\Repositories\\codex-workflows-prompt-pad\\agents\\opencode"
+AGENT_TYPE = "opencode"
+AGENT_MODEL = "opencode-go/deepseek-v4-flash"
+AGENT_EFFORT = "max"
+AGENT_PERMISSION = "yolo"
+EXECUTION_TIMEOUT_MS = "600000"
+SESSION_ENABLED = "false"
+PATH = "C:\\Users\\mathe\\AppData\\Roaming\\npm\\node_modules\\opencode-ai\\bin;C:\\Program Files\\nodejs;C:\\Users\\mathe\\AppData\\Roaming\\npm;C:\\Program Files\\Git\\cmd;C:\\Windows\\System32;C:\\Windows"
+```
+
+O pin `sub-agents-mcp@0.8.0` é incompatível com OpenCode; o suporte oficial
+começou em `0.11.0`, e esta integração usa `0.12.0`, que expõe o backend
+OpenCode, `AGENT_MODEL` e `AGENT_EFFORT`. O backend encaminha o modelo para
+`--model` e o esforço para `--variant`.
+No Windows, o `PATH` inclui o diretório que contém `opencode.exe`, porque o
+backend inicia o CLI com `spawn("opencode")`; sem esse diretório, o shell pode
+encontrar `opencode.cmd`, mas o processo filho ainda falha com `ENOENT`.
+
+O ID `opencode-go/deepseek-v4-flash` é a forma provider/model do OpenCode Go;
+`AGENT_EFFORT=max` chega ao OpenCode como `--variant max`. Antes do primeiro
+uso, confirme o binário, o modelo e a variante diretamente:
+
+```powershell
+opencode models
+opencode run --model opencode-go/deepseek-v4-flash --variant max "Responda somente OK"
+```
+
+O pacote usa `AGENT_PERMISSION=yolo` porque o nível `read-only` hard-coda a
+negação de `task` e `external_directory`. Isso não libera escrita: cada perfil
+OpenCode mantém `edit: deny` e `bash: deny`, e o validador rejeita definições
+que não contenham essas barreiras. `question`, `skill`, `todowrite` e LSP
+continuam negados. Essas permissões não são um sandbox de nível de sistema; não
+envie segredos. A configuração normal pode expor o MCP `codegraph`, que fica
+disponível por decisão explícita desta integração; qualquer outro MCP/custom
+tool com efeitos colaterais exige revisão separada. Após alterar
+o bloco MCP, reinicie ou reconecte o servidor no Codex.
+
+Referências primárias: [OpenCode CLI](https://dev.opencode.ai/docs/cli/),
+[OpenCode Go](https://dev.opencode.ai/docs/de/go/) e
+[sub-agents-mcp](https://github.com/shinpr/sub-agents-mcp).
 
 ## Quality ratchet
 
@@ -96,22 +170,22 @@ exportador ou serviço externo sem escopo explícito.
 
 ## Atalhos
 
-Os atalhos `$codex-workflows` e `$antigravity-workflows` selecionam apenas o modo. O contrato completo de
+Os atalhos `$codex-workflows`, `$antigravity-workflows` e `$opencode-workflows` selecionam apenas o modo. O contrato completo de
 cada modo vive na skill, em `references/mode-matrix.md`, no quality ratchet e
 na referência de observabilidade quando aplicável;
 mudanças de comportamento não exigem alterar o AHK.
 
 ```text
-NUM1         $antigravity-workflows mode=PLAN.AUTO
-NUM2         $antigravity-workflows mode=DELIVER.AUTO
-NUM3         $antigravity-workflows mode=COMMIT
-NUM4         $antigravity-workflows mode=BUG.INV
-NUM5         $antigravity-workflows mode=BUG.FIX
-NUM6         $antigravity-workflows mode=DEBUG
-NUM7         $antigravity-workflows mode=REWORK
-NUM8         $antigravity-workflows mode=R.A.F.V
-NUM9         $antigravity-workflows mode=TN.SKILL
-NUM*         $antigravity-workflows mode=RESEARCH.DEEP
+NUM1         $opencode-workflows mode=PLAN.AUTO
+NUM2         $opencode-workflows mode=DELIVER.AUTO
+NUM3         $opencode-workflows mode=COMMIT
+NUM4         $opencode-workflows mode=BUG.INV
+NUM5         $opencode-workflows mode=BUG.FIX
+NUM6         $opencode-workflows mode=DEBUG
+NUM7         $opencode-workflows mode=REWORK
+NUM8         $opencode-workflows mode=R.A.F.V
+NUM9         $opencode-workflows mode=TN.SKILL
+NUM*         $opencode-workflows mode=RESEARCH.DEEP
 
 NUM0+1       $codex-workflows mode=PLAN.AUTO
 NUM0+2       $codex-workflows mode=DELIVER.AUTO

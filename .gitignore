@@ -2,6 +2,7 @@
 *.tmp
 *.log
 *.local.*
+.scratchpad/
 .DS_Store
 Thumbs.db
 __pycache__/

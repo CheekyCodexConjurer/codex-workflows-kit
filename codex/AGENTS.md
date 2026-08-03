@@ -33,16 +33,20 @@ Subagents:
 - Required subagents must reply before decision/final. Timeout/slow/not-in-time is not failure; wait again unless user cancels.
 - Never close active/waiting/required subagents before integrating their final reply. Close only completed/idle unrelated stale ones.
 - Subagents default to GPT-5.4 Mini with xhigh reasoning effort; explicit low/high/max variants remain opt-in.
-- Every read-only spawn must select the exact custom role `scout`, `reviewer`, or `researcher`; never use `default` or omit `agent_type` for read-only work.
+- Every read-only spawn must select the exact custom role `scout`, `reviewer`, `researcher`, or the transport role `relay`; never use `default` or omit `agent_type` for read-only work.
 - Custom-role spawns must omit `fork_context`, `model`, and `reasoning_effort`; never combine `fork_context=true` with `agent_type`. Full-history forks inherit the parent role/model/effort and are not custom-role spawns.
 - On a transient launch, stream, or account-availability error, continue useful local work and make one fresh retry with the same explicit role; never fall back to `default` or inherit the parent model/effort. If that retry fails, an optional scout may be skipped with evidence, but any required read-only gate remains blocked.
 - Writable workers require claim-map, no-touch boundaries, validation contract, and merge-gate review.
 - In delivery, scouts and implementation workers may start early, but independent reviewers start only after all approved phases are integrated and frozen; phase validation does not trigger review.
 - Deduplicate findings into one fix batch, then revalidate and run one delta-focused closure review; do not spawn reviewers per phase, finding, or individual fix.
+- The internal sub-agent backend is `internal_subagent_backend=opencode` with `internal_subagent_transport=native_relay` in `skills/codex-workflows/references/backend-policy.md`. When a mode needs a read-only sidecar, spawn the native `relay` profile in background with `{target_agent,cwd,task}`; it calls `opencode_worker` using `opencode-go/deepseek-v4-flash`, `max`, and effective no-edit permissions, then preserves the MCP response. The main chat continues useful non-overlap work and joins at the decision/final gate. Native workers own all writes. Users do not need to add a provider or transport flag to prompts.
+- Use `multi_agent_v1__spawn_agent` with `agent_type=relay` for that transport; omit `fork_context`, `model`, and `reasoning_effort`, and put only `{target_agent,cwd,task}` in the relay message.
+- All configured OpenCode read-only agents may use `task` and `external_directory`; their definitions must deny `edit` and `bash`. The coarse MCP profile is `AGENT_PERMISSION=yolo` only because `read-only` hard-denies `task` and `external_directory`; the per-agent OpenCode frontmatter remains the no-edit boundary. The configured `codegraph` MCP may remain enabled.
+- Change the policy to `internal_subagent_backend=native` only after an explicit user request to return to the native Codex/OpenAI route. If OpenCode, the relay, its MCP, credentials, model, or variant is unavailable, preserve the gate as blocked; never silently change provider, model, effort, permissions, transport, or call the MCP directly from the main chat.
 
 MCP foundation:
 
-- Allowlisted baseline: `codegraph`, `context7`, and `openaiDeveloperDocs`; never auto-install an MCP outside this list.
+- Allowlisted baseline: `codegraph`, `context7`, and `openaiDeveloperDocs`; never auto-install an MCP outside this list. The internal route uses the manually configured `opencode_worker` MCP server and the canonical read-only definitions under `E:\Repositories\codex-workflows-prompt-pad\agents\opencode` (the installer also mirrors them to `C:\Users\mathe\.codex\opencode-agents`); its OpenCode permissions are not an OS-level sandbox, so do not pass secrets or enable unreviewed side-effectful custom/MCP tools.
 - Use Context7 for current library/framework/API documentation when version or syntax matters; use OpenAI Developer Docs for OpenAI products and Codex.
 - If an allowlisted MCP is missing, run `~/.codex/maintenance/maintain-mcps.ps1 -Mode Repair` once. If registration changes, report that Codex must restart or open a new task before the tool can appear.
 - Do not perform network/version checks on every turn. Session-start audit uses a 24-hour TTL; the weekly maintenance task owns updates.
