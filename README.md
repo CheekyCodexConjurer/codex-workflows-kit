@@ -2,7 +2,7 @@
 
 Projeto local para versionar o fluxo de atalhos NUM do Codex:
 
-- skill global `codex-workflows`;
+- skill global `workflows`;
 - skill condicional `evidence-first` para claims materiais;
 - agents customizados `scout`, `researcher`, `reviewer`, `worker`;
 - plugin `mcp-foundation` para CodeGraph, Context7 e OpenAI Developer Docs;
@@ -12,9 +12,9 @@ Projeto local para versionar o fluxo de atalhos NUM do Codex:
 ## Layout
 
 ```text
-skills/codex-workflows/   Codex skill instalavel em ~/.agents/skills
+skills/workflows/         Workflow skill canonica para Codex, Antigravity e OpenCode
 skills/evidence-first/    Grounding e verificacao condicional, sem atalho
-agents/                   Perfis nativos e definições OpenCode read-only
+agents/                   Perfis nativos, readers OpenCode e writer hybrid
 codex/AGENTS.md           Instrucoes globais compactas
 plugins/mcp-foundation/   MCPs allowlisted, hook de auditoria e manutencao
 ahk/codex_prompt_pad.ahk  Prompt pad AutoHotkey
@@ -53,16 +53,18 @@ auditoria local com TTL de 24 horas. O Codex exige revisao unica do hook em
 
 O backend interno padrão é `internal_subagent_backend=opencode` com transporte
 `internal_subagent_transport=native_relay`, definido em
-`skills/codex-workflows/references/backend-policy.md`. Você não precisa incluir
+`skills/workflows/references/backend-policy.md`. Você não precisa incluir
 uma flag no prompt. Quando o modo precisar de um sidecar read-only, o chat
-principal abre o perfil nativo `relay` em background; ele chama o MCP
+principal abre um perfil nativo `relay` novo; ele chama o MCP
 `opencode_worker`, preserva a resposta e a repassa como resposta de sub-agent
-nativo. O chat principal continua livre até o gate de decisão/final.
+nativo. Cada prompt usa uma conversa MCP isolada, sem persistência ou retomada
+de sessão. O chat principal continua livre até o gate de decisão/final.
 
-Todos os sub-agents OpenCode configurados podem chamar outros sub-agents e ler
+Todos os readers OpenCode configurados podem chamar outros sub-agents e ler
 diretórios externos. A escrita continua bloqueada por `edit: deny` e
-`bash: deny` nos perfis OpenCode. Workers nativos continuam responsáveis por
-patches, testes e qualquer escrita.
+`bash: deny` nesses perfis. O writer `hybrid=canary` fica em uma definição e
+servidor separados; no fluxo padrão, workers nativos continuam responsáveis
+por patches, testes e qualquer escrita.
 
 Para voltar ao backend nativo, peça explicitamente a um agente para alterar a
 política para `internal_subagent_backend=native`. Se o OpenCode estiver
@@ -84,7 +86,7 @@ tool_timeout_sec = 600
 [mcp_servers.opencode_worker.env]
 AGENTS_DIR = "E:\\Repositories\\codex-workflows-prompt-pad\\agents\\opencode"
 AGENT_TYPE = "opencode"
-AGENT_MODEL = "opencode-go/deepseek-v4-flash"
+AGENT_MODEL = "opencode-go/deepseek-v4-pro"
 AGENT_EFFORT = "max"
 AGENT_PERMISSION = "yolo"
 EXECUTION_TIMEOUT_MS = "600000"
@@ -96,17 +98,19 @@ O pin `sub-agents-mcp@0.8.0` é incompatível com OpenCode; o suporte oficial
 começou em `0.11.0`, e esta integração usa `0.12.0`, que expõe o backend
 OpenCode, `AGENT_MODEL` e `AGENT_EFFORT`. O backend encaminha o modelo para
 `--model` e o esforço para `--variant`.
+Com `SESSION_ENABLED=false`, o MCP não persiste o histórico entre chamadas e
+cada relay inicia uma conversa nova.
 No Windows, o `PATH` inclui o diretório que contém `opencode.exe`, porque o
 backend inicia o CLI com `spawn("opencode")`; sem esse diretório, o shell pode
 encontrar `opencode.cmd`, mas o processo filho ainda falha com `ENOENT`.
 
-O ID `opencode-go/deepseek-v4-flash` é a forma provider/model do OpenCode Go;
+O ID `opencode-go/deepseek-v4-pro` é a forma provider/model do OpenCode Go;
 `AGENT_EFFORT=max` chega ao OpenCode como `--variant max`. Antes do primeiro
 uso, confirme o binário, o modelo e a variante diretamente:
 
 ```powershell
 opencode models
-opencode run --model opencode-go/deepseek-v4-flash --variant max "Responda somente OK"
+opencode run --model opencode-go/deepseek-v4-pro --variant max "Responda somente OK"
 ```
 
 O pacote usa `AGENT_PERMISSION=yolo` porque o nível `read-only` hard-coda a
@@ -118,6 +122,64 @@ envie segredos. A configuração normal pode expor o MCP `codegraph`, que fica
 disponível por decisão explícita desta integração; qualquer outro MCP/custom
 tool com efeitos colaterais exige revisão separada. Após alterar
 o bloco MCP, reinicie ou reconecte o servidor no Codex.
+
+## Experimental hybrid canary
+
+A flag `hybrid=canary` opta explicitamente pelo fluxo anexado para comparação
+controlada:
+
+```text
+$workflows mode=DELIVER.AUTO hybrid=canary
+```
+
+Sem a flag, ou com `hybrid=off`, o fluxo atual permanece inalterado. O GPT
+continua dono do objetivo, claim map, aceite, integração e decisão final. Os
+readers seguem no `opencode_worker`; apenas writers com claim map, o commit
+esperado `HYBRID_BASELINE` e diferentes paths absolutos
+`HYBRID_WORKTREE`/`HYBRID_MAIN_CHECKOUT` podem usar o servidor separado
+`opencode_hybrid_worker`. O limite é de dois writers mutáveis simultâneos, sem
+commit, push, merge, reset, rebase,
+instalação de dependências ou acesso a caminhos externos.
+
+O instalador copia a definição writable para
+`C:\Users\mathe\.codex\opencode-hybrid-agents`. Adicione o segundo servidor ao
+`C:\Users\mathe\.codex\config.toml`:
+
+```toml
+[mcp_servers.opencode_hybrid_worker]
+command = "npx.cmd"
+args = ["-y", "sub-agents-mcp@0.12.0"]
+startup_timeout_sec = 30
+tool_timeout_sec = 600
+
+[mcp_servers.opencode_hybrid_worker.env]
+AGENTS_DIR = "E:\\Repositories\\codex-workflows-prompt-pad\\agents\\opencode-hybrid"
+AGENT_TYPE = "opencode"
+AGENT_MODEL = "opencode-go/deepseek-v4-pro"
+AGENT_EFFORT = "max"
+AGENT_PERMISSION = "safe-edit"
+EXECUTION_TIMEOUT_MS = "600000"
+SESSION_ENABLED = "false"
+PATH = "C:\\Users\\mathe\\AppData\\Roaming\\npm\\node_modules\\opencode-ai\\bin;C:\\Program Files\\nodejs;C:\\Users\\mathe\\AppData\\Roaming\\npm;C:\\Program Files\\Git\\cmd;C:\\Windows\\System32;C:\\Windows"
+```
+
+O writer híbrido também permanece sem persistência de sessão; cada tentativa
+usa uma conversa MCP nova.
+
+Esse servidor só deve ser habilitado depois de preparar um worktree descartável
+e reiniciar/reconectar o MCP. `safe-edit` não é sandbox de nível de sistema;
+não passe segredos. Se o servidor ou o worktree não estiver disponível, o
+canary deve ficar bloqueado, sem fallback silencioso para outro writer.
+Os marcadores internos `HYBRID_ROUTE=writer`, `HYBRID_WORKTREE`,
+`HYBRID_MAIN_CHECKOUT` e `HYBRID_BASELINE` são acrescentados pelo
+orquestrador apenas quando essa rota foi autorizada pelo claim map e o commit
+base foi fixado; não os use para contornar a flag.
+
+O protocolo e a matriz de tasks estão em
+[`experiments/hybrid-canary.md`](experiments/hybrid-canary.md). Compare
+`hybrid=off` e `hybrid=canary` com o mesmo estado, prompt e critérios; registre
+qualidade, retrabalho, validação, latência e uso relativo do modelo principal
+antes de considerar ativar a flag fora do canary.
 
 Referências primárias: [OpenCode CLI](https://dev.opencode.ai/docs/cli/),
 [OpenCode Go](https://dev.opencode.ai/docs/de/go/) e
@@ -170,33 +232,36 @@ exportador ou serviço externo sem escopo explícito.
 
 ## Atalhos
 
-Os atalhos `$codex-workflows`, `$antigravity-workflows` e `$opencode-workflows` selecionam apenas o modo. O contrato completo de
-cada modo vive na skill, em `references/mode-matrix.md`, no quality ratchet e
-na referência de observabilidade quando aplicável;
-mudanças de comportamento não exigem alterar o AHK.
+Os atalhos usam o prefixo canônico `$workflows` e selecionam apenas o modo. Os
+prefixos `$codex-workflows`, `$antigravity-workflows` e `$opencode-workflows`
+continuam disponíveis como aliases de compatibilidade gerados da mesma fonte.
+O contrato completo de cada modo vive na skill, em
+`references/mode-matrix.md`, no quality ratchet e na referência de
+observabilidade quando aplicável; mudanças de comportamento não exigem
+alterar o AHK.
 
 ```text
-NUM1         $opencode-workflows mode=PLAN.AUTO
-NUM2         $opencode-workflows mode=DELIVER.AUTO
-NUM3         $opencode-workflows mode=COMMIT
-NUM4         $opencode-workflows mode=BUG.INV
-NUM5         $opencode-workflows mode=BUG.FIX
-NUM6         $opencode-workflows mode=DEBUG
-NUM7         $opencode-workflows mode=REWORK
-NUM8         $opencode-workflows mode=R.A.F.V
-NUM9         $opencode-workflows mode=TN.SKILL
-NUM*         $opencode-workflows mode=RESEARCH.DEEP
+NUM1         $workflows mode=PLAN.AUTO
+NUM2         $workflows mode=DELIVER.AUTO
+NUM3         $workflows mode=COMMIT
+NUM4         $workflows mode=BUG.INV
+NUM5         $workflows mode=BUG.FIX
+NUM6         $workflows mode=DEBUG
+NUM7         $workflows mode=REWORK
+NUM8         $workflows mode=R.A.F.V
+NUM9         $workflows mode=TN.SKILL
+NUM*         $workflows mode=RESEARCH.DEEP
 
-NUM0+1       $codex-workflows mode=PLAN.AUTO
-NUM0+2       $codex-workflows mode=DELIVER.AUTO
-NUM0+3       $codex-workflows mode=COMMIT
-NUM0+4       $codex-workflows mode=BUG.INV
-NUM0+5       $codex-workflows mode=BUG.FIX
-NUM0+6       $codex-workflows mode=DEBUG
-NUM0+7       $codex-workflows mode=REWORK
-NUM0+8       $codex-workflows mode=R.A.F.V
-NUM0+9       $codex-workflows mode=TN.SKILL
-NUM0+*       $codex-workflows mode=RESEARCH.DEEP
+NUM0+1       $workflows mode=PLAN.AUTO
+NUM0+2       $workflows mode=DELIVER.AUTO
+NUM0+3       $workflows mode=COMMIT
+NUM0+4       $workflows mode=BUG.INV
+NUM0+5       $workflows mode=BUG.FIX
+NUM0+6       $workflows mode=DEBUG
+NUM0+7       $workflows mode=REWORK
+NUM0+8       $workflows mode=R.A.F.V
+NUM0+9       $workflows mode=TN.SKILL
+NUM0+*       $workflows mode=RESEARCH.DEEP
 
 Alt+NUM1     /goal
 Alt+NUM2     /grill-me

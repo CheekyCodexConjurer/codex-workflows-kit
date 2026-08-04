@@ -3,8 +3,11 @@ $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 
 $skillsSource = Join-Path $repo 'skills'
+$workflowSource = Join-Path $skillsSource 'workflows'
+$workflowAliases = @('codex-workflows', 'antigravity-workflows', 'opencode-workflows')
 $agentsSource = Join-Path $repo 'agents'
 $opencodeAgentsSource = Join-Path $agentsSource 'opencode'
+$opencodeHybridAgentsSource = Join-Path $agentsSource 'opencode-hybrid'
 $agentsMdSource = Join-Path $repo 'codex\AGENTS.md'
 $ahkSource = Join-Path $repo 'ahk\codex_prompt_pad.ahk'
 $maintenanceSource = Join-Path $repo 'plugins\mcp-foundation\scripts\maintain-mcps.ps1'
@@ -14,6 +17,7 @@ $antigravitySkillsDest1 = 'C:\Users\mathe\.gemini\antigravity\skills'
 $antigravitySkillsDest2 = 'C:\Users\mathe\.gemini\config\skills'
 $agentsDest = 'C:\Users\mathe\.codex\agents'
 $opencodeAgentsDest = 'C:\Users\mathe\.codex\opencode-agents'
+$opencodeHybridAgentsDest = 'C:\Users\mathe\.codex\opencode-hybrid-agents'
 $agentsMdDest = 'C:\Users\mathe\.codex\AGENTS.md'
 $ahkDest = 'C:\Users\mathe\Documents\Codex\2026-07-01\pod\outputs\codex_prompt_pad.ahk'
 $maintenanceDest = 'C:\Users\mathe\.codex\maintenance\maintain-mcps.ps1'
@@ -49,7 +53,37 @@ function Install-AgentEffortVariants {
     }
 }
 
-New-Item -ItemType Directory -Force $skillsDest, $antigravitySkillsDest1, $antigravitySkillsDest2, $agentsDest, $opencodeAgentsDest, (Split-Path -Parent $ahkDest), (Split-Path -Parent $maintenanceDest) | Out-Null
+function Install-WorkflowAlias {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Source,
+        [Parameter(Mandatory)]
+        [string]$Destination,
+        [Parameter(Mandatory)]
+        [string]$Alias
+    )
+
+    if (Test-Path -LiteralPath $Destination) {
+        Remove-Item -LiteralPath $Destination -Recurse -Force
+    }
+
+    Copy-Item -Recurse -Force $Source $Destination
+
+    $skillPath = Join-Path $Destination 'SKILL.md'
+    $skillText = Get-Content -Raw -LiteralPath $skillPath
+    $skillText = $skillText.Replace('name: workflows', "name: $Alias")
+    Set-Content -LiteralPath $skillPath -Value $skillText -NoNewline
+
+    $interfacePath = Join-Path $Destination 'agents\openai.yaml'
+    if (Test-Path -LiteralPath $interfacePath) {
+        $interfaceText = Get-Content -Raw -LiteralPath $interfacePath
+        $aliasPrompt = '$' + $Alias + ' mode=PLAN.AUTO'
+        $interfaceText = $interfaceText.Replace('$workflows mode=PLAN.AUTO', $aliasPrompt)
+        Set-Content -LiteralPath $interfacePath -Value $interfaceText -NoNewline
+    }
+}
+
+New-Item -ItemType Directory -Force $skillsDest, $antigravitySkillsDest1, $antigravitySkillsDest2, $agentsDest, $opencodeAgentsDest, $opencodeHybridAgentsDest, (Split-Path -Parent $ahkDest), (Split-Path -Parent $maintenanceDest) | Out-Null
 
 Get-ChildItem -Directory $skillsSource | ForEach-Object {
     foreach ($targetBase in @($skillsDest, $antigravitySkillsDest1, $antigravitySkillsDest2)) {
@@ -61,11 +95,22 @@ Get-ChildItem -Directory $skillsSource | ForEach-Object {
     }
 }
 
+if (!(Test-Path -LiteralPath $workflowSource)) {
+    throw "Canonical workflows skill is missing: $workflowSource"
+}
+
+foreach ($targetBase in @($skillsDest, $antigravitySkillsDest1, $antigravitySkillsDest2)) {
+    foreach ($alias in $workflowAliases) {
+        Install-WorkflowAlias -Source $workflowSource -Destination (Join-Path $targetBase $alias) -Alias $alias
+    }
+}
+
 Copy-Item -Force (Join-Path $agentsSource '*.toml') $agentsDest
 Get-ChildItem -File $agentsSource -Filter '*.toml' | ForEach-Object {
     Install-AgentEffortVariants -Source $_.FullName -Destination $agentsDest
 }
 Copy-Item -Force (Join-Path $opencodeAgentsSource '*.md') $opencodeAgentsDest
+Copy-Item -Force (Join-Path $opencodeHybridAgentsSource '*.md') $opencodeHybridAgentsDest
 Copy-Item -Force $agentsMdSource $agentsMdDest
 
 $ahkBackup = $null
@@ -95,6 +140,7 @@ Write-Host "Installed Codex workflow assets."
 Write-Host "Skills: $skillsDest"
 Write-Host "Agents: $agentsDest"
 Write-Host "OpenCode agents: $opencodeAgentsDest"
+Write-Host "Hybrid OpenCode agents: $opencodeHybridAgentsDest"
 Write-Host "AGENTS.md: $agentsMdDest"
 Write-Host "AHK: $ahkDest"
 Write-Host "MCP maintenance: $maintenanceDest"

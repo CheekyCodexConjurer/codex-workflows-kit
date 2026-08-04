@@ -33,47 +33,47 @@ ScrollLock:: {
 
 #HotIf GetKeyState("ScrollLock", "T")
 
-; --- OpenCode Workflows (direct Numpad, com sub-agents) ---
-Numpad1::PastePrompt("$opencode-workflows mode=PLAN.AUTO")
+; --- Universal Workflows (direct Numpad) ---
+Numpad1::PastePrompt("$workflows mode=PLAN.AUTO")
 
-Numpad2::PastePrompt("$opencode-workflows mode=DELIVER.AUTO")
+Numpad2::PastePrompt("$workflows mode=DELIVER.AUTO")
 
-Numpad3::PastePrompt("$opencode-workflows mode=COMMIT")
+Numpad3::PastePrompt("$workflows mode=COMMIT")
 
-Numpad4::PastePrompt("$opencode-workflows mode=BUG.INV")
+Numpad4::PastePrompt("$workflows mode=BUG.INV")
 
-Numpad5::PastePrompt("$opencode-workflows mode=BUG.FIX")
+Numpad5::PastePrompt("$workflows mode=BUG.FIX")
 
-Numpad6::PastePrompt("$opencode-workflows mode=DEBUG")
+Numpad6::PastePrompt("$workflows mode=DEBUG")
 
-Numpad7::PastePrompt("$opencode-workflows mode=REWORK")
+Numpad7::PastePrompt("$workflows mode=REWORK")
 
-Numpad8::PastePrompt("$opencode-workflows mode=R.A.F.V")
+Numpad8::PastePrompt("$workflows mode=R.A.F.V")
 
-Numpad9::PastePrompt("$opencode-workflows mode=TN.SKILL")
+Numpad9::PastePrompt("$workflows mode=TN.SKILL")
 
-NumpadMult::PastePrompt("$opencode-workflows mode=RESEARCH.DEEP")
+NumpadMult::PastePrompt("$workflows mode=RESEARCH.DEEP")
 
 ; --- Deep modes (Numpad0 + Numpad, fases mais profundas) ---
-Numpad0 & Numpad1::PastePrompt("$opencode-workflows mode=P.DEEP")
+Numpad0 & Numpad1::PastePrompt("$workflows mode=P.DEEP")
 
-Numpad0 & Numpad2::PastePrompt("$opencode-workflows mode=IMPL.PHASE")
+Numpad0 & Numpad2::PastePrompt("$workflows mode=IMPL.PHASE")
 
-Numpad0 & Numpad3::PastePrompt("$opencode-workflows mode=COMMIT")
+Numpad0 & Numpad3::PastePrompt("$workflows mode=COMMIT")
 
-Numpad0 & Numpad4::PastePrompt("$opencode-workflows mode=BUG.INV")
+Numpad0 & Numpad4::PastePrompt("$workflows mode=BUG.INV")
 
-Numpad0 & Numpad5::PastePrompt("$opencode-workflows mode=BUG.FIX")
+Numpad0 & Numpad5::PastePrompt("$workflows mode=BUG.FIX")
 
-Numpad0 & Numpad6::PastePrompt("$opencode-workflows mode=DEBUG")
+Numpad0 & Numpad6::PastePrompt("$workflows mode=DEBUG")
 
-Numpad0 & Numpad7::PastePrompt("$opencode-workflows mode=REWORK")
+Numpad0 & Numpad7::PastePrompt("$workflows mode=REWORK")
 
-Numpad0 & Numpad8::PastePrompt("$opencode-workflows mode=R.A.F.V")
+Numpad0 & Numpad8::PastePrompt("$workflows mode=R.A.F.V")
 
-Numpad0 & Numpad9::PastePrompt("$opencode-workflows mode=TN.SKILL")
+Numpad0 & Numpad9::PastePrompt("$workflows mode=TN.SKILL")
 
-Numpad0 & NumpadMult::PastePrompt("$opencode-workflows mode=RESEARCH.DEEP")
+Numpad0 & NumpadMult::PastePrompt("$workflows mode=RESEARCH.DEEP")
 
 ; --- Antigravity Slash Commands (Alt + Numpad) ---
 !Numpad1::PastePrompt("/goal")

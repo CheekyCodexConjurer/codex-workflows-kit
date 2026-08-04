@@ -1,0 +1,4 @@
+interface:
+  display_name: "Workflows"
+  short_description: "Universal compact workflow router for Codex, Antigravity, and OpenCode."
+  default_prompt: "$workflows mode=PLAN.AUTO"

@@ -20,8 +20,8 @@ Lifecycle:
 - `subA-custom-spawn`: custom-role spawns set only the exact `agent_type` plus their task input; omit `fork_context`, `model`, and `reasoning_effort`. Never combine `fork_context=true` with `agent_type`; full-history forks inherit the parent role/model/effort and are a separate operation.
 - `subA-retry`: on a transient launch, stream, or account-availability error, continue useful local work and make one fresh retry with the same exact role and the same valid custom-spawn shape; omit `fork_context`, `model`, and `reasoning_effort`, do not retry in a tight loop, and never fall back to `default`.
 - `subA-retry-block`: if the same-role retry fails, optional scouting may be skipped with evidence; any required read-only gate remains blocked and must be reported rather than bypassed.
-- `subA-mgmt`: if no slot, reuse open+context-fit first; close only completed/idle unrelated stale/low-context subA; if all slots active/relevant, wait.
-- `subA-reuse`: prefer reusing a context-fit agent for the same ownership or lens instead of spawning one per phase, file, finding, or fix.
+- `subA-isolation`: allocate one native relay and one MCP conversation per sidecar request; do not reuse completed relays or persist continuation state.
+- `nested-opencode`: when one or more independent fronts exist, or delegation materially improves evidence or wall-clock time, a configured OpenCode reader may delegate one or more read-only tasks using nested types `explore` or `general`; choose the count by the independent fronts, do not cap it at one, wait for and integrate all results, and keep simple serial work local.
 
 Models:
 
@@ -37,22 +37,53 @@ Roles:
 - `subA-gate`: use if high blast, unclear ownership, security/auth/data risk, multi-file/core, failed first validation, or clear wall-clock gain.
 - `subA-worker`: writable only with claim-map; edits direct; no revert others; no out-of-scope; final `{files,diff,val,risks}`.
 
+## Hybrid canary route
+
+`hybrid=canary` is an explicit workflow flag for paired experiments. It does
+not change the private provider policy or authorize the main chat to call an
+MCP directly.
+
+- The GPT orchestrator owns the objective, invariants, claim map, acceptance,
+  integration, and escalation.
+- `scout`, `researcher`, and read-only `reviewer` work continue through the
+  standard `relay` → `opencode_worker` route.
+- A writer task must carry the exact `HYBRID_ROUTE=writer` marker, absolute
+  `HYBRID_WORKTREE` and `HYBRID_MAIN_CHECKOUT` paths that differ, the expected
+  full-commit `HYBRID_BASELINE`, allowed files, no-touch files, and its
+  validation contract. Before any other shell or edit command, the writer
+  verifies the worktree top-level, that `git rev-parse HEAD` equals the
+  baseline, and that `git status --porcelain` is empty; otherwise it reports
+  `blocked`. The relay then forwards it to `opencode_hybrid_worker`.
+- Before spawning a mutable writer, the parent counts active hybrid writers;
+  when two are active it waits and never starts a third. They cannot commit,
+  push, merge, reset, rebase, install dependencies, delegate nested tasks, or
+  access external directories.
+- At the merge gate, the parent runs `git -C <HYBRID_WORKTREE> diff --check`
+  and `git -C <HYBRID_WORKTREE> diff -- <claim-map files>`, verifies every
+  changed path against the claim map/no-touch list, runs the assigned
+  validation, and applies only the accepted diff/hunks to the main checkout.
+  The writer never promotes its own changes. A hybrid
+  child failure or unavailable MCP remains blocked; it never silently falls
+  back to a native writer or a read-only agent.
+- Use `hybrid=off` for the paired baseline and record the same acceptance,
+  task state, and validation for both runs. Do not add product instrumentation
+  solely for this canary; use existing tool evidence.
+
 ## Internal backend route
 
 - The private backend policy defaults to
   `internal_subagent_backend=opencode`; users do not need to add a provider flag
   to each prompt. An explicit maintenance change to
   `internal_subagent_backend=native` restores the native route.
-- The default transport is `internal_subagent_transport=native_relay`: spawn the
-  native `relay` profile in background, pass `{target_agent,cwd,task}`, and join
-  the preserved MCP response only at the decision/final gate. Do not call the
-  OpenCode MCP directly from the main chat when the relay is available.
-- Use `multi_agent_v1__spawn_agent(agent_type=relay)` for this transport;
-  omit `fork_context`, `model`, and `reasoning_effort`, and put only
-  `{target_agent,cwd,task}` in the relay message.
+- The default transport is `internal_subagent_transport=native_relay`: spawn a
+  fresh `relay` with `multi_agent_v1__spawn_agent(agent_type=relay)` for every
+  sidecar request. Pass `{target_agent,cwd,task}`, omit `fork_context`, `model`,
+  and `reasoning_effort`, and do not store or forward a session identifier.
+  Do not call the OpenCode MCP directly from the main chat when the relay is
+  available.
 - The canonical MCP server name is `opencode_worker`, backed by the pinned
   `sub-agents-mcp@0.12.0` package with `AGENT_TYPE=opencode`,
-  `AGENT_MODEL=opencode-go/deepseek-v4-flash`, `AGENT_EFFORT=max`,
+  `AGENT_MODEL=opencode-go/deepseek-v4-pro`, `AGENT_EFFORT=max`,
   `AGENT_PERMISSION=yolo` coarse launch profile, a bounded execution timeout,
   and a Windows
   `PATH` entry for the directory containing `opencode.exe`.

@@ -1,18 +1,22 @@
 ---
-name: codex-workflows
-description: Matheus compact Codex and Antigravity workflow router for AHK shortcuts and prompts using $codex-workflows or $antigravity-workflows, compact aliases, PLAN.AUTO, PLAN, P.DEEP, RESEARCH.DEEP, earned-rework, passive TN quality ratchet, IMPL.AUTO, IMPL, IMPL.PHASE, DELIVER.AUTO implementation-wave and review-after-freeze, REVIEW, COMMIT intelligent commit series/push, BUG.INV, BUG.FIX, DEBUG feature bug loop, REWORK, R.A.F.V, TN.SKILL, size-scan, refactor-sizing-plan, CodeGraph, subagents, phase graphs, claim maps, and strict code-quality workflows.
+name: workflows
+description: Matheus universal workflow router for Codex, Antigravity, and OpenCode using $workflows, with compatibility aliases $codex-workflows, $antigravity-workflows, and $opencode-workflows; compact modes, evidence-first investigation, quality ratchets, sub-agents, phase graphs, claim maps, and strict validation.
 ---
 
-# Codex & Antigravity Workflows
+# Workflows
 
-Use this skill when a prompt invokes `$codex-workflows`, `$antigravity-workflows`, `$opencode-workflows`, or uses Matheus compact workflow syntax in Codex, OpenCode, or Google Antigravity environments.
+Use this skill when a prompt invokes `$workflows`, one of the compatibility aliases
+`$codex-workflows`, `$antigravity-workflows`, or `$opencode-workflows`, or uses
+Matheus compact workflow syntax in Codex, OpenCode, or Google Antigravity.
 
 Load references by need:
 
 - `references/dictionary.md`: always for alias expansion.
 - `references/mode-matrix.md`: always to route the requested mode.
-- `references/backend-policy.md`: always for the internal sub-agent backend
-  selection; do not ask the user to provide its routing token.
+- `references/runtime-adapters.md`: always before routing tools or sub-agents;
+  select exactly one adapter from the currently exposed host surface.
+- `references/backend-policy.md`: for the Codex/Antigravity adapter when a
+  sidecar is needed; do not ask the user to provide its routing token.
 - `references/quality-ratchet.md`: for every workflow mode; apply the profile assigned by `mode-matrix.md`, including explicit no-scan and no-edit profiles.
 - `references/observability.md`: for code-facing planning, investigation, review, or delivery; use its gate to choose no instrumentation, a bounded temporary diagnostic, or a durable event.
 - `references/commit.md`: when prompt invokes `COMMIT`.
@@ -24,6 +28,14 @@ Operational rules:
 
 - Expand aliases exactly enough to execute; preserve left-to-right order.
 - Treat `mode=<MODE>` as the complete default execution contract. Optional trailing user text is task context or an explicit override; launcher aliases are not required.
+- Treat `$workflows` as the canonical user-facing prefix. The three legacy
+  prefixes are compatibility aliases and must resolve to the same mode matrix,
+  quality rules, acceptance gates, and validation contract.
+- Select exactly one runtime adapter from `references/runtime-adapters.md`
+  before any tool or sub-agent action. The adapter changes only the available
+  execution surface, never the workflow contract.
+- Treat `hybrid=canary` as an explicit experimental workflow flag only; it is not a provider/transport setting and must not alter the default route when absent.
+- Use `hybrid=off` for the paired baseline; never infer either hybrid route from ordinary task wording.
 - Read the internal backend policy before routing any sidecar. Its installed
   default is `internal_subagent_backend=opencode`; only an explicit maintenance
   request changes it to `native`.
@@ -42,22 +54,36 @@ Operational rules:
 - Prefer smallest safe change, canonical owner, delete/simplify before abstraction, and no unrelated churn.
 - Final response must report concrete files, validation, risks, and remaining work.
 
-## Internal sub-agent backend route
+## Codex/Antigravity sidecar route
 
-The installed internal default is `internal_subagent_backend=opencode` with
-`internal_subagent_transport=native_relay`. When a mode chooses to use a
-read-only sidecar, spawn the native `relay` profile in the background. Give it
-`{target_agent,cwd,task}`; it calls the configured `opencode_worker` MCP and
-returns the original response through the native sub-agent conversation. The
-main chat continues local non-overlap work and joins the relay at the
+When the selected runtime adapter is Codex or Antigravity, the installed
+internal default is `internal_subagent_backend=opencode` with
+`internal_subagent_transport=native_relay`. Each sidecar request starts a
+fresh native relay with `multi_agent_v1__spawn_agent` and
+`agent_type=relay`; it receives `{target_agent,cwd,task}`, calls the
+configured `opencode_worker` MCP without a session identifier, and returns
+the original response through the native sub-agent conversation. Completed
+relays are not reused for later prompts, so each prompt gets an isolated MCP
+conversation.
+The main chat continues local non-overlap work and joins the relay at the
 decision/final gate. Implementation workers remain native and claim-map
-scoped. The user does not need to add a provider or transport flag. The spawn
-operation is `multi_agent_v1__spawn_agent` with `agent_type=relay`; omit
-`fork_context`, `model`, and `reasoning_effort`, and place only
-`{target_agent,cwd,task}` in the relay message.
+scoped unless the explicit `hybrid=canary` flag activates the separate
+safe-edit writer route; the user does not need to add a provider or transport
+flag. Custom-role spawn calls still omit `fork_context`, `model`, and
+`reasoning_effort`.
 
 If the internal policy is explicitly changed to
 `internal_subagent_backend=native`, use the native custom-role profiles for all
 sub-agents. If the OpenCode route is unavailable while selected, report the
 gate as blocked instead of silently changing provider, model, effort,
 permissions, transport, or calling the MCP directly from the main chat.
+
+## OpenCode execution surface
+
+When the selected runtime adapter is OpenCode, use the OpenCode Task surface
+and its configured `scout`, `researcher`, `reviewer`, and `worker` role
+definitions. Read-only roles remain read-only; writable workers require the
+same claim-map, no-touch, validation, and merge-gate contract. Do not expose
+the private Codex relay settings as prompt flags, and do not silently switch
+to another provider, model, permission, or transport when an OpenCode gate is
+unavailable.

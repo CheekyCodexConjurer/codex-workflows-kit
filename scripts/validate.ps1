@@ -1,10 +1,10 @@
 ﻿$ErrorActionPreference = 'Stop'
 
 $repo = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
-$skill = Join-Path $repo 'skills\codex-workflows\SKILL.md'
+$skill = Join-Path $repo 'skills\workflows\SKILL.md'
 $evidenceSkill = Join-Path $repo 'skills\evidence-first\SKILL.md'
 $evidenceSkillInterface = Join-Path $repo 'skills\evidence-first\agents\openai.yaml'
-$workflowSkillInterface = Join-Path $repo 'skills\codex-workflows\agents\openai.yaml'
+$workflowSkillInterface = Join-Path $repo 'skills\workflows\agents\openai.yaml'
 $agentsMd = Join-Path $repo 'codex\AGENTS.md'
 $marketplacePath = Join-Path $repo '.agents\plugins\marketplace.json'
 $mcpPluginRoot = Join-Path $repo 'plugins\mcp-foundation'
@@ -12,13 +12,17 @@ $mcpPluginManifestPath = Join-Path $mcpPluginRoot '.codex-plugin\plugin.json'
 $mcpManifestPath = Join-Path $mcpPluginRoot '.mcp.json'
 $mcpHookPath = Join-Path $mcpPluginRoot 'hooks\hooks.json'
 $mcpMaintenancePath = Join-Path $mcpPluginRoot 'scripts\maintain-mcps.ps1'
+$installScriptPath = Join-Path $repo 'scripts\install.ps1'
 $ahk = Join-Path $repo 'ahk\codex_prompt_pad.ahk'
 $opencodeAgentsRoot = Join-Path $repo 'agents\opencode'
+$opencodeHybridAgentsRoot = Join-Path $repo 'agents\opencode-hybrid'
+$hybridCanaryDoc = Join-Path $repo 'experiments\hybrid-canary.md'
 $ahkExe = 'E:\Programs\AHK\v2\AutoHotkey64.exe'
 
 $skillText = Get-Content -Raw -Encoding UTF8 $skill
-if ($skillText -notmatch "(?s)^---\s*\r?\nname:\s*codex-workflows\r?\ndescription:\s*.+?\r?\n---\s*\r?\n") {
-    throw 'Invalid codex-workflows SKILL.md frontmatter.'
+$installScriptText = Get-Content -Raw -Encoding UTF8 $installScriptPath
+if ($skillText -notmatch "(?s)^---\s*\r?\nname:\s*workflows\r?\ndescription:\s*.+?\r?\n---\s*\r?\n") {
+    throw 'Invalid workflows SKILL.md frontmatter.'
 }
 
 $evidenceSkillText = Get-Content -Raw -Encoding UTF8 $evidenceSkill
@@ -31,7 +35,7 @@ if (!(Test-Path $evidenceSkillInterface)) {
 }
 
 if (!(Test-Path $workflowSkillInterface)) {
-    throw 'Missing codex-workflows interface metadata.'
+    throw 'Missing workflows interface metadata.'
 }
 
 foreach ($instruction in 'current, external, or high-impact factual claims','{claim, source, evidence, status}','Do not use model confidence or self-review alone as proof') {
@@ -139,8 +143,8 @@ if ($parseErrors.Count -gt 0) {
     throw "Invalid MCP maintenance PowerShell: $($parseErrors.Message -join '; ')"
 }
 
-foreach ($file in 'backend-policy.md','commit.md','dictionary.md','mode-matrix.md','observability.md','quality-ratchet.md','research.md','subagents.md','validation.md') {
-    $path = Join-Path $repo "skills\codex-workflows\references\$file"
+foreach ($file in 'backend-policy.md','commit.md','dictionary.md','mode-matrix.md','observability.md','quality-ratchet.md','research.md','runtime-adapters.md','subagents.md','validation.md') {
+    $path = Join-Path $repo "skills\workflows\references\$file"
     if (!(Test-Path $path)) {
         throw "Missing reference: $file"
     }
@@ -172,6 +176,28 @@ foreach ($file in $opencodeAgentFiles) {
 $unexpectedOpenCodeAgents = @(Get-ChildItem -File $opencodeAgentsRoot -Filter '*.md' | Where-Object { $opencodeAgentFiles -notcontains $_.Name })
 if ($unexpectedOpenCodeAgents.Count -gt 0) {
     throw "Unexpected OpenCode agent definitions: $($unexpectedOpenCodeAgents.Name -join ', ')"
+}
+
+if (!(Test-Path -LiteralPath $opencodeHybridAgentsRoot)) {
+    throw 'Missing hybrid OpenCode agent directory.'
+}
+
+$hybridWriterPath = Join-Path $opencodeHybridAgentsRoot 'writer.md'
+if (!(Test-Path -LiteralPath $hybridWriterPath)) {
+    throw 'Missing hybrid OpenCode writer definition.'
+}
+
+$hybridWriter = Get-Content -Raw -Encoding UTF8 $hybridWriterPath
+$hybridWriterNormalized = $hybridWriter -replace '\s+', ' '
+foreach ($fragment in 'mode: subagent', 'edit: allow', 'bash: allow', 'task: deny', 'external_directory: deny', 'webfetch: deny', 'websearch: deny', 'question: deny', 'skill: deny', 'todowrite: deny', 'lsp: deny', 'HYBRID_WRITER_STATUS=success|blocked|error', 'HYBRID_WRITER_BASELINE', 'Do not commit, push, merge, reset, rebase', 'git rev-parse --show-toplevel', 'git rev-parse HEAD', 'git status --porcelain', 'HYBRID_WORKTREE', 'HYBRID_MAIN_CHECKOUT', 'HYBRID_BASELINE') {
+    if ($hybridWriterNormalized -notmatch [regex]::Escape($fragment)) {
+        throw "Hybrid writer is missing canary guardrail: $fragment"
+    }
+}
+
+$unexpectedHybridAgents = @(Get-ChildItem -File $opencodeHybridAgentsRoot -Filter '*.md' | Where-Object { $_.Name -ne 'writer.md' })
+if ($unexpectedHybridAgents.Count -gt 0) {
+    throw "Unexpected hybrid OpenCode agent definitions: $($unexpectedHybridAgents.Name -join ', ')"
 }
 
 Get-ChildItem -File (Join-Path $repo 'agents') -Filter '*.toml' | ForEach-Object {
@@ -209,33 +235,38 @@ foreach ($fragment in '$agentEfforts = @(''low'', ''high'', ''xhigh'', ''max'')'
     }
 }
 
-foreach ($fragment in 'opencodeAgentsSource', 'opencodeAgentsDest', 'opencode-agents', 'Copy-Item -Force (Join-Path $opencodeAgentsSource') {
+foreach ($fragment in 'opencodeAgentsSource', 'opencodeAgentsDest', 'opencode-agents', 'Copy-Item -Force (Join-Path $opencodeAgentsSource', 'opencodeHybridAgentsSource', 'opencodeHybridAgentsDest', 'opencode-hybrid-agents', 'Copy-Item -Force (Join-Path $opencodeHybridAgentsSource') {
     if ($installerText -notmatch [regex]::Escape($fragment)) {
         throw "Agent installer is missing OpenCode agent synchronization: $fragment"
     }
 }
 
-$dictionary = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'skills\codex-workflows\references\dictionary.md')
-$modeMatrix = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'skills\codex-workflows\references\mode-matrix.md')
+$dictionary = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'skills\workflows\references\dictionary.md')
+$dictionaryNormalized = $dictionary -replace '\s+', ' '
+$modeMatrix = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'skills\workflows\references\mode-matrix.md')
 $modeMatrixNormalized = $modeMatrix -replace '\s+', ' '
-$qualityRatchet = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'skills\codex-workflows\references\quality-ratchet.md')
+$qualityRatchet = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'skills\workflows\references\quality-ratchet.md')
 $qualityRatchetNormalized = $qualityRatchet -replace '\s+', ' '
-$observability = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'skills/codex-workflows/references/observability.md')
+$observability = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'skills/workflows/references/observability.md')
 $observabilityNormalized = $observability -replace '\s+', ' '
-$backendPolicy = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'skills/codex-workflows/references/backend-policy.md')
-$validationReference = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'skills/codex-workflows/references/validation.md')
-$subagents = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'skills\codex-workflows\references\subagents.md')
-$commitReference = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'skills\codex-workflows\references\commit.md')
-$research = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'skills\codex-workflows\references\research.md')
+$backendPolicy = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'skills/workflows/references/backend-policy.md')
+$runtimeAdapters = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'skills/workflows/references/runtime-adapters.md')
+$validationReference = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'skills/workflows/references/validation.md')
+$subagents = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'skills\workflows\references\subagents.md')
+$commitReference = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'skills\workflows\references\commit.md')
+$research = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'skills\workflows\references\research.md')
 $scout = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'agents\scout.toml')
 $researcher = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'agents\researcher.toml')
 $relay = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'agents\relay.toml')
+$relayNormalized = $relay -replace '\s+', ' '
 $worker = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'agents/worker.toml')
 $reviewer = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'agents/reviewer.toml')
 $workflowSkillInterfaceText = Get-Content -Raw -Encoding UTF8 $workflowSkillInterface
 $ahkText = Get-Content -Raw -Encoding UTF8 $ahk
 $readmeText = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'README.md')
 $readmeTextNormalized = $readmeText -replace '\s+', ' '
+$skillTextNormalized = $skillText -replace '\s+', ' '
+$runtimeAdaptersNormalized = $runtimeAdapters -replace '\s+', ' '
 $opencodeNativeProfiles = @($relay, $scout, $researcher, $reviewer, $worker)
 $planSyncSkill = (($skillText -split '\r?\n' | Where-Object { $_ -match 'plan-sync' }) -join ' ')
 $planSyncSkillSurface = $skillText
@@ -251,7 +282,7 @@ $planSyncValidationSurface = $validationReference
 
 foreach ($instruction in 'Treat `mode=<MODE>` as the complete default execution contract.','`references/quality-ratchet.md`: for every workflow mode','`references/observability.md`: for code-facing planning','never split for line count alone','`references/validation.md`: for every workflow mode','when mode is `PLAN.AUTO`') {
     if ($skillText -notmatch [regex]::Escape($instruction)) {
-        throw "codex-workflows skill is missing mode-only internal routing: $instruction"
+        throw "workflows skill is missing mode-only internal routing: $instruction"
     }
 }
 
@@ -273,7 +304,7 @@ foreach ($instruction in '`proportional-cadence`','start with the smallest route
 
 foreach ($instruction in 'Apply `proportional-cadence` to every mode','start with the smallest route','expand scope or depth only when existing evidence or material risk reveals uncertainty, or a required gate is still open','parallelize approved independent work only when it saves wall-clock','checkpoint before repeating no-progress work','when a materially different cheapest action exists, take it once','take it once before using the mode''s own done, blocked, or replan outcome','scale validation by impact','do not impose fixed timeouts on active subagents') {
     if ($skillText -notmatch [regex]::Escape($instruction)) {
-        throw "codex-workflows skill is missing proportional-cadence routing: $instruction"
+        throw "workflows skill is missing proportional-cadence routing: $instruction"
     }
 }
 
@@ -338,7 +369,7 @@ function Assert-NoPlanSyncContradiction {
 
 $planSyncSurfaces = @(
     [pscustomobject]@{ Name = 'dictionary plan-sync'; Text = $planSyncDefinition }
-    [pscustomobject]@{ Name = 'codex-workflows plan-sync'; Text = $planSyncSkillSurface }
+    [pscustomobject]@{ Name = 'workflows plan-sync'; Text = $planSyncSkillSurface }
     [pscustomobject]@{ Name = 'AGENTS.md plan-sync'; Text = $planSyncAgentsSurface }
     [pscustomobject]@{ Name = 'README plan-sync'; Text = $planSyncReadmeMatch.Value }
     [pscustomobject]@{ Name = 'validation plan-sync'; Text = $planSyncValidationSurface }
@@ -392,7 +423,7 @@ foreach ($instruction in 'for nontrivial work with 2+ phases','create 2-5 short 
 
 foreach ($instruction in 'Apply `plan-sync` to nontrivial work with two or more phases','initialize the real `update_plan` checklist','first step `in_progress` and the rest `pending`','before the first command of the next phase','only after proof','current phase `completed`','next phase `in_progress`','future phases `pending`','update it before continuing after scope changes','after the last proof','every step `completed`','none `in_progress`','never update it after every command','single owner','Skip it for one-step or simple work') {
     if ($planSyncSkill -notmatch [regex]::Escape($instruction)) {
-        throw "codex-workflows skill is missing plan-sync guidance: $instruction"
+        throw "workflows skill is missing plan-sync guidance: $instruction"
     }
 }
 
@@ -403,7 +434,7 @@ foreach ($instruction in '`update_plan`','For nontrivial work with two or more p
 }
 
 foreach ($surface in @(
-    @{ Name = 'codex-workflows skill'; Text = $skillText }
+    @{ Name = 'workflows skill'; Text = $skillText }
     @{ Name = 'dictionary'; Text = $dictionary }
     @{ Name = 'mode matrix'; Text = $modeMatrix }
     @{ Name = 'subagents reference'; Text = $subagents }
@@ -417,7 +448,33 @@ foreach ($surface in @(
 }
 
 foreach ($surface in @(
-    @{ Name = 'codex-workflows skill'; Text = $skillText }
+    @{ Name = 'workflows skill'; Text = $skillTextNormalized }
+    @{ Name = 'dictionary'; Text = $dictionaryNormalized }
+)) {
+    if ($surface.Text -notmatch 'workers remain native.*unless.*hybrid=canary') {
+        throw "$($surface.Name) is missing the hybrid writer exception to the native worker route."
+    }
+}
+
+foreach ($surface in @(
+    @{ Name = 'workflows skill'; Text = $skillText }
+    @{ Name = 'dictionary'; Text = $dictionary }
+    @{ Name = 'mode matrix'; Text = $modeMatrix }
+    @{ Name = 'subagents reference'; Text = $subagents }
+    @{ Name = 'validation reference'; Text = $validationReference }
+    @{ Name = 'backend policy'; Text = $backendPolicy }
+    @{ Name = 'AGENTS.md'; Text = $agentsMdText }
+    @{ Name = 'README'; Text = $readmeText }
+)) {
+    foreach ($flag in 'hybrid=canary', 'hybrid=off') {
+        if ($surface.Text -notmatch [regex]::Escape($flag)) {
+            throw "$($surface.Name) is missing the experimental hybrid flag contract: $flag"
+        }
+    }
+}
+
+foreach ($surface in @(
+    @{ Name = 'workflows skill'; Text = $skillText }
     @{ Name = 'backend policy'; Text = $backendPolicy }
     @{ Name = 'subagents reference'; Text = $subagents }
     @{ Name = 'AGENTS.md'; Text = $agentsMdText }
@@ -429,13 +486,13 @@ foreach ($surface in @(
     }
 }
 
-foreach ($instruction in 'internal_subagent_backend=opencode','internal_subagent_backend=native','internal_subagent_transport=native_relay','opencode_worker','opencode-go/deepseek-v4-flash','AGENT_PERMISSION=yolo','task','external_directory','read-only','blocked','native','do not silently fall back') {
+foreach ($instruction in 'internal_subagent_backend=opencode','internal_subagent_backend=native','internal_subagent_transport=native_relay','opencode_worker','opencode-go/deepseek-v4-pro','AGENT_PERMISSION=yolo','task','external_directory','read-only','blocked','native','do not silently fall back') {
     if ($subagents -notmatch [regex]::Escape($instruction)) {
         throw "Subagents reference is missing internal-backend contract: $instruction"
     }
 }
 
-foreach ($instruction in 'internal_subagent_backend=opencode','internal_subagent_backend=native','internal_subagent_transport=native_relay','native `relay`','opencode_worker','opencode-go/deepseek-v4-flash','variant=max','effective no-edit','task','external_directory','do not silently fall back') {
+foreach ($instruction in 'internal_subagent_backend=opencode','internal_subagent_backend=native','internal_subagent_transport=native_relay','native `relay`','opencode_worker','opencode-go/deepseek-v4-pro','variant=max','effective no-edit','task','external_directory','do not silently fall back') {
     if ($modeMatrixNormalized -notmatch [regex]::Escape($instruction)) {
         throw "Mode matrix is missing internal-backend contract: $instruction"
     }
@@ -447,9 +504,25 @@ foreach ($instruction in 'internal_subagent_backend=opencode','internal_subagent
     }
 }
 
-foreach ($instruction in 'opencode_worker','native','relay','AGENT_TYPE = "opencode"','AGENT_MODEL = "opencode-go/deepseek-v4-flash"','AGENT_EFFORT = "max"','AGENT_PERMISSION = "yolo"','sub-agents-mcp@0.12.0','AGENTS_DIR = "E:\\Repositories\\codex-workflows-prompt-pad\\agents\\opencode"','PATH = "C:\\Users\\mathe\\AppData\\Roaming\\npm\\node_modules\\opencode-ai\\bin','opencode run --model opencode-go/deepseek-v4-flash --variant max "Responda somente OK"') {
+foreach ($instruction in 'opencode_worker','native','relay','AGENT_TYPE = "opencode"','AGENT_MODEL = "opencode-go/deepseek-v4-pro"','AGENT_EFFORT = "max"','AGENT_PERMISSION = "yolo"','SESSION_ENABLED = "false"','sub-agents-mcp@0.12.0','AGENTS_DIR = "E:\\Repositories\\codex-workflows-prompt-pad\\agents\\opencode"','PATH = "C:\\Users\\mathe\\AppData\\Roaming\\npm\\node_modules\\opencode-ai\\bin','opencode run --model opencode-go/deepseek-v4-pro --variant max "Responda somente OK"') {
     if ($readmeText -notmatch [regex]::Escape($instruction)) {
         throw "README is missing OpenCode activation evidence: $instruction"
+    }
+}
+
+foreach ($instruction in 'opencode_hybrid_worker','AGENTS_DIR = "E:\\Repositories\\codex-workflows-prompt-pad\\agents\\opencode-hybrid"','AGENT_PERMISSION = "safe-edit"','hybrid=canary','HYBRID_ROUTE=writer','HYBRID_WORKTREE','HYBRID_MAIN_CHECKOUT','HYBRID_BASELINE') {
+    if ($readmeTextNormalized -notmatch [regex]::Escape($instruction)) {
+        throw "README is missing hybrid canary activation evidence: $instruction"
+    }
+}
+
+if (!(Test-Path -LiteralPath $hybridCanaryDoc)) {
+    throw 'Missing hybrid canary evaluation protocol.'
+}
+$hybridCanaryText = Get-Content -Raw -Encoding UTF8 $hybridCanaryDoc
+foreach ($fragment in 'Run each task twice', 'hybrid=off', 'hybrid=canary', 'H0', 'H1', 'H2', 'H3', 'H4', 'H5', 'at most two', 'must not edit a file', 'not a substitute', 'main-model calls', 'HYBRID_BASELINE', 'git rev-parse HEAD', 'git status --porcelain', 'Decision gate') {
+    if ($hybridCanaryText -notmatch [regex]::Escape($fragment)) {
+        throw "Hybrid canary protocol is missing: $fragment"
     }
 }
 
@@ -458,6 +531,81 @@ if (Test-Path -LiteralPath $codexConfigPath) {
     $codexConfigText = Get-Content -Raw -Encoding UTF8 $codexConfigPath
     if ($codexConfigText -notmatch '(?m)^AGENT_PERMISSION\s*=\s*"yolo"\s*$') {
         throw 'Configured opencode_worker must use AGENT_PERMISSION=yolo so task/external_directory can be delegated; agent frontmatter owns no-edit.'
+    }
+
+    $workerEnvMatch = [regex]::Match($codexConfigText, '(?ms)^\[mcp_servers\.opencode_worker\.env\]\s*(?<body>.*?)(?=^\[|\z)')
+    if (!$workerEnvMatch.Success) {
+        throw 'Configured opencode_worker requires the [mcp_servers.opencode_worker.env] table.'
+    }
+
+    $workerEnvText = $workerEnvMatch.Groups['body'].Value
+    foreach ($instruction in 'SESSION_ENABLED = "false"') {
+        if ($workerEnvText -notmatch [regex]::Escape($instruction)) {
+            throw "Configured opencode_worker must disable session persistence: $instruction"
+        }
+    }
+    if ($workerEnvText -match '(?m)^SESSION_(DIR|RETENTION_DAYS)\s*=') {
+        throw 'Configured opencode_worker must not define a session directory or retention setting.'
+    }
+
+    if ($codexConfigText -cmatch '(?m)^\[mcp_servers\.opencode_hybrid_worker(?:\.|\])') {
+        $hybridServerMatch = [regex]::Match($codexConfigText, '(?ms)^\[mcp_servers\.opencode_hybrid_worker\]\s*(?<body>.*?)(?=^\[|\z)')
+        if (!$hybridServerMatch.Success) {
+            throw 'Configured opencode_hybrid_worker requires the [mcp_servers.opencode_hybrid_worker] table.'
+        }
+
+        $hybridServerText = $hybridServerMatch.Groups['body'].Value
+        foreach ($instruction in 'command = "npx.cmd"', 'sub-agents-mcp@0.12.0') {
+            if ($hybridServerText -notmatch [regex]::Escape($instruction)) {
+                throw "Configured opencode_hybrid_worker is missing: $instruction"
+            }
+        }
+
+        $hybridEnvMatch = [regex]::Match($codexConfigText, '(?ms)^\[mcp_servers\.opencode_hybrid_worker\.env\]\s*(?<body>.*?)(?=^\[|\z)')
+        if (!$hybridEnvMatch.Success) {
+            throw 'Configured opencode_hybrid_worker requires the [mcp_servers.opencode_hybrid_worker.env] table.'
+        }
+
+        $hybridEnvText = $hybridEnvMatch.Groups['body'].Value
+        foreach ($instruction in 'SESSION_ENABLED = "false"') {
+            if ($hybridEnvText -notmatch [regex]::Escape($instruction)) {
+                throw "Configured opencode_hybrid_worker must disable session persistence: $instruction"
+            }
+        }
+        if ($hybridEnvText -match '(?m)^SESSION_(DIR|RETENTION_DAYS)\s*=') {
+            throw 'Configured opencode_hybrid_worker must not define a session directory or retention setting.'
+        }
+
+        foreach ($instruction in 'AGENT_TYPE = "opencode"', 'AGENT_MODEL = "opencode-go/deepseek-v4-pro"', 'AGENT_EFFORT = "max"') {
+            if ($hybridEnvText -notmatch "(?m)^$([regex]::Escape($instruction))\s*$") {
+                throw "Configured opencode_hybrid_worker is missing: $instruction"
+            }
+        }
+
+        $permissionMatch = [regex]::Match($hybridEnvText, '(?m)^AGENT_PERMISSION\s*=\s*["''](?<value>[^"'']+)["'']\s*$')
+        if (!$permissionMatch.Success -or $permissionMatch.Groups['value'].Value -ne 'safe-edit') {
+            throw 'Configured opencode_hybrid_worker must use AGENT_PERMISSION=safe-edit.'
+        }
+
+        $agentsDirMatch = [regex]::Match($hybridEnvText, '(?m)^AGENTS_DIR\s*=\s*["''](?<value>[^"'']+)["'']\s*$')
+        if (!$agentsDirMatch.Success) {
+            throw 'Configured opencode_hybrid_worker is missing AGENTS_DIR.'
+        }
+
+        $configuredAgentsDir = $agentsDirMatch.Groups['value'].Value.Replace('\\', '\')
+        try {
+            $resolvedConfiguredAgentsDir = [IO.Path]::GetFullPath($configuredAgentsDir)
+            $resolvedExpectedAgentsDir = [IO.Path]::GetFullPath($opencodeHybridAgentsRoot)
+        } catch {
+            throw 'Configured opencode_hybrid_worker has an invalid AGENTS_DIR.'
+        }
+
+        if ($resolvedConfiguredAgentsDir.TrimEnd('\') -ine $resolvedExpectedAgentsDir.TrimEnd('\')) {
+            throw "Configured opencode_hybrid_worker must point to $opencodeHybridAgentsRoot."
+        }
+    }
+    else {
+        Write-Warning 'opencode_hybrid_worker is not configured; hybrid=canary remains inactive until the server is added and H0 passes.'
     }
 }
 
@@ -471,10 +619,13 @@ if ($relay -notmatch '(?m)^name\s*=\s*"relay"\s*$' -or $relay -notmatch '(?m)^sa
     throw 'Native relay profile must be named relay and use read-only sandbox.'
 }
 
-foreach ($instruction in 'mcp__opencode_worker__run_agent','RELAY_STATUS=success|blocked|error','RELAY_RESPONSE_BEGIN','never falls back') {
-    if ($relay -notmatch [regex]::Escape($instruction)) {
+foreach ($instruction in 'mcp__opencode_worker__run_agent','mcp__opencode_hybrid_worker__run_agent','A task beginning with `HYBRID_ROUTE=writer`','HYBRID_WORKTREE','HYBRID_MAIN_CHECKOUT','HYBRID_BASELINE','RELAY_STATUS=success|blocked|error','RELAY_ROUTE=read-only|hybrid-writer','RELAY_RESPONSE_BEGIN','never route a writer to the read-only server','report `RELAY_STATUS=blocked`','never downgrade the malformed writer task','never silently switch') {
+    if ($relayNormalized -notmatch [regex]::Escape($instruction)) {
         throw "Native relay profile is missing transport contract: $instruction"
     }
+}
+if ($relayNormalized -notmatch '(?i)never falls? back') {
+    throw 'Native relay profile is missing the no-fallback transport contract.'
 }
 
 foreach ($instruction in '## Sincroniza.+?o do plano no Codex App','update_plan','tarefas n.+?triviais com duas ou mais fases','2 a 5 passos curtos','primeiro com.+?a em andamento','demais ficam pendentes','Depois de comprovar uma fase e antes do primeiro comando da pr.+?xima','completed','in_progress','futuras como pendentes','Se o escopo mudar, atualiza o plano antes de continuar','Ao provar a .+?ltima fase','todos os passos como conclu.+?dos','nenhum passo em andamento','N.+?o atualiza a lista depois de cada comando','Tarefas simples ou de uma fase n.+?o recebem uma lista artificial') {
@@ -489,14 +640,32 @@ foreach ($instruction in 'with two or more phases','at the start, the first phas
     }
 }
 
-foreach ($instruction in 'AHK launchers paste one of `$codex-workflows`, `$antigravity-workflows`, or `$opencode-workflows` with `mode=<MODE>`','canonical default execution contract') {
+foreach ($instruction in 'AHK launchers paste the canonical `$workflows` prefix with `mode=<MODE>`','compatibility aliases generated from the same source','canonical default execution contract') {
     if ($modeMatrixNormalized -notmatch [regex]::Escape($instruction)) {
         throw "Mode matrix is missing the mode-only launcher contract: $instruction"
     }
 }
 
-if ($workflowSkillInterfaceText -notmatch '(?m)^\s*default_prompt:\s*"\$codex-workflows mode=PLAN\.AUTO"\s*$') {
-    throw 'codex-workflows interface must use the minimal PLAN.AUTO prompt.'
+if ($workflowSkillInterfaceText -notmatch '(?m)^\s*default_prompt:\s*"\$workflows mode=PLAN\.AUTO"\s*$') {
+    throw 'workflows interface must use the minimal PLAN.AUTO prompt.'
+}
+
+foreach ($instruction in 'references/runtime-adapters.md','`$workflows` as the canonical user-facing prefix','compatibility aliases','Select exactly one runtime adapter') {
+    if ($skillText -notmatch [regex]::Escape($instruction)) {
+        throw "workflows skill is missing canonical runtime routing: $instruction"
+    }
+}
+
+foreach ($instruction in '## Common contract','## Codex','## Google Antigravity','## OpenCode','session persistence and continuation reuse are disabled') {
+    if ($runtimeAdapters -notmatch [regex]::Escape($instruction)) {
+        throw "Runtime adapters reference is missing host contract: $instruction"
+    }
+}
+
+foreach ($instruction in 'Install-WorkflowAlias','workflows','codex-workflows','antigravity-workflows','opencode-workflows') {
+    if ($installScriptText -notmatch [regex]::Escape($instruction)) {
+        throw "Installer is missing workflows compatibility handling: $instruction"
+    }
 }
 
 if ($skillText -notmatch [regex]::Escape('references/research.md')) {
@@ -656,16 +825,16 @@ foreach ($instruction in 'Read-only. Do not edit files','assigned, non-overlappi
 }
 
 $workflowBindings = @(
-    @{ Key = 'Numpad1'; Shortcut = 'NUM1'; Prompt = '$opencode-workflows mode=PLAN.AUTO'; Label = 'PLAN.AUTO' }
-    @{ Key = 'Numpad2'; Shortcut = 'NUM2'; Prompt = '$opencode-workflows mode=DELIVER.AUTO'; Label = 'DELIVER.AUTO' }
-    @{ Key = 'Numpad3'; Shortcut = 'NUM3'; Prompt = '$opencode-workflows mode=COMMIT'; Label = 'COMMIT' }
-    @{ Key = 'Numpad4'; Shortcut = 'NUM4'; Prompt = '$opencode-workflows mode=BUG.INV'; Label = 'BUG.INV' }
-    @{ Key = 'Numpad5'; Shortcut = 'NUM5'; Prompt = '$opencode-workflows mode=BUG.FIX'; Label = 'BUG.FIX' }
-    @{ Key = 'Numpad6'; Shortcut = 'NUM6'; Prompt = '$opencode-workflows mode=DEBUG'; Label = 'DEBUG' }
-    @{ Key = 'Numpad7'; Shortcut = 'NUM7'; Prompt = '$opencode-workflows mode=REWORK'; Label = 'REWORK' }
-    @{ Key = 'Numpad8'; Shortcut = 'NUM8'; Prompt = '$opencode-workflows mode=R.A.F.V'; Label = 'R.A.F.V' }
-    @{ Key = 'Numpad9'; Shortcut = 'NUM9'; Prompt = '$opencode-workflows mode=TN.SKILL'; Label = 'TN.SKILL' }
-    @{ Key = 'NumpadMult'; Shortcut = 'NUM*'; Prompt = '$opencode-workflows mode=RESEARCH.DEEP'; Label = 'RESEARCH.DEEP' }
+    @{ Key = 'Numpad1'; Shortcut = 'NUM1'; Prompt = '$workflows mode=PLAN.AUTO'; Label = 'PLAN.AUTO' }
+    @{ Key = 'Numpad2'; Shortcut = 'NUM2'; Prompt = '$workflows mode=DELIVER.AUTO'; Label = 'DELIVER.AUTO' }
+    @{ Key = 'Numpad3'; Shortcut = 'NUM3'; Prompt = '$workflows mode=COMMIT'; Label = 'COMMIT' }
+    @{ Key = 'Numpad4'; Shortcut = 'NUM4'; Prompt = '$workflows mode=BUG.INV'; Label = 'BUG.INV' }
+    @{ Key = 'Numpad5'; Shortcut = 'NUM5'; Prompt = '$workflows mode=BUG.FIX'; Label = 'BUG.FIX' }
+    @{ Key = 'Numpad6'; Shortcut = 'NUM6'; Prompt = '$workflows mode=DEBUG'; Label = 'DEBUG' }
+    @{ Key = 'Numpad7'; Shortcut = 'NUM7'; Prompt = '$workflows mode=REWORK'; Label = 'REWORK' }
+    @{ Key = 'Numpad8'; Shortcut = 'NUM8'; Prompt = '$workflows mode=R.A.F.V'; Label = 'R.A.F.V' }
+    @{ Key = 'Numpad9'; Shortcut = 'NUM9'; Prompt = '$workflows mode=TN.SKILL'; Label = 'TN.SKILL' }
+    @{ Key = 'NumpadMult'; Shortcut = 'NUM*'; Prompt = '$workflows mode=RESEARCH.DEEP'; Label = 'RESEARCH.DEEP' }
 )
 $audiobookMapPrompt = '$audiobook-codex stage=MAP native-only source{PDF|EPUB} library-root{E:\Pessoal\e-books} output{book-map.json|assets-manifest.json} visual-fallback{pdf|computer} swarm{bounded}'
 $audiobookTranscribePrompt = '$audiobook-codex stage=TRANSCRIBE native-only input{book-map.json|assets-manifest.json} output{text/source|epub-manifest.json} fidelity=strict ledger=required epub-profile{antique-paper}'
@@ -695,7 +864,7 @@ foreach ($instruction in 'phase validation does not spawn reviewers','do not spa
     }
 }
 
-foreach ($instruction in '`subA-role-lock`','`subA-custom-spawn`','`subA-effort`','`subA-retry`','`subA-retry-block`','never use `default` or omit the role','Never combine `fork_context=true` with `agent_type`','omit `fork_context`, `model`, and `reasoning_effort`','one fresh retry with the same exact role','any required read-only gate remains blocked','`review-embargo`','`subA-reuse`','`fix-embargo`','one fresh read-only reviewer checks the correction delta') {
+foreach ($instruction in '`subA-role-lock`','`subA-custom-spawn`','`subA-effort`','`subA-retry`','`subA-retry-block`','never use `default` or omit the role','Never combine `fork_context=true` with `agent_type`','omit `fork_context`, `model`, and `reasoning_effort`','one fresh retry with the same exact role','any required read-only gate remains blocked','`review-embargo`','`subA-isolation`','`fix-embargo`','one fresh read-only reviewer checks the correction delta') {
     if ($subagents -notmatch [regex]::Escape($instruction)) {
         throw "Subagent guidance is missing role-lock or delivery anti-spam instruction: $instruction"
     }
@@ -745,7 +914,7 @@ foreach ($binding in $workflowBindings) {
     }
 }
 
-$workflowPromptCount = [regex]::Matches($ahkText, '(?:\$codex-workflows|\$antigravity-workflows|\$opencode-workflows) mode=').Count
+$workflowPromptCount = [regex]::Matches($ahkText, '\$workflows mode=').Count
 if ($workflowPromptCount -lt $workflowBindings.Count) {
     throw "AHK must contain at least $($workflowBindings.Count) minimal workflow prompts; found $workflowPromptCount."
 }

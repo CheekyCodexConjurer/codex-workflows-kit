@@ -1,7 +1,8 @@
 # Mode Matrix
 
-AHK launchers paste one of `$codex-workflows`, `$antigravity-workflows`, or
-`$opencode-workflows` with `mode=<MODE>`. Each mode entry below
+AHK launchers paste the canonical `$workflows` prefix with `mode=<MODE>`.
+`$codex-workflows`, `$antigravity-workflows`, and `$opencode-workflows` remain
+compatibility aliases generated from the same source. Each mode entry below
 is the canonical default execution contract; optional trailing user text
 provides task context or an explicit override.
 
@@ -10,17 +11,25 @@ provides task context or an explicit override.
 The installed internal policy defaults to
 `internal_subagent_backend=opencode` with
 `internal_subagent_transport=native_relay`; neither is a user-facing prompt
-flag. If a mode decides that a read-only sidecar is useful or required, spawn
-the native `relay` profile in background with `{target_agent,cwd,task}`. The
-relay calls `opencode_worker`, which uses `opencode-go/deepseek-v4-flash` with
-`variant=max` and effective no-edit permissions. Keep implementation workers
-native.
+flag. If a mode decides that a read-only sidecar is useful or required, spawn a
+fresh native `relay` profile with `multi_agent_v1__spawn_agent` for that
+task. Each allocation uses `{target_agent,cwd,task}` without a session
+identifier. The relay calls `opencode_worker`, which uses
+`opencode-go/deepseek-v4-pro` with `variant=max` and effective no-edit
+permissions. Keep implementation workers native.
 
 All configured OpenCode read-only agents may use the OpenCode `task` tool and
 `external_directory`; their definitions must keep `edit: deny` and `bash: deny`.
 The parent continues useful non-overlap work and joins the relay only at the
 decision/final gate. Preserve the MCP response and its provenance instead of
 silently translating it into an unverified conclusion.
+
+The optional `hybrid=canary` flag is a workflow-level opt-in. It preserves the
+GPT orchestrator as owner, keeps readers on `opencode_worker`, and permits only
+claim-mapped writers with different absolute `HYBRID_WORKTREE` and
+`HYBRID_MAIN_CHECKOUT` paths to use the separate
+`opencode_hybrid_worker` safe-edit server. Omitted/`hybrid=off` keeps the
+current route; an unavailable hybrid server blocks rather than falling back.
 
 An explicit maintenance change to `internal_subagent_backend=native` routes
 all sub-agents through the native custom-role profiles. If OpenCode is selected
@@ -43,7 +52,7 @@ external endpoint, or dependency without explicit scope.
 - `IMPL.AUTO`: use `tn-enforce`. Default implementation router. Start with `IMPL`; escalate to `IMPL.PHASE` only with evidence of multi-phase/refactor/shared-core/parallel-safe roadmap/earned-rework-approved. Checkpoint before phase split; stop if approved plan/scope is missing or drift appears.
 - `IMPL`: use `tn-enforce`. Implement approved scope. Use plan-cache/memory-gate, direct reads, optional subA gate, smallest safe diff, `rework-checkpoint`, size-check, verify-tier, and `quality-delta`; final changes/files/validation/risks.
 - `IMPL.PHASE`: use `tn-enforce`. Implement approved phased roadmap. Consume phase graph/claim-map draft and `quality-obligations` if present. Execute `earned-rework-approved` only inside approved contracts. Main owns critical path. Use sidecars/workers only when parallel-safe. Execute unit phases, validate each, checkpoint, continue only if clean.
-- `DELIVER.AUTO`: use `tn-enforce` and execute only approved `quality-obligations`; broad discoveries trigger `replan-gate`. Consume an approved `delivery-contract` and route to `IMPL` or `IMPL.PHASE`. Allow `preflight-subA` scouts and claim-mapped implementation workers when they save wall-clock, then complete the full approved `implementation-wave`: main keeps the critical path moving, workers handle only parallel-safe slices, and each unit gets merge-gate plus targeted `phase-val`; phase validation does not spawn reviewers. Under the internal backend policy, OpenCode may route only read-only sidecars; implementation workers remain native. After every approved phase and worker is complete, pass `integrated-freeze` and only then run integrated validation plus the risk-tiered `review-batch` in parallel on one stable snapshot. Every read-only spawn uses its exact custom role and omits `fork_context`, `model`, and `reasoning_effort`; never combine `fork_context=true` with `agent_type`. A transient availability error gets one fresh retry of that same valid custom-spawn shape after useful local work, never a fallback to `default`, and an unavailable required reviewer leaves the review gate blocked. Triage once through `finding-gate`; if no actionable finding remains and acceptance passes, go directly to `clean-gate`. Otherwise execute one batched `fix-batch`, merge and revalidate, then run `delta-closure`; do not spawn reviewers per phase, finding, or individual fix, and repeat full reviewer lenses only after a material risk-surface change. Use `early-review-exception` only for an explicit high-impact contract/security/data/migration risk or unresolved validation failure. `clean-gate` completes delivery; `replan-gate` stops/escalates. No commit.
+- `DELIVER.AUTO`: use `tn-enforce` and execute only approved `quality-obligations`; broad discoveries trigger `replan-gate`. Consume an approved `delivery-contract` and route to `IMPL` or `IMPL.PHASE`. Allow `preflight-subA` scouts and claim-mapped implementation workers when they save wall-clock, then complete the full approved `implementation-wave`: main keeps the critical path moving, workers handle only parallel-safe slices, and each unit gets merge-gate plus targeted `phase-val`; phase validation does not spawn reviewers. Under the internal backend policy, OpenCode may route only read-only sidecars; implementation workers remain native unless the explicit `hybrid=canary` flag supplies the separate safe-edit writer route, isolated worktree, and two-writer cap. After every approved phase and worker is complete, pass `integrated-freeze` and only then run integrated validation plus the risk-tiered `review-batch` in parallel on one stable snapshot. Every read-only spawn uses its exact custom role and omits `fork_context`, `model`, and `reasoning_effort`; never combine `fork_context=true` with `agent_type`. A transient availability error gets one fresh retry of that same valid custom-spawn shape after useful local work, never a fallback to `default`, and an unavailable required reviewer leaves the review gate blocked. Triage once through `finding-gate`; if no actionable finding remains and acceptance passes, go directly to `clean-gate`. Otherwise execute one batched `fix-batch`, merge and revalidate, then run `delta-closure`; do not spawn reviewers per phase, finding, or individual fix, and repeat full reviewer lenses only after a material risk-surface change. Use `early-review-exception` only for an explicit high-impact contract/security/data/migration risk or unresolved validation failure. `clean-gate` completes delivery; `replan-gate` stops/escalates. No commit.
 - `REVIEW`: use `tn-verify`. No-edit diff review. Inspect changed flow/tests, use approval-bar and size-check, require read-only risk/regression subA, findings first with severity/evidence/fix/tests/risk.
 - `COMMIT`: use `tn-verify`; never start feature or structural refactoring here. Inspect status/index/diff/untracked/remotes, classify every candidate including staged content, and run `gitignore-hygiene`; block on suspected staged secret/generated/cache/local material or broad existing ignores of likely source/docs/config. Build `commit-map` units by independently revertible behavior rather than file or agent. Preserve coherent pre-staged content as an explicit unit; `commit-series=auto` validates and commits ordered units with conventional title, Context, Validation, and `Operator` trailer. Run integrated validation, then `push=current` only when the current remote branch already exists, without force, branch creation, or upstream changes; preserve local commits and report when validation or push blocks.
 - `BUG.INV`: use `tn-observe`. No-edit, evidence-first investigation. Define repro/failure signature, use ctx-loop/CodeGraph if useful, prove or reject hypotheses one by one, distinguish observation/inference/unknown, and finish with root-cause evidence plus a minfix plan and causal `quality-obligations`; when an evidence gap remains material, record the `obs-gate` result for the next approved unit without instrumenting here.
