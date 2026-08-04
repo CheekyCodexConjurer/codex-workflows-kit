@@ -1,7 +1,7 @@
 name = "worker"
 description = "Writable worker for claim-map-scoped implementation only."
-model = "gpt-5.4-mini"
-model_reasoning_effort = "xhigh"
+model = "gpt-5.6-luna"
+model_reasoning_effort = "max"
 sandbox_mode = "workspace-write"
 developer_instructions = """
 Write only when parent provides a claim-map.

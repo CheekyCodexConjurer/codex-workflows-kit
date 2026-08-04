@@ -26,8 +26,26 @@ the main checkout. Stop the run if the writer touches an unapproved path,
 tries to commit/push/merge, accesses an external directory, or reports
 success without evidence.
 
-At most two mutable hybrid writers may be active at once, and the parent must
-wait for or stop a writer before starting another when that cap is reached.
+Start mutable hybrid writers serially for the initial canary. A prior concurrent
+H1/H2 attempt left H2 with empty hybrid markers and had to be discarded; only
+after a separate concurrency-isolation probe passes may the parent use at most two
+writers at once. The parent must wait for or stop a writer before starting
+another when the active cap is reached.
+
+## Runtime notes
+
+- The benchmark's result-bearing GPT profiles are `gpt-5.6-luna` with
+  `max`; verify the installed `worker`, `scout`, `reviewer`, and `researcher`
+  profiles before measuring. The native `relay` is transport-only and remains
+  `gpt-5.4-mini` with `high`, because changing it to Luna Max caused the H0
+  MCP activation probe to fail with `tools.tool_search is not a function`.
+- A prior MCP launch returned `spawn opencode ENOENT` even though the local
+  executable was present; keep the route blocked until the MCP process/session
+  is reloaded and H0 passes. Do not convert that failure into a quality or
+  savings result.
+- Do not count a blocked concurrent attempt as model quality. Record it as
+  protocol reliability/rework and use the sequential retry as the paired
+  acceptance result.
 
 Before H1, run a harmless H0 preflight against the real `opencode_hybrid_worker`
 server to confirm that the `writer` agent is discoverable, the configured

@@ -58,7 +58,10 @@ When `hybrid=canary` is present:
 - an unavailable or failed hybrid server blocks the requested route. There is
   no silent fallback to a native writer or to the read-only server.
 
-The native `relay` remains read-only. It selects the second MCP server only
+The native `relay` remains read-only and transport-only. It uses GPT-5.4 Mini
+with `high` solely to activate the deferred MCP function reliably; it is not a
+benchmark worker or judge. Result-bearing native profiles use GPT-5.6 Luna with
+`max`. The relay selects the second MCP server only
 when the parent task begins with the exact `HYBRID_ROUTE=writer` marker and
 contains different absolute `HYBRID_WORKTREE` and `HYBRID_MAIN_CHECKOUT` paths
 plus `HYBRID_BASELINE`; the writer verifies that its `HEAD` equals that commit.

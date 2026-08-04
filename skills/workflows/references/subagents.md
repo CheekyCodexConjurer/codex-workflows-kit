@@ -31,12 +31,17 @@ Lifecycle:
 
 Models:
 
-- `subA-model`: every custom profile uses 5.4 Mini. The custom-role spawn itself still omits `model` and `reasoning_effort`.
+- `subA-model`: every result-bearing custom GPT profile uses GPT-5.6 Luna. The
+  transport-only `relay` remains GPT-5.4 Mini for MCP activation. The custom-
+  role spawn itself still omits `model` and `reasoning_effort`, so the profile
+  is the source of truth rather than an unverified per-call hint.
 - `subA-effort`: analytical unsuffixed roles use the installation default,
-  GPT-5.4 Mini with `xhigh`; the native transport `relay` is intentionally
-  pinned to `high` so it reliably activates the known deferred MCP function. Use `<role>-{low|high|max}`
-  for an explicit effort override.
-- `subA-worker-model`: apply the same 5.4 Mini effort selection to writable claim-mapped workers; select `max` only for a material, explicit decision gate.
+  GPT-5.6 Luna with `max`; the native transport `relay` is fixed at GPT-5.4
+  Mini `high` only for MCP activation. Use `<role>-{low|high|xhigh}` only for
+  an explicit lower-effort override on result-bearing roles.
+- `subA-worker-model`: apply GPT-5.6 Luna with `max` to writable claim-mapped
+  workers unless a separately approved benchmark explicitly selects another
+  model and records the effective profile.
 
 Roles:
 

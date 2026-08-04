@@ -202,11 +202,12 @@ if ($unexpectedHybridAgents.Count -gt 0) {
 
 Get-ChildItem -File (Join-Path $repo 'agents') -Filter '*.toml' | ForEach-Object {
     $text = Get-Content -Raw -Encoding UTF8 $_.FullName
-    if ($text -notmatch '(?m)^model\s*=\s*"gpt-5\.4-mini"\s*$') {
-        throw "Agent must use gpt-5.4-mini: $($_.Name)"
+    $expectedModel = if ($_.Name -eq 'relay.toml') { 'gpt-5.4-mini' } else { 'gpt-5.6-luna' }
+    if ($text -notmatch ('(?m)^model\s*=\s*"' + [regex]::Escape($expectedModel) + '"\s*$')) {
+        throw "Agent must use ${expectedModel}: $($_.Name)"
     }
 
-    $expectedEffort = if ($_.Name -eq 'relay.toml') { 'high' } else { 'xhigh' }
+    $expectedEffort = if ($_.Name -eq 'relay.toml') { 'high' } else { 'max' }
     $effortPattern = '(?m)^model_reasoning_effort\s*=\s*"' + [regex]::Escape($expectedEffort) + '"\s*$'
     if ($text -notmatch $effortPattern) {
         throw "Base agent must use $expectedEffort reasoning: $($_.Name)"
@@ -217,15 +218,23 @@ $modelCatalogPath = 'C:\Users\mathe\.codex\super-app-manager\custom_model_catalo
 if (Test-Path $modelCatalogPath) {
     $modelCatalog = Get-Content -Raw -Encoding UTF8 $modelCatalogPath | ConvertFrom-Json
     $modelSlugs = @($modelCatalog.models | ForEach-Object { [string]$_.slug })
-    if ($modelSlugs -notcontains 'gpt-5.4-mini') {
-        throw 'Configured agent model is absent from the Codex model catalog: gpt-5.4-mini'
+    foreach ($model in 'gpt-5.4-mini', 'gpt-5.6-luna') {
+        if ($modelSlugs -notcontains $model) {
+            throw "Configured agent model is absent from the Codex model catalog: $model"
+        }
     }
 
     $miniModel = @($modelCatalog.models | Where-Object { $_.slug -eq 'gpt-5.4-mini' })[0]
-    $supportedEfforts = @($miniModel.supported_reasoning_levels | ForEach-Object { [string]$_.effort })
-    foreach ($effort in 'high', 'xhigh') {
+    $miniEfforts = @($miniModel.supported_reasoning_levels | ForEach-Object { [string]$_.effort })
+    if ($miniEfforts -notcontains 'high') {
+        throw 'gpt-5.4-mini does not support relay high reasoning'
+    }
+
+    $lunaModel = @($modelCatalog.models | Where-Object { $_.slug -eq 'gpt-5.6-luna' })[0]
+    $supportedEfforts = @($lunaModel.supported_reasoning_levels | ForEach-Object { [string]$_.effort })
+    foreach ($effort in 'max') {
         if ($supportedEfforts -notcontains $effort) {
-            throw "gpt-5.4-mini does not support required reasoning effort: $effort"
+            throw "gpt-5.6-luna does not support required reasoning effort: $effort"
         }
     }
 }
