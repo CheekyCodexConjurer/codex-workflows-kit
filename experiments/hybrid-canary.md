@@ -34,11 +34,10 @@ another when the active cap is reached.
 
 ## Runtime notes
 
-- The benchmark's result-bearing GPT profiles are `gpt-5.6-luna` with
-  `max`; verify the installed `worker`, `scout`, `reviewer`, and `researcher`
-  profiles before measuring. The native `relay` is transport-only and remains
-  `gpt-5.4-mini` with `high`, because changing it to Luna Max caused the H0
-  MCP activation probe to fail with `tools.tool_search is not a function`.
+- The benchmark's native result-bearing GPT profiles are `gpt-5.4-mini` with
+  `xhigh`; verify the installed `worker`, `scout`, `reviewer`, and `researcher`
+  profiles before measuring. The native `relay` remains `gpt-5.4-mini` with
+  `high` as the transport profile for MCP activation.
 - A prior MCP launch returned `spawn opencode ENOENT` even though the local
   executable was present; keep the route blocked until the MCP process/session
   is reloaded and H0 passes. Do not convert that failure into a quality or
