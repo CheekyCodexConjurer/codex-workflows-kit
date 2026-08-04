@@ -17,14 +17,19 @@ Check strategy:
   `opencode-go/deepseek-v4-flash`, `AGENT_EFFORT=max`/OpenCode `--variant max`,
   bounded timeout, Windows `PATH` resolution for `opencode.exe`,
   `AGENT_PERMISSION=yolo`, `SESSION_ENABLED=false` without a session directory
-  or retention setting, and each OpenCode definition's effective `edit: deny`,
-  `bash: deny`, `task: allow`, and `external_directory: allow`. Run a direct
-  MCP probe from a fresh native relay before delegating required work; prove
-  that the relay preserves the response and that each request starts a new
-  isolated MCP conversation while the worktree remains unchanged. A selected
-  but failed relay/OpenCode route must remain blocked; it must not silently
-  fall back to native, reuse a completed relay, or call the MCP directly from
-  the main chat. The configured
+  or retention setting, reader definitions' effective `edit: deny`,
+  `bash: deny`, `task: allow`, and `external_directory: allow`, and the
+  writer definition's effective `edit: allow`, `bash: deny`, `task: deny`, and
+  `external_directory: deny`. Run a direct MCP probe from a fresh native relay
+  before delegating required work; prove that the relay preserves the response,
+  that reader and writer requests select the intended OpenCode target, that
+  each request starts a new isolated MCP conversation, and that a writer
+  request carries `WRITER_WORKTREE=<cwd>` and `WRITER_BASELINE=<full-commit>`.
+  Before and after any real writer probe, verify the main checkout is unchanged
+  and compare the returned worktree diff against the declared allowed paths;
+  treat any mismatch as a blocked merge. A selected but failed relay/OpenCode route must remain blocked; it
+  must not silently fall back to native, reuse a completed relay, or call the
+  MCP directly from the main chat. The configured
   `codegraph` MCP may stay enabled when explicitly authorized, but unreviewed
   external tools must not be inferred safe from the permission profile alone.
 - For nontrivial work shown in the Codex checklist with two or more phases, verify `update_plan` transitions at phase boundaries: at the start, the first phase is `in_progress` and future phases are `pending`; before the first command of the next phase, the previous phase is proven and `completed`, exactly one next phase is `in_progress`, and future phases remain `pending`; after the last phase is proven, every phase is `completed` and none is `in_progress`; scope changes update the checklist before work continues, and routine commands do not trigger updates. One-step or simple work does not need a checklist.
@@ -38,7 +43,7 @@ Check strategy:
   path after any bounded paydown.
 - In `DELIVER.AUTO`, phase validation is targeted checking only and must not spawn an independent reviewer; finish all approved implementation phases before review.
 - At `integrated-freeze`, run integrated validation and risk-tiered reviewers in parallel on the same stable diff.
-- Read-only validation/review agents must use their exact custom role. After a transient availability error, make one fresh same-role retry; never fall back to `default`, and keep a required gate blocked if that retry also fails.
+- Read-only validation/review agents must use their exact custom role. After a transient availability error, make one fresh same-role retry; never fall back to `default`, and keep a required gate blocked if that retry also fails. For a slot-full spawn failure, apply `subA-slot-full`: close only completed/idle integrated agents or wait for an optional one to finish, retry the same exact role once, never close active/waiting/required agents, and report explicit capacity evidence if recovery is impossible.
 - If integrated validation passes and review has no actionable finding, finish without a redundant closure review.
 - After a nonempty deduplicated fix batch changes the diff, revalidate once and run a delta-focused closure review; repeat full review only after a material risk-surface change.
 - Validação Pré-Voo de Símbolos via AST: Antes da aplicação de um patch pelo worker, verificar se todas as novas chamadas de método, funções ou imports existem e correspondem à definição no banco SQLite (.codegraph/codegraph.db) via CodeGraph.

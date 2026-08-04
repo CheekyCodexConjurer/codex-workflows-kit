@@ -14,7 +14,7 @@ Projeto local para versionar o fluxo de atalhos NUM do Codex:
 ```text
 skills/workflows/         Workflow skill canonica para Codex, Antigravity e OpenCode
 skills/evidence-first/    Grounding e verificacao condicional, sem atalho
-agents/                   Perfis nativos e readers OpenCode
+agents/                   Relay nativo, perfis de override e roles OpenCode
 codex/AGENTS.md           Instrucoes globais compactas
 plugins/mcp-foundation/   MCPs allowlisted, hook de auditoria e manutencao
 ahk/codex_prompt_pad.ahk  Prompt pad AutoHotkey
@@ -54,16 +54,29 @@ auditoria local com TTL de 24 horas. O Codex exige revisao unica do hook em
 O backend interno padrão é `internal_subagent_backend=opencode` com transporte
 `internal_subagent_transport=native_relay`, definido em
 `skills/workflows/references/backend-policy.md`. Você não precisa incluir
-uma flag no prompt. Quando o modo precisar de um sidecar read-only, o chat
-principal abre um perfil nativo `relay` novo; ele chama o MCP
-`opencode_worker`, preserva a resposta e a repassa como resposta de sub-agent
-nativo. Cada prompt usa uma conversa MCP isolada, sem persistência ou retomada
-de sessão. O chat principal continua livre até o gate de decisão/final.
+uma flag no prompt. Quando o modo precisar de um sidecar, o chat principal abre
+um perfil nativo `relay` novo; ele chama o único MCP `opencode_worker`,
+preserva a resposta e a repassa como resposta de sub-agent nativo. O relay
+continua separado do chat principal e não edita o próprio contexto. Cada prompt
+usa uma conversa MCP isolada, sem persistência ou retomada de sessão. O chat
+principal continua livre até o gate de decisão/final.
+
+Após integrar a resposta final de um relay, feche o relay concluído para liberar
+o slot. Se um novo spawn falhar porque os slots do host estão cheios, aplique
+`subA-slot-full`: recupere apenas agentes concluídos/ociosos já integrados ou
+aguarde um agente opcional terminar; depois repita o mesmo papel. Nunca feche
+agentes ativos, aguardando ou obrigatórios; sem recuperação segura, reporte
+bloqueio explícito.
 
 Todos os readers OpenCode configurados podem chamar outros sub-agents e ler
 diretórios externos. A escrita continua bloqueada por `edit: deny` e
-`bash: deny` nesses perfis. Workers nativos continuam responsáveis por patches,
-testes e qualquer escrita.
+`bash: deny` nesses perfis. O `worker` OpenCode é o writer padrão: recebe
+claim-map, worktree isolada e limites no prompt, usa somente `edit` com
+`external_directory: deny`, e mantém `bash`/delegação aninhada bloqueados. O
+GPT principal verifica o `cwd` e o baseline antes do spawn, revisa o diff e
+executa o guard de caminhos antes de integrar; para edições pequenas ou
+críticas, ele ainda pode escrever diretamente. O perfil nativo `worker` fica
+apenas como override explícito de manutenção.
 
 Para voltar ao backend nativo, peça explicitamente a um agente para alterar a
 política para `internal_subagent_backend=native`. Se o OpenCode estiver
@@ -77,7 +90,7 @@ Registre manualmente o servidor em `C:\Users\mathe\.codex\config.toml`:
 
 ```toml
 [mcp_servers.opencode_worker]
-command = "npx.cmd"
+command = "C:\\Users\\mathe\\.codex\\bin\\opencode-worker.cmd"
 args = ["-y", "sub-agents-mcp@0.12.0"]
 startup_timeout_sec = 30
 tool_timeout_sec = 600
@@ -113,13 +126,15 @@ opencode run --model opencode-go/deepseek-v4-flash --variant max "Responda somen
 ```
 
 O pacote usa `AGENT_PERMISSION=yolo` porque o nível `read-only` hard-coda a
-negação de `task` e `external_directory`. Isso não libera escrita: cada perfil
-OpenCode mantém `edit: deny` e `bash: deny`, e o validador rejeita definições
-que não contenham essas barreiras. `question`, `skill`, `todowrite` e LSP
-continuam negados. Essas permissões não são um sandbox de nível de sistema; não
-envie segredos. A configuração normal pode expor o MCP `codegraph`, que fica
-disponível por decisão explícita desta integração; qualquer outro MCP/custom
-tool com efeitos colaterais exige revisão separada. Após alterar
+negação de `task` e `external_directory`. Isso não transforma o MCP em sandbox:
+readers mantêm `edit: deny`/`bash: deny`, enquanto apenas o writer mantém
+`edit: allow`, `bash: deny`, `task: deny` e `external_directory: deny`; o validador rejeita definições fora
+desse contrato. `question`, `skill`, `todowrite` e LSP continuam negados. Essas
+permissões não são um sandbox de nível de sistema; não envie segredos e use
+worktrees isoladas para qualquer writer. A configuração normal pode expor o
+MCP `codegraph`, que fica disponível por decisão explícita desta integração;
+qualquer outro MCP/custom tool com efeitos colaterais exige revisão separada.
+Após alterar
 o bloco MCP, reinicie ou reconecte o servidor no Codex.
 
 Referências primárias: [OpenCode CLI](https://dev.opencode.ai/docs/cli/),
@@ -193,8 +208,8 @@ NUM8         $workflows mode=R.A.F.V
 NUM9         $workflows mode=TN.SKILL
 NUM*         $workflows mode=RESEARCH.DEEP
 
-NUM0+1       $workflows mode=PLAN.AUTO
-NUM0+2       $workflows mode=DELIVER.AUTO
+NUM0+1       $workflows mode=P.DEEP
+NUM0+2       $workflows mode=IMPL.PHASE
 NUM0+3       $workflows mode=COMMIT
 NUM0+4       $workflows mode=BUG.INV
 NUM0+5       $workflows mode=BUG.FIX

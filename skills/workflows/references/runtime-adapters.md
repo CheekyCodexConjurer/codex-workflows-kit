@@ -11,7 +11,8 @@ Every adapter must preserve the same:
 - `mode=<MODE>` routing and left-to-right alias expansion;
 - evidence, no-edit, write, review, commit, and clean-gate boundaries;
 - sub-agent role lock, claim maps, validation, and no-silent-fallback rules;
-- native ownership of all writes and integration when OpenCode is selected.
+- parent ownership of integration when OpenCode is selected, with delegated
+  claim-map writes performed by OpenCode through the native relay.
 
 An adapter may change how a tool or sub-agent is invoked. It must not change
 what the mode means, weaken a gate, or turn missing capabilities into a
@@ -19,9 +20,12 @@ success claim.
 
 ## Codex
 
-Use the native Codex tool and agent surface. When a read-only sidecar is
-required, follow `references/backend-policy.md` and create a fresh configured
-native relay for that request. Native workers own writes and integration.
+Use the native Codex tool and agent surface. When a read-only or claim-map
+writer sidecar is required, follow `references/backend-policy.md` and create a
+fresh configured native relay for that request. The relay owns transport and
+isolation; OpenCode owns delegated writer edits, while the main agent owns
+integration and final quality. Native workers remain only for the explicit
+native-backend maintenance override.
 
 ## Google Antigravity
 
@@ -35,8 +39,8 @@ falling back silently.
 
 Use OpenCode's configured Task surface and the role definitions for
 `scout`, `researcher`, `reviewer`, and `worker`. Read-only roles must not edit
-or run shell commands. Writable workers remain claim-map scoped and must pass
-their merge gate before integration. Each request starts a fresh task
+or run shell commands. Writable workers remain claim-map and isolated-worktree
+scoped and must pass their merge gate before integration. Each request starts a fresh task
 conversation; session persistence and continuation reuse are disabled.
 
 ## User-facing syntax

@@ -18,7 +18,10 @@ provider or transport flag to any prompt.
   the original response as a native sub-agent result.
 - A completed relay is not reused for a later prompt. Every prompt therefore
   starts an isolated MCP conversation and there is no continuation state to
-  persist or forward.
+  persist or forward. A completed relay remains open and counts toward host
+  concurrency until it is closed; after integrating its final response, close
+  it to release the slot. A slot-occupied spawn failure follows
+  `subA-slot-full`, not backend-unavailability fallback.
 - For a one-step read-only smoke or health test with explicit
   `{target_agent,cwd,task}`, use the fast path: do not read repository or
   backend files before the spawn. In a new Desktop relay, the MCP function can
@@ -26,8 +29,16 @@ provider or transport flag to any prompt.
   `tool_search`, then call only `opencode_worker`; a missing result remains
   blocked rather than searching for another connector.
 - The parent continues useful work and joins the relay at the decision/final
-  gate. Native workers remain responsible for every write, patch, test, and
-  claim-map-scoped implementation.
+  gate. OpenCode `worker` handles claim-map-scoped edits in the supplied
+  isolated worktree through the same relay and MCP. Before spawning it, the
+  parent verifies `cwd` is the isolated worktree root, differs from the main
+  checkout, has a clean baseline, and passes `WRITER_WORKTREE=<cwd>` plus
+  `WRITER_BASELINE=<full-commit>`. Afterward, the parent compares the diff to
+  the baseline and allowed paths before integration. The parent remains
+  responsible for reviewing diffs, running integrated tests, and merging; for
+  small or critical integration edits it may write directly. The native
+  `worker` profile is only an explicit `internal_subagent_backend=native`
+  maintenance override.
 - The native relay uses GPT-5.4 Mini with `high`; result-bearing native profiles
   use GPT-5.4 Mini with `xhigh`.
 - The mode still owns the decision to use a sidecar; the backend policy does not
@@ -35,9 +46,13 @@ provider or transport flag to any prompt.
 
 ## Relay and OpenCode permissions
 
-- `agents/relay.toml` is the native transport profile. It is read-only,
-  forwards standard work to `mcp__opencode_worker__run_agent`, preserves the
-  original response, and never falls back to a native or direct-CLI provider.
+- `agents/relay.toml` is the native transport profile. Its own context is
+  read-only, but it forwards reader and explicit claim-map writer work to
+  `mcp__opencode_worker__run_agent`, preserves the original response, and never
+  falls back to a native or direct-CLI provider. For `worker`, `cwd` must equal
+  the absolute isolated worktree root and the task must carry matching
+  `WRITER_WORKTREE`/`WRITER_BASELINE` tokens; the parent owns the filesystem
+  preflight and post-return diff guard.
 - The Desktop may defer MCP tools in a new relay. The relay performs exactly
   one built-in `tool_search` for its already-known exact MCP function before
   calling it; this is activation rather than broad tool/route discovery. A
@@ -46,12 +61,17 @@ provider or transport flag to any prompt.
   and read paths through `external_directory`. Their per-agent definitions
   must still deny `edit` and `bash`; `question`, `skill`, `todowrite`, and `lsp`
   remain denied unless a future definition explicitly documents a safe
-  exception.
+  exception. The OpenCode `worker` definition is the sole default exception:
+  it allows `edit`, denies `bash` and nested `task`, and uses only the supplied
+  isolated worktree with `external_directory: deny`. The parent runs
+  validation and owns integration.
 - `sub-agents-mcp@0.12.0` exposes only coarse permission levels. Its
   `AGENT_PERMISSION=read-only` hard-denies `task` and `external_directory`, so
   this route uses `AGENT_PERMISSION=yolo` only to remove those two coarse
-  denials. The OpenCode agent frontmatter is the effective no-edit boundary;
-  validation must reject any definition missing `edit: deny` or `bash: deny`.
+  denials. Reader agent frontmatter is the effective no-edit boundary;
+  validation must reject any read-only definition missing `edit: deny` or
+  `bash: deny`, while the sole default writer must have `edit: allow`,
+  `bash: deny`, `task: deny`, and `external_directory: deny`.
 - The normal `codegraph` MCP may remain enabled. External directory access does
   not authorize arbitrary side-effectful MCP tools or shell commands.
 
@@ -71,7 +91,10 @@ copies aligned when changing the backend or relay transport.
 If the active backend is `opencode` and its native relay, MCP, CLI, credentials,
 model, or variant is unavailable, preserve the required gate as blocked. Never
 silently switch to the native backend or direct MCP call. A native switch is
-an explicit policy change.
+an explicit policy change. A host capacity/full-slot response is a lifecycle
+condition: reclaim only completed/idle integrated relays or wait for an optional
+relay, then retry the same role; block only when no safe slot recovery or retry
+remains.
 
 The legacy `sub-agent=opencode` token is compatibility-only and must not be
 surfaced as a required user prompt flag.

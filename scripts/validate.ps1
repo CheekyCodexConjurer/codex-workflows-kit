@@ -156,8 +156,10 @@ foreach ($file in 'relay.toml','scout.toml','researcher.toml','reviewer.toml','w
     }
 }
 
-$opencodeAgentFiles = @('scout.md', 'researcher.md', 'reviewer.md')
-foreach ($file in $opencodeAgentFiles) {
+$opencodeReaderAgentFiles = @('scout.md', 'researcher.md', 'reviewer.md')
+$opencodeWriterAgentFiles = @('worker.md')
+$opencodeAgentFiles = @($opencodeReaderAgentFiles + $opencodeWriterAgentFiles)
+foreach ($file in $opencodeReaderAgentFiles) {
     $path = Join-Path $opencodeAgentsRoot $file
     if (!(Test-Path $path)) {
         throw "Missing OpenCode agent definition: $file"
@@ -167,6 +169,30 @@ foreach ($file in $opencodeAgentFiles) {
     foreach ($fragment in 'mode: subagent', 'edit: deny', 'bash: deny', 'task: allow', 'external_directory: allow', 'question: deny', 'skill: deny', 'todowrite: deny', 'lsp: deny') {
         if ($text -notmatch [regex]::Escape($fragment)) {
             throw "OpenCode agent $file is missing nested-read-only guardrail: $fragment"
+        }
+    }
+}
+
+foreach ($file in @('scout.md', 'reviewer.md')) {
+    $path = Join-Path $opencodeAgentsRoot $file
+    $text = Get-Content -Raw -Encoding UTF8 $path
+    foreach ($fragment in 'webfetch: deny', 'websearch: deny') {
+        if ($text -notmatch [regex]::Escape($fragment)) {
+            throw "OpenCode reader $file is missing side-effect channel guardrail: $fragment"
+        }
+    }
+}
+
+foreach ($file in $opencodeWriterAgentFiles) {
+    $path = Join-Path $opencodeAgentsRoot $file
+    if (!(Test-Path $path)) {
+        throw "Missing OpenCode writer definition: $file"
+    }
+
+    $text = Get-Content -Raw -Encoding UTF8 $path
+    foreach ($fragment in 'mode: subagent', 'edit: allow', 'bash: deny', 'task: deny', 'external_directory: deny', 'webfetch: deny', 'websearch: deny', 'question: deny', 'skill: deny', 'todowrite: deny', 'lsp: deny', 'claim-map', 'isolated worktree') {
+        if ($text -notmatch [regex]::Escape($fragment)) {
+            throw "OpenCode writer $file is missing writer guardrail: $fragment"
         }
     }
 }
@@ -242,6 +268,7 @@ $relay = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'agents\relay.toml')
 $relayNormalized = $relay -replace '\s+', ' '
 $worker = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'agents/worker.toml')
 $reviewer = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'agents/reviewer.toml')
+$opencodeWorker = Get-Content -Raw -Encoding UTF8 (Join-Path $opencodeAgentsRoot 'worker.md')
 $workflowSkillInterfaceText = Get-Content -Raw -Encoding UTF8 $workflowSkillInterface
 $ahkText = Get-Content -Raw -Encoding UTF8 $ahk
 $readmeText = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'README.md')
@@ -438,6 +465,7 @@ foreach ($surface in @(
     @{ Name = 'AGENTS.md'; Text = $agentsMdText }
     @{ Name = 'README'; Text = $readmeText }
     @{ Name = 'relay'; Text = $relay }
+    @{ Name = 'OpenCode worker'; Text = $opencodeWorker }
     @{ Name = 'installer'; Text = $installScriptText }
 )) {
     if ($surface.Text -match '(?i)opencode_hybrid_worker|opencode-hybrid|hybrid=canary|hybrid=off|HYBRID_ROUTE=writer|HYBRID_WORKTREE|HYBRID_MAIN_CHECKOUT|HYBRID_BASELINE|safe-edit') {
@@ -458,19 +486,19 @@ foreach ($surface in @(
     }
 }
 
-foreach ($instruction in 'internal_subagent_backend=opencode','internal_subagent_backend=native','internal_subagent_transport=native_relay','opencode_worker','opencode-go/deepseek-v4-flash','AGENT_PERMISSION=yolo','task','external_directory','read-only','blocked','native','do not silently fall back') {
+foreach ($instruction in 'internal_subagent_backend=opencode','internal_subagent_backend=native','internal_subagent_transport=native_relay','opencode_worker','opencode-go/deepseek-v4-flash','AGENT_PERMISSION=yolo','task','external_directory','read-only','writer','claim-map','isolated worktree','WRITER_WORKTREE','WRITER_BASELINE','blocked','native','do not silently fall back') {
     if ($subagents -notmatch [regex]::Escape($instruction)) {
         throw "Subagents reference is missing internal-backend contract: $instruction"
     }
 }
 
-foreach ($instruction in 'internal_subagent_backend=opencode','internal_subagent_backend=native','internal_subagent_transport=native_relay','native `relay`','opencode_worker','opencode-go/deepseek-v4-flash','variant=max','effective no-edit','task','external_directory','do not silently fall back') {
+foreach ($instruction in 'internal_subagent_backend=opencode','internal_subagent_backend=native','internal_subagent_transport=native_relay','native `relay`','opencode_worker','opencode-go/deepseek-v4-flash','variant=max','OpenCode','worker','claim-map','cwd','external_directory','do not silently fall back') {
     if ($modeMatrixNormalized -notmatch [regex]::Escape($instruction)) {
         throw "Mode matrix is missing internal-backend contract: $instruction"
     }
 }
 
-foreach ($instruction in 'internal_subagent_backend=opencode','internal_subagent_backend=native','internal_subagent_transport=native_relay','agents/relay.toml','not part of the user-facing compact syntax','Native workers remain','AGENT_PERMISSION=yolo','task','external_directory','edit','bash','preserve the required gate as blocked','sub-agent=opencode') {
+foreach ($instruction in 'internal_subagent_backend=opencode','internal_subagent_backend=native','internal_subagent_transport=native_relay','agents/relay.toml','not part of the user-facing compact syntax','OpenCode `worker`','`worker` profile is only an explicit','AGENT_PERMISSION=yolo','task','external_directory','edit','bash','isolated worktree','WRITER_WORKTREE=<cwd>','WRITER_BASELINE=<full-commit>','preserve the required gate as blocked','sub-agent=opencode') {
     if ($backendPolicy -notmatch [regex]::Escape($instruction)) {
         throw "Backend policy is missing internal-route contract: $instruction"
     }
@@ -485,8 +513,20 @@ foreach ($instruction in 'opencode_worker','native','relay','AGENT_TYPE = "openc
 $codexConfigPath = 'C:\Users\mathe\.codex\config.toml'
 if (Test-Path -LiteralPath $codexConfigPath) {
     $codexConfigText = Get-Content -Raw -Encoding UTF8 $codexConfigPath
+    $workerConfigMatch = [regex]::Match($codexConfigText, '(?ms)^\[mcp_servers\.opencode_worker\]\s*(?<body>.*?)(?=^\[|\z)')
+    if (!$workerConfigMatch.Success) {
+        throw 'Configured Codex runtime is missing the [mcp_servers.opencode_worker] table.'
+    }
+
+    $workerConfigText = $workerConfigMatch.Groups['body'].Value
+    foreach ($instruction in 'command = "C:\\Users\\mathe\\.codex\\bin\\opencode-worker.cmd"', 'args = ["-y", "sub-agents-mcp@0.12.0"]', 'startup_timeout_sec = 30', 'tool_timeout_sec = 600') {
+        if ($workerConfigText -notmatch [regex]::Escape($instruction)) {
+            throw "Configured opencode_worker is missing runtime wiring: $instruction"
+        }
+    }
+
     if ($codexConfigText -notmatch '(?m)^AGENT_PERMISSION\s*=\s*"yolo"\s*$') {
-        throw 'Configured opencode_worker must use AGENT_PERMISSION=yolo so task/external_directory can be delegated; agent frontmatter owns no-edit.'
+        throw 'Configured opencode_worker must use AGENT_PERMISSION=yolo so task/external_directory can be delegated; agent frontmatter owns reader no-edit and writer edit-only boundaries.'
     }
 
     $workerEnvMatch = [regex]::Match($codexConfigText, '(?ms)^\[mcp_servers\.opencode_worker\.env\]\s*(?<body>.*?)(?=^\[|\z)')
@@ -512,6 +552,23 @@ if (Test-Path -LiteralPath $codexConfigPath) {
     }
 }
 
+$installedOpenCodeAgentsRoot = 'C:\Users\mathe\.codex\opencode-agents'
+if (Test-Path -LiteralPath $installedOpenCodeAgentsRoot) {
+    foreach ($file in $opencodeAgentFiles) {
+        $sourcePath = Join-Path $opencodeAgentsRoot $file
+        $installedPath = Join-Path $installedOpenCodeAgentsRoot $file
+        if (!(Test-Path -LiteralPath $installedPath)) {
+            throw "Installed OpenCode agent is missing: $file"
+        }
+
+        $sourceHash = (Get-FileHash -LiteralPath $sourcePath -Algorithm SHA256).Hash
+        $installedHash = (Get-FileHash -LiteralPath $installedPath -Algorithm SHA256).Hash
+        if ($sourceHash -ne $installedHash) {
+            throw "Installed OpenCode agent is stale: $file"
+        }
+    }
+}
+
 foreach ($profile in $opencodeNativeProfiles) {
     if ($profile -notmatch [regex]::Escape('internal_subagent_backend=opencode')) {
         throw 'A native agent profile is missing the parent-owned OpenCode route guardrail.'
@@ -522,7 +579,7 @@ if ($relay -notmatch '(?m)^name\s*=\s*"relay"\s*$' -or $relay -notmatch '(?m)^sa
     throw 'Native relay profile must be named relay and use read-only sandbox.'
 }
 
-foreach ($instruction in 'mcp__opencode_worker__run_agent','RELAY_STATUS=success|blocked|error','RELAY_ROUTE=read-only','RELAY_RESPONSE_BEGIN','never fall back silently','built-in `tool_search` query','Delegate a complex multi-step task to an autonomous agent','This is deterministic activation, not route discovery','Do not list tools or agents') {
+foreach ($instruction in 'mcp__opencode_worker__run_agent','RELAY_STATUS=success|blocked|error','RELAY_ROUTE=read-only|writer','RELAY_RESPONSE_BEGIN','target_agent','worker','`cwd` must be the absolute','WRITER_WORKTREE=<cwd>','WRITER_BASELINE=<full-commit>','route pairing is fixed','claim-map','isolated worktree','never fall back silently','built-in `tool_search` query','Delegate a complex multi-step task to an autonomous agent','This is deterministic activation, not route discovery','Do not list tools or agents') {
     if ($relayNormalized -notmatch [regex]::Escape($instruction)) {
         throw "Native relay profile is missing transport contract: $instruction"
     }
@@ -758,6 +815,18 @@ $modifierBindings = @(
     @{ Key = '^Numpad8'; Shortcut = 'Ctrl+NUM8'; Prompt = $audiobookTranscribePrompt; Label = 'audiobook TRANSCRIBE' }
     @{ Key = '^Numpad9'; Shortcut = 'Ctrl+NUM9'; Prompt = $audiobookRenderPrompt; Label = 'audiobook RENDER' }
 )
+$deepWorkflowBindings = @(
+    @{ Key = 'Numpad0 & Numpad1'; Shortcut = 'NUM0+1'; Prompt = '$workflows mode=P.DEEP'; Label = 'P.DEEP' }
+    @{ Key = 'Numpad0 & Numpad2'; Shortcut = 'NUM0+2'; Prompt = '$workflows mode=IMPL.PHASE'; Label = 'IMPL.PHASE' }
+    @{ Key = 'Numpad0 & Numpad3'; Shortcut = 'NUM0+3'; Prompt = '$workflows mode=COMMIT'; Label = 'deep COMMIT' }
+    @{ Key = 'Numpad0 & Numpad4'; Shortcut = 'NUM0+4'; Prompt = '$workflows mode=BUG.INV'; Label = 'deep BUG.INV' }
+    @{ Key = 'Numpad0 & Numpad5'; Shortcut = 'NUM0+5'; Prompt = '$workflows mode=BUG.FIX'; Label = 'deep BUG.FIX' }
+    @{ Key = 'Numpad0 & Numpad6'; Shortcut = 'NUM0+6'; Prompt = '$workflows mode=DEBUG'; Label = 'deep DEBUG' }
+    @{ Key = 'Numpad0 & Numpad7'; Shortcut = 'NUM0+7'; Prompt = '$workflows mode=REWORK'; Label = 'deep REWORK' }
+    @{ Key = 'Numpad0 & Numpad8'; Shortcut = 'NUM0+8'; Prompt = '$workflows mode=R.A.F.V'; Label = 'deep R.A.F.V' }
+    @{ Key = 'Numpad0 & Numpad9'; Shortcut = 'NUM0+9'; Prompt = '$workflows mode=TN.SKILL'; Label = 'deep TN.SKILL' }
+    @{ Key = 'Numpad0 & NumpadMult'; Shortcut = 'NUM0+*'; Prompt = '$workflows mode=RESEARCH.DEEP'; Label = 'deep RESEARCH.DEEP' }
+)
 
 foreach ($text in $skillText, $dictionary, $modeMatrix) {
     if ($text -notmatch [regex]::Escape('DELIVER.AUTO')) {
@@ -777,9 +846,41 @@ foreach ($instruction in 'phase validation does not spawn reviewers','do not spa
     }
 }
 
-foreach ($instruction in '`subA-role-lock`','`subA-custom-spawn`','`subA-effort`','`subA-retry`','`subA-retry-block`','never use `default` or omit the role','Never combine `fork_context=true` with `agent_type`','omit `fork_context`, `model`, and `reasoning_effort`','one fresh retry with the same exact role','any required read-only gate remains blocked','`review-embargo`','`subA-isolation`','`fix-embargo`','one fresh read-only reviewer checks the correction delta') {
+foreach ($instruction in '`subA-role-lock`','`subA-custom-spawn`','`subA-effort`','`subA-retry`','`subA-slot-full`','`subA-retry-block`','never use `default` or omit the role','Never combine `fork_context=true` with `agent_type`','omit `fork_context`, `model`, and `reasoning_effort`','one fresh retry with the same exact role','any required read-only gate remains blocked','`review-embargo`','`subA-isolation`','`fix-embargo`','one fresh read-only reviewer checks the correction delta') {
     if ($subagents -notmatch [regex]::Escape($instruction)) {
         throw "Subagent guidance is missing role-lock or delivery anti-spam instruction: $instruction"
+    }
+}
+
+foreach ($instruction in 'completed/idle subA whose final replies are already integrated','wait for an optional subA to finish','same exact role with the same custom-spawn shape','never close active/waiting/required subA','explicit capacity block') {
+    if ($subagents -notmatch [regex]::Escape($instruction)) {
+        throw "Subagent guidance is missing slot-recovery invariant: $instruction"
+    }
+}
+
+foreach ($surface in @(
+    @{ Name = 'workflows skill'; Text = $skillText; Phrase = 'rather than silently skipping' }
+    @{ Name = 'subagents reference'; Text = $subagents; Phrase = 'rather than silently skipping' }
+    @{ Name = 'dictionary'; Text = $dictionary; Phrase = 'rather than silently skipping' }
+    @{ Name = 'backend policy'; Text = $backendPolicy; Phrase = 'not backend-unavailability fallback' }
+    @{ Name = 'validation reference'; Text = $validationReference; Phrase = 'report explicit capacity evidence' }
+    @{ Name = 'AGENTS.md'; Text = $agentsMdText; Phrase = 'report an explicit capacity block' }
+    @{ Name = 'README'; Text = $readmeText; Phrase = 'bloqueio explícito' }
+)) {
+    if ($surface.Text -notmatch [regex]::Escape('`subA-slot-full`')) {
+        throw "$($surface.Name) is missing the slot-full recovery contract."
+    }
+    if ($surface.Text -notmatch [regex]::Escape($surface.Phrase)) {
+        throw "$($surface.Name) is missing the slot-full safety phrase: $($surface.Phrase)"
+    }
+}
+
+foreach ($surface in @(
+    @{ Name = 'subagents reference'; Text = $subagents }
+    @{ Name = 'dictionary'; Text = $dictionary }
+)) {
+    if ($surface.Text -notmatch [regex]::Escape('Slot-full recovery permits one retry')) {
+        throw "$($surface.Name) is missing the bounded slot-full retry contract."
     }
 }
 
@@ -846,6 +947,18 @@ foreach ($binding in $modifierBindings) {
 foreach ($binding in $modifierBindings) {
     if ($readmeText -notmatch [regex]::Escape($binding.Shortcut)) {
         throw "README is missing the $($binding.Label) modifier shortcut."
+    }
+}
+
+foreach ($binding in $deepWorkflowBindings) {
+    $bindingText = "$($binding.Key)::PastePrompt(`"$($binding.Prompt)`")"
+    if ($ahkText -notmatch [regex]::Escape($bindingText)) {
+        throw "Missing deep $($binding.Label) binding."
+    }
+
+    $readmePattern = "(?m)^$([regex]::Escape($binding.Shortcut))\s+$([regex]::Escape($binding.Prompt))\s*$"
+    if ($readmeText -notmatch $readmePattern) {
+        throw "README is missing the deep $($binding.Label) shortcut."
     }
 }
 

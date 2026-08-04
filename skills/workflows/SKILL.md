@@ -63,7 +63,13 @@ Operational rules:
 - Apply `plan-sync` to nontrivial work with two or more phases: initialize the real `update_plan` checklist with the first step `in_progress` and the rest `pending`; before the first command of the next phase and only after proof, mark the current phase `completed`, the next phase `in_progress`, and future phases `pending`; update it before continuing after scope changes; after the last proof, leave every step `completed` and none `in_progress`; never update it after every command, and keep the main agent as its single owner. Skip it for one-step or simple work.
 - Read direct evidence first; use CodeGraph only when cg-worthy.
 - Main agent owns critical path, contracts, integration, and final quality.
-- Subagents are background scouts/reviewers/workers, not timers. Never close an active required subagent before its reply is integrated.
+- Subagents are background scouts/reviewers/workers, not timers. Never close an
+  active/waiting/required subagent before its reply is integrated. After a final
+  reply is integrated, close its completed relay; on a slot-occupied spawn
+  failure, use `subA-slot-full` to reclaim only completed/idle integrated
+  subagents or wait for an optional one, then retry the same role. If no slot is
+  reclaimable, report the explicit capacity block rather than silently skipping
+  a required gate.
 - Read-only work must use the exact custom role; use `relay` as the native
   transport when the internal OpenCode backend is active. After a transient
   availability error, retry that same role once and never fall back to
@@ -84,9 +90,15 @@ the original response through the native sub-agent conversation. Completed
 relays are not reused for later prompts, so each prompt gets an isolated MCP
 conversation.
 The main chat continues local non-overlap work and joins the relay at the
-decision/final gate. Implementation workers remain native and claim-map
-scoped; the user does not need to add a provider or transport flag. Custom-role
-spawn calls still omit `fork_context`, `model`, and
+decision/final gate. After integrating a relay's final response, close that
+completed relay to release its host slot; never close an active, waiting, or
+required relay before integration. Read-only sidecars and claim-map-scoped
+writer sidecars both use the configured OpenCode MCP through the native relay;
+the relay remains transport-only, while the parent GPT owns review, tests, and
+integration. The native `worker` profile remains only as an explicit
+`internal_subagent_backend=native` maintenance override. The user does not
+need to add a provider or transport flag.
+Custom-role spawn calls still omit `fork_context`, `model`, and
 `reasoning_effort`.
 
 If the internal policy is explicitly changed to
@@ -100,7 +112,8 @@ permissions, transport, or calling the MCP directly from the main chat.
 When the selected runtime adapter is OpenCode, use the OpenCode Task surface
 and its configured `scout`, `researcher`, `reviewer`, and `worker` role
 definitions. Read-only roles remain read-only; writable workers require the
-same claim-map, no-touch, validation, and merge-gate contract. Do not expose
+same claim-map, isolated-worktree, no-touch, validation, and merge-gate
+contract. Do not expose
 the private Codex relay settings as prompt flags, and do not silently switch
 to another provider, model, permission, or transport when an OpenCode gate is
 unavailable.
