@@ -15,8 +15,6 @@ $mcpMaintenancePath = Join-Path $mcpPluginRoot 'scripts\maintain-mcps.ps1'
 $installScriptPath = Join-Path $repo 'scripts\install.ps1'
 $ahk = Join-Path $repo 'ahk\codex_prompt_pad.ahk'
 $opencodeAgentsRoot = Join-Path $repo 'agents\opencode'
-$opencodeHybridAgentsRoot = Join-Path $repo 'agents\opencode-hybrid'
-$hybridCanaryDoc = Join-Path $repo 'experiments\hybrid-canary.md'
 $ahkExe = 'E:\Programs\AHK\v2\AutoHotkey64.exe'
 
 $skillText = Get-Content -Raw -Encoding UTF8 $skill
@@ -178,28 +176,6 @@ if ($unexpectedOpenCodeAgents.Count -gt 0) {
     throw "Unexpected OpenCode agent definitions: $($unexpectedOpenCodeAgents.Name -join ', ')"
 }
 
-if (!(Test-Path -LiteralPath $opencodeHybridAgentsRoot)) {
-    throw 'Missing hybrid OpenCode agent directory.'
-}
-
-$hybridWriterPath = Join-Path $opencodeHybridAgentsRoot 'writer.md'
-if (!(Test-Path -LiteralPath $hybridWriterPath)) {
-    throw 'Missing hybrid OpenCode writer definition.'
-}
-
-$hybridWriter = Get-Content -Raw -Encoding UTF8 $hybridWriterPath
-$hybridWriterNormalized = $hybridWriter -replace '\s+', ' '
-foreach ($fragment in 'mode: subagent', 'edit: allow', 'bash: allow', 'task: deny', 'external_directory: deny', 'webfetch: deny', 'websearch: deny', 'question: deny', 'skill: deny', 'todowrite: deny', 'lsp: deny', 'HYBRID_WRITER_STATUS=success|blocked|error', 'HYBRID_WRITER_BASELINE', 'Do not commit, push, merge, reset, rebase', 'git rev-parse --show-toplevel', 'git rev-parse HEAD', 'git status --porcelain', 'HYBRID_WORKTREE', 'HYBRID_MAIN_CHECKOUT', 'HYBRID_BASELINE') {
-    if ($hybridWriterNormalized -notmatch [regex]::Escape($fragment)) {
-        throw "Hybrid writer is missing canary guardrail: $fragment"
-    }
-}
-
-$unexpectedHybridAgents = @(Get-ChildItem -File $opencodeHybridAgentsRoot -Filter '*.md' | Where-Object { $_.Name -ne 'writer.md' })
-if ($unexpectedHybridAgents.Count -gt 0) {
-    throw "Unexpected hybrid OpenCode agent definitions: $($unexpectedHybridAgents.Name -join ', ')"
-}
-
 Get-ChildItem -File (Join-Path $repo 'agents') -Filter '*.toml' | ForEach-Object {
     $text = Get-Content -Raw -Encoding UTF8 $_.FullName
     if ($text -notmatch '(?m)^model\s*=\s*"gpt-5\.4-mini"\s*$') {
@@ -237,10 +213,13 @@ foreach ($fragment in '$agentEfforts = @(''low'', ''high'', ''xhigh'', ''max'')'
     }
 }
 
-foreach ($fragment in 'opencodeAgentsSource', 'opencodeAgentsDest', 'opencode-agents', 'Copy-Item -Force (Join-Path $opencodeAgentsSource', 'opencodeHybridAgentsSource', 'opencodeHybridAgentsDest', 'opencode-hybrid-agents', 'Copy-Item -Force (Join-Path $opencodeHybridAgentsSource') {
+foreach ($fragment in 'opencodeAgentsSource', 'opencodeAgentsDest', 'opencode-agents', 'Copy-Item -Force (Join-Path $opencodeAgentsSource') {
     if ($installerText -notmatch [regex]::Escape($fragment)) {
         throw "Agent installer is missing OpenCode agent synchronization: $fragment"
     }
+}
+if ($installerText -match '(?i)opencodeHybrid|opencode-hybrid|opencode_hybrid_worker|HYBRID_ROUTE') {
+    throw 'Agent installer still contains removed hybrid synchronization or routing.'
 }
 
 $dictionary = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'skills\workflows\references\dictionary.md')
@@ -450,15 +429,6 @@ foreach ($surface in @(
 }
 
 foreach ($surface in @(
-    @{ Name = 'workflows skill'; Text = $skillTextNormalized }
-    @{ Name = 'dictionary'; Text = $dictionaryNormalized }
-)) {
-    if ($surface.Text -notmatch 'workers remain native.*unless.*hybrid=canary') {
-        throw "$($surface.Name) is missing the hybrid writer exception to the native worker route."
-    }
-}
-
-foreach ($surface in @(
     @{ Name = 'workflows skill'; Text = $skillText }
     @{ Name = 'dictionary'; Text = $dictionary }
     @{ Name = 'mode matrix'; Text = $modeMatrix }
@@ -467,11 +437,11 @@ foreach ($surface in @(
     @{ Name = 'backend policy'; Text = $backendPolicy }
     @{ Name = 'AGENTS.md'; Text = $agentsMdText }
     @{ Name = 'README'; Text = $readmeText }
+    @{ Name = 'relay'; Text = $relay }
+    @{ Name = 'installer'; Text = $installScriptText }
 )) {
-    foreach ($flag in 'hybrid=canary', 'hybrid=off') {
-        if ($surface.Text -notmatch [regex]::Escape($flag)) {
-            throw "$($surface.Name) is missing the experimental hybrid flag contract: $flag"
-        }
+    if ($surface.Text -match '(?i)opencode_hybrid_worker|opencode-hybrid|hybrid=canary|hybrid=off|HYBRID_ROUTE=writer|HYBRID_WORKTREE|HYBRID_MAIN_CHECKOUT|HYBRID_BASELINE|safe-edit') {
+        throw "$($surface.Name) still contains removed hybrid/writer routing."
     }
 }
 
@@ -512,22 +482,6 @@ foreach ($instruction in 'opencode_worker','native','relay','AGENT_TYPE = "openc
     }
 }
 
-foreach ($instruction in 'opencode_hybrid_worker','AGENTS_DIR = "E:\\Repositories\\codex-workflows-prompt-pad\\agents\\opencode-hybrid"','AGENT_PERMISSION = "safe-edit"','hybrid=canary','HYBRID_ROUTE=writer','HYBRID_WORKTREE','HYBRID_MAIN_CHECKOUT','HYBRID_BASELINE') {
-    if ($readmeTextNormalized -notmatch [regex]::Escape($instruction)) {
-        throw "README is missing hybrid canary activation evidence: $instruction"
-    }
-}
-
-if (!(Test-Path -LiteralPath $hybridCanaryDoc)) {
-    throw 'Missing hybrid canary evaluation protocol.'
-}
-$hybridCanaryText = Get-Content -Raw -Encoding UTF8 $hybridCanaryDoc
-foreach ($fragment in 'Run each task twice', 'hybrid=off', 'hybrid=canary', 'H0', 'H1', 'H2', 'H3', 'H4', 'H5', 'at most two', 'must not edit a file', 'not a substitute', 'main-model calls', 'HYBRID_BASELINE', 'git rev-parse HEAD', 'git status --porcelain', 'Decision gate') {
-    if ($hybridCanaryText -notmatch [regex]::Escape($fragment)) {
-        throw "Hybrid canary protocol is missing: $fragment"
-    }
-}
-
 $codexConfigPath = 'C:\Users\mathe\.codex\config.toml'
 if (Test-Path -LiteralPath $codexConfigPath) {
     $codexConfigText = Get-Content -Raw -Encoding UTF8 $codexConfigPath
@@ -551,63 +505,10 @@ if (Test-Path -LiteralPath $codexConfigPath) {
     }
 
     if ($codexConfigText -cmatch '(?m)^\[mcp_servers\.opencode_hybrid_worker(?:\.|\])') {
-        $hybridServerMatch = [regex]::Match($codexConfigText, '(?ms)^\[mcp_servers\.opencode_hybrid_worker\]\s*(?<body>.*?)(?=^\[|\z)')
-        if (!$hybridServerMatch.Success) {
-            throw 'Configured opencode_hybrid_worker requires the [mcp_servers.opencode_hybrid_worker] table.'
-        }
-
-        $hybridServerText = $hybridServerMatch.Groups['body'].Value
-        foreach ($instruction in 'command = "npx.cmd"', 'sub-agents-mcp@0.12.0') {
-            if ($hybridServerText -notmatch [regex]::Escape($instruction)) {
-                throw "Configured opencode_hybrid_worker is missing: $instruction"
-            }
-        }
-
-        $hybridEnvMatch = [regex]::Match($codexConfigText, '(?ms)^\[mcp_servers\.opencode_hybrid_worker\.env\]\s*(?<body>.*?)(?=^\[|\z)')
-        if (!$hybridEnvMatch.Success) {
-            throw 'Configured opencode_hybrid_worker requires the [mcp_servers.opencode_hybrid_worker.env] table.'
-        }
-
-        $hybridEnvText = $hybridEnvMatch.Groups['body'].Value
-        foreach ($instruction in 'SESSION_ENABLED = "false"') {
-            if ($hybridEnvText -notmatch [regex]::Escape($instruction)) {
-                throw "Configured opencode_hybrid_worker must disable session persistence: $instruction"
-            }
-        }
-        if ($hybridEnvText -match '(?m)^SESSION_(DIR|RETENTION_DAYS)\s*=') {
-            throw 'Configured opencode_hybrid_worker must not define a session directory or retention setting.'
-        }
-
-        foreach ($instruction in 'AGENT_TYPE = "opencode"', 'AGENT_MODEL = "opencode-go/deepseek-v4-flash"', 'AGENT_EFFORT = "max"') {
-            if ($hybridEnvText -notmatch "(?m)^$([regex]::Escape($instruction))\s*$") {
-                throw "Configured opencode_hybrid_worker is missing: $instruction"
-            }
-        }
-
-        $permissionMatch = [regex]::Match($hybridEnvText, '(?m)^AGENT_PERMISSION\s*=\s*["''](?<value>[^"'']+)["'']\s*$')
-        if (!$permissionMatch.Success -or $permissionMatch.Groups['value'].Value -ne 'safe-edit') {
-            throw 'Configured opencode_hybrid_worker must use AGENT_PERMISSION=safe-edit.'
-        }
-
-        $agentsDirMatch = [regex]::Match($hybridEnvText, '(?m)^AGENTS_DIR\s*=\s*["''](?<value>[^"'']+)["'']\s*$')
-        if (!$agentsDirMatch.Success) {
-            throw 'Configured opencode_hybrid_worker is missing AGENTS_DIR.'
-        }
-
-        $configuredAgentsDir = $agentsDirMatch.Groups['value'].Value.Replace('\\', '\')
-        try {
-            $resolvedConfiguredAgentsDir = [IO.Path]::GetFullPath($configuredAgentsDir)
-            $resolvedExpectedAgentsDir = [IO.Path]::GetFullPath($opencodeHybridAgentsRoot)
-        } catch {
-            throw 'Configured opencode_hybrid_worker has an invalid AGENTS_DIR.'
-        }
-
-        if ($resolvedConfiguredAgentsDir.TrimEnd('\') -ine $resolvedExpectedAgentsDir.TrimEnd('\')) {
-            throw "Configured opencode_hybrid_worker must point to $opencodeHybridAgentsRoot."
-        }
+        throw 'Removed opencode_hybrid_worker is still configured.'
     }
-    else {
-        Write-Warning 'opencode_hybrid_worker is not configured; hybrid=canary remains inactive until the server is added and H0 passes.'
+    if ($codexConfigText -match '(?i)opencode-hybrid|HYBRID_ROUTE|HYBRID_WORKTREE|HYBRID_MAIN_CHECKOUT|HYBRID_BASELINE|safe-edit') {
+        throw 'Codex configuration still contains removed hybrid/writer routing.'
     }
 }
 
@@ -621,7 +522,7 @@ if ($relay -notmatch '(?m)^name\s*=\s*"relay"\s*$' -or $relay -notmatch '(?m)^sa
     throw 'Native relay profile must be named relay and use read-only sandbox.'
 }
 
-foreach ($instruction in 'mcp__opencode_worker__run_agent','mcp__opencode_hybrid_worker__run_agent','A task beginning with `HYBRID_ROUTE=writer`','HYBRID_WORKTREE','HYBRID_MAIN_CHECKOUT','HYBRID_BASELINE','RELAY_STATUS=success|blocked|error','RELAY_ROUTE=read-only|hybrid-writer','RELAY_RESPONSE_BEGIN','never route a writer to the read-only server','report `RELAY_STATUS=blocked`','never downgrade the malformed writer task','never silently switch','built-in `tool_search` query','Delegate a complex multi-step task to an autonomous agent','This is deterministic activation, not route discovery','Do not list tools or agents') {
+foreach ($instruction in 'mcp__opencode_worker__run_agent','RELAY_STATUS=success|blocked|error','RELAY_ROUTE=read-only','RELAY_RESPONSE_BEGIN','never fall back silently','built-in `tool_search` query','Delegate a complex multi-step task to an autonomous agent','This is deterministic activation, not route discovery','Do not list tools or agents') {
     if ($relayNormalized -notmatch [regex]::Escape($instruction)) {
         throw "Native relay profile is missing transport contract: $instruction"
     }
@@ -631,7 +532,7 @@ foreach ($instruction in 'the MCP function can be deferred','relay''s one exact'
         throw "Backend policy is missing the deferred-MCP relay contract: $instruction"
     }
 }
-foreach ($instruction in '[mcp_servers.opencode_worker]','command = "C:\\Users\\mathe\\.codex\\bin\\opencode-worker.cmd"','AGENT_MODEL = "opencode-go/deepseek-v4-flash"','AGENT_EFFORT = "max"','enabled_tools = ["run_agent"]','[mcp_servers.opencode_hybrid_worker]','command = "npx.cmd"','AGENT_PERMISSION = "safe-edit"') {
+foreach ($instruction in '[mcp_servers.opencode_worker]','command = "C:\\Users\\mathe\\.codex\\bin\\opencode-worker.cmd"','AGENT_MODEL = "opencode-go/deepseek-v4-flash"','AGENT_EFFORT = "max"','enabled_tools = ["run_agent"]') {
     if ($relayNormalized -notmatch [regex]::Escape($instruction)) {
         throw "Native relay profile is missing explicit MCP tool exposure: $instruction"
     }

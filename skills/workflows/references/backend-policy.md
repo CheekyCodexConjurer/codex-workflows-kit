@@ -28,51 +28,16 @@ provider or transport flag to any prompt.
 - The parent continues useful work and joins the relay at the decision/final
   gate. Native workers remain responsible for every write, patch, test, and
   claim-map-scoped implementation.
+- The native relay uses GPT-5.4 Mini with `high`; result-bearing native profiles
+  use GPT-5.4 Mini with `xhigh`.
 - The mode still owns the decision to use a sidecar; the backend policy does not
   force an unnecessary sub-agent on simple work.
-
-## Experimental hybrid canary
-
-`hybrid=canary` is a workflow feature flag, not a new provider or value for
-`internal_subagent_backend`. It is absent by default and must be written
-explicitly in the task prompt. `hybrid=off` (or no flag) preserves the current
-route.
-
-When `hybrid=canary` is present:
-
-- the GPT orchestrator remains responsible for the objective, claim map,
-  acceptance, integration, and escalation;
-- scouts, researchers, and read-only reviewers continue through
-  `opencode_worker` with the V4 Flash policy;
-- only a claim-mapped writer with an absolute isolated worktree and expected
-  full-commit `HYBRID_BASELINE` may be sent through `opencode_hybrid_worker`,
-  whose separate agent directory uses `AGENT_PERMISSION=safe-edit`;
-- at most two mutable hybrid writers may run at once; the parent counts active
-  writers and waits before starting a third. They may not commit,
-  push, merge, reset, rebase, install dependencies, or touch external paths;
-- the parent must verify the supplied worktree markers, require an empty
-  `git status --porcelain` before the writer starts, run the worktree diff and
-  assigned validation, compare changed paths with the claim map, and apply
-  only accepted hunks to the main checkout before accepting the result; a
-  successful child report is not acceptance evidence;
-- an unavailable or failed hybrid server blocks the requested route. There is
-  no silent fallback to a native writer or to the read-only server.
-
-The native `relay` remains read-only and transport-only. It uses GPT-5.4 Mini
-with `high` to activate the deferred MCP function reliably. Result-bearing
-native profiles use GPT-5.4 Mini with `xhigh`. The relay selects the second MCP server only
-when the parent task begins with the exact `HYBRID_ROUTE=writer` marker and
-contains different absolute `HYBRID_WORKTREE` and `HYBRID_MAIN_CHECKOUT` paths
-plus `HYBRID_BASELINE`; the writer verifies that its `HEAD` equals that commit.
-This keeps the experimental write boundary explicit and reversible.
 
 ## Relay and OpenCode permissions
 
 - `agents/relay.toml` is the native transport profile. It is read-only,
-  forwards standard work to `mcp__opencode_worker__run_agent` and the explicit
-  hybrid writer marker to `mcp__opencode_hybrid_worker__run_agent`, preserves
-  the original response, and never falls back to a native or direct-CLI
-  provider.
+  forwards standard work to `mcp__opencode_worker__run_agent`, preserves the
+  original response, and never falls back to a native or direct-CLI provider.
 - The Desktop may defer MCP tools in a new relay. The relay performs exactly
   one built-in `tool_search` for its already-known exact MCP function before
   calling it; this is activation rather than broad tool/route discovery. A
@@ -87,10 +52,6 @@ This keeps the experimental write boundary explicit and reversible.
   this route uses `AGENT_PERMISSION=yolo` only to remove those two coarse
   denials. The OpenCode agent frontmatter is the effective no-edit boundary;
   validation must reject any definition missing `edit: deny` or `bash: deny`.
-- The separate `opencode_hybrid_worker` server is the sole exception: it uses
-  `AGENT_PERMISSION=safe-edit` with the isolated `agents/opencode-hybrid`
-  definition. Its writer denies nested task delegation and external-directory
-  access; the parent must still provide the worktree and claim map.
 - The normal `codegraph` MCP may remain enabled. External directory access does
   not authorize arbitrary side-effectful MCP tools or shell commands.
 

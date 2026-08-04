@@ -1,5 +1,5 @@
 name = "relay"
-description = "MCP-ready read-only native relay for standard OpenCode readers and explicit hybrid writers."
+description = "MCP-ready read-only native relay for standard OpenCode readers."
 model = "gpt-5.4-mini"
 model_reasoning_effort = "high"
 sandbox_mode = "read-only"
@@ -28,27 +28,10 @@ Route only by an explicit prefix in the parent task:
   the cwd, run shell, or explain the route. If that one query does not expose
   the exact function, return `RELAY_STATUS=blocked` with the exposure error; do
   not substitute a different connector.
-- A task beginning with `HYBRID_ROUTE=writer` and containing absolute
-  `HYBRID_WORKTREE` and `HYBRID_MAIN_CHECKOUT` paths plus the expected full
-  commit marker `HYBRID_BASELINE`, where the two paths are different: issue one
-  built-in `tool_search` query for `Delegate a complex multi-step task to an
-  autonomous agent`, then call only the returned
-  `mcp__opencode_hybrid_worker__run_agent` function.
-- If a task begins with `HYBRID_ROUTE=writer` but any required marker is
-  missing, a path is not absolute, or the paths are equal, report
-  `RELAY_STATUS=blocked` with the exact missing/invalid condition. Call
-  neither server and never downgrade the malformed writer task to a reader.
-
-Never infer the hybrid route from natural language and never route a writer to
-the read-only server. The second server is an opt-in canary boundary; its own
-agent definition and `safe-edit` permission are the only authorization for the
-child write.
-
 Use the selected MCP route only. Do not replace it with a native agent, a
 direct OpenCode CLI call, or an invented answer; the selected route never falls
-back to a native or direct-CLI provider. Never fall back silently, and never
-silently switch between the two MCP servers. A single fresh retry is allowed
-only for a transient MCP launch/stream error.
+back to a native or direct-CLI provider. Never fall back silently. A single
+fresh retry is allowed only for a transient MCP launch/stream error.
 
 Preserve the MCP response rather than paraphrasing away findings, evidence,
 paths, status, model, variant, or errors. Return this compact envelope:
@@ -56,7 +39,7 @@ paths, status, model, variant, or errors. Return this compact envelope:
 RELAY_STATUS=success|blocked|error
 RELAY_TARGET=<agent>
 RELAY_BACKEND=opencode
-RELAY_ROUTE=read-only|hybrid-writer
+RELAY_ROUTE=read-only
 RELAY_RESPONSE_BEGIN
 <original MCP response or exact error>
 RELAY_RESPONSE_END
@@ -79,24 +62,6 @@ AGENT_TYPE = "opencode"
 AGENT_MODEL = "opencode-go/deepseek-v4-flash"
 AGENT_EFFORT = "max"
 AGENT_PERMISSION = "yolo"
-EXECUTION_TIMEOUT_MS = "600000"
-SESSION_ENABLED = "false"
-PATH = "C:\\Users\\mathe\\AppData\\Roaming\\npm\\node_modules\\opencode-ai\\bin;C:\\Program Files\\nodejs;C:\\Users\\mathe\\AppData\\Roaming\\npm;C:\\Program Files\\Git\\cmd;C:\\Windows\\System32\\WindowsPowerShell\\v1.0;C:\\Windows\\System32;C:\\Windows"
-
-[mcp_servers.opencode_hybrid_worker]
-command = "npx.cmd"
-args = ["-y", "sub-agents-mcp@0.12.0"]
-startup_timeout_sec = 30
-tool_timeout_sec = 600
-enabled = true
-enabled_tools = ["run_agent"]
-
-[mcp_servers.opencode_hybrid_worker.env]
-AGENTS_DIR = "E:\\Repositories\\codex-workflows-prompt-pad\\agents\\opencode-hybrid"
-AGENT_TYPE = "opencode"
-AGENT_MODEL = "opencode-go/deepseek-v4-flash"
-AGENT_EFFORT = "max"
-AGENT_PERMISSION = "safe-edit"
 EXECUTION_TIMEOUT_MS = "600000"
 SESSION_ENABLED = "false"
 PATH = "C:\\Users\\mathe\\AppData\\Roaming\\npm\\node_modules\\opencode-ai\\bin;C:\\Program Files\\nodejs;C:\\Users\\mathe\\AppData\\Roaming\\npm;C:\\Program Files\\Git\\cmd;C:\\Windows\\System32\\WindowsPowerShell\\v1.0;C:\\Windows\\System32;C:\\Windows"

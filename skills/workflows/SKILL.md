@@ -53,8 +53,6 @@ Operational rules:
 - Select exactly one runtime adapter from `references/runtime-adapters.md`
   before any tool or sub-agent action. The adapter changes only the available
   execution surface, never the workflow contract.
-- Treat `hybrid=canary` as an explicit experimental workflow flag only; it is not a provider/transport setting and must not alter the default route when absent.
-- Use `hybrid=off` for the paired baseline; never infer either hybrid route from ordinary task wording.
 - Read the internal backend policy before routing a non-fast-path sidecar. The
   fast path uses the pinned `internal_subagent_backend=opencode` and
   `internal_subagent_transport=native_relay` contract; only an explicit
@@ -87,9 +85,8 @@ relays are not reused for later prompts, so each prompt gets an isolated MCP
 conversation.
 The main chat continues local non-overlap work and joins the relay at the
 decision/final gate. Implementation workers remain native and claim-map
-scoped unless the explicit `hybrid=canary` flag activates the separate
-safe-edit writer route; the user does not need to add a provider or transport
-flag. Custom-role spawn calls still omit `fork_context`, `model`, and
+scoped; the user does not need to add a provider or transport flag. Custom-role
+spawn calls still omit `fork_context`, `model`, and
 `reasoning_effort`.
 
 If the internal policy is explicitly changed to

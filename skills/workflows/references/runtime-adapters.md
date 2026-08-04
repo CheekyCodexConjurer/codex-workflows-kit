@@ -11,7 +11,7 @@ Every adapter must preserve the same:
 - `mode=<MODE>` routing and left-to-right alias expansion;
 - evidence, no-edit, write, review, commit, and clean-gate boundaries;
 - sub-agent role lock, claim maps, validation, and no-silent-fallback rules;
-- `hybrid=canary` as an explicit experimental flag only.
+- native ownership of all writes and integration when OpenCode is selected.
 
 An adapter may change how a tool or sub-agent is invoked. It must not change
 what the mode means, weaken a gate, or turn missing capabilities into a
@@ -21,8 +21,7 @@ success claim.
 
 Use the native Codex tool and agent surface. When a read-only sidecar is
 required, follow `references/backend-policy.md` and create a fresh configured
-native relay for that request. Native workers own writes unless the explicit
-hybrid canary route is active.
+native relay for that request. Native workers own writes and integration.
 
 ## Google Antigravity
 

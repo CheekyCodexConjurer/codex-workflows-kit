@@ -48,38 +48,6 @@ Roles:
 - `subA-gate`: use if high blast, unclear ownership, security/auth/data risk, multi-file/core, failed first validation, or clear wall-clock gain.
 - `subA-worker`: writable only with claim-map; edits direct; no revert others; no out-of-scope; final `{files,diff,val,risks}`.
 
-## Hybrid canary route
-
-`hybrid=canary` is an explicit workflow flag for paired experiments. It does
-not change the private provider policy or authorize the main chat to call an
-MCP directly.
-
-- The GPT orchestrator owns the objective, invariants, claim map, acceptance,
-  integration, and escalation.
-- `scout`, `researcher`, and read-only `reviewer` work continue through the
-  standard `relay` → `opencode_worker` route.
-- A writer task must carry the exact `HYBRID_ROUTE=writer` marker, absolute
-  `HYBRID_WORKTREE` and `HYBRID_MAIN_CHECKOUT` paths that differ, the expected
-  full-commit `HYBRID_BASELINE`, allowed files, no-touch files, and its
-  validation contract. Before any other shell or edit command, the writer
-  verifies the worktree top-level, that `git rev-parse HEAD` equals the
-  baseline, and that `git status --porcelain` is empty; otherwise it reports
-  `blocked`. The relay then forwards it to `opencode_hybrid_worker`.
-- Before spawning a mutable writer, the parent counts active hybrid writers;
-  when two are active it waits and never starts a third. They cannot commit,
-  push, merge, reset, rebase, install dependencies, delegate nested tasks, or
-  access external directories.
-- At the merge gate, the parent runs `git -C <HYBRID_WORKTREE> diff --check`
-  and `git -C <HYBRID_WORKTREE> diff -- <claim-map files>`, verifies every
-  changed path against the claim map/no-touch list, runs the assigned
-  validation, and applies only the accepted diff/hunks to the main checkout.
-  The writer never promotes its own changes. A hybrid
-  child failure or unavailable MCP remains blocked; it never silently falls
-  back to a native writer or a read-only agent.
-- Use `hybrid=off` for the paired baseline and record the same acceptance,
-  task state, and validation for both runs. Do not add product instrumentation
-  solely for this canary; use existing tool evidence.
-
 ## Internal backend route
 
 - The private backend policy defaults to

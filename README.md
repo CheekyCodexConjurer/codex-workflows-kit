@@ -14,7 +14,7 @@ Projeto local para versionar o fluxo de atalhos NUM do Codex:
 ```text
 skills/workflows/         Workflow skill canonica para Codex, Antigravity e OpenCode
 skills/evidence-first/    Grounding e verificacao condicional, sem atalho
-agents/                   Perfis nativos, readers OpenCode e writer hybrid
+agents/                   Perfis nativos e readers OpenCode
 codex/AGENTS.md           Instrucoes globais compactas
 plugins/mcp-foundation/   MCPs allowlisted, hook de auditoria e manutencao
 ahk/codex_prompt_pad.ahk  Prompt pad AutoHotkey
@@ -62,9 +62,8 @@ de sessão. O chat principal continua livre até o gate de decisão/final.
 
 Todos os readers OpenCode configurados podem chamar outros sub-agents e ler
 diretórios externos. A escrita continua bloqueada por `edit: deny` e
-`bash: deny` nesses perfis. O writer `hybrid=canary` fica em uma definição e
-servidor separados; no fluxo padrão, workers nativos continuam responsáveis
-por patches, testes e qualquer escrita.
+`bash: deny` nesses perfis. Workers nativos continuam responsáveis por patches,
+testes e qualquer escrita.
 
 Para voltar ao backend nativo, peça explicitamente a um agente para alterar a
 política para `internal_subagent_backend=native`. Se o OpenCode estiver
@@ -122,64 +121,6 @@ envie segredos. A configuração normal pode expor o MCP `codegraph`, que fica
 disponível por decisão explícita desta integração; qualquer outro MCP/custom
 tool com efeitos colaterais exige revisão separada. Após alterar
 o bloco MCP, reinicie ou reconecte o servidor no Codex.
-
-## Experimental hybrid canary
-
-A flag `hybrid=canary` opta explicitamente pelo fluxo anexado para comparação
-controlada:
-
-```text
-$workflows mode=DELIVER.AUTO hybrid=canary
-```
-
-Sem a flag, ou com `hybrid=off`, o fluxo atual permanece inalterado. O GPT
-continua dono do objetivo, claim map, aceite, integração e decisão final. Os
-readers seguem no `opencode_worker`; apenas writers com claim map, o commit
-esperado `HYBRID_BASELINE` e diferentes paths absolutos
-`HYBRID_WORKTREE`/`HYBRID_MAIN_CHECKOUT` podem usar o servidor separado
-`opencode_hybrid_worker`. O limite é de dois writers mutáveis simultâneos, sem
-commit, push, merge, reset, rebase,
-instalação de dependências ou acesso a caminhos externos.
-
-O instalador copia a definição writable para
-`C:\Users\mathe\.codex\opencode-hybrid-agents`. Adicione o segundo servidor ao
-`C:\Users\mathe\.codex\config.toml`:
-
-```toml
-[mcp_servers.opencode_hybrid_worker]
-command = "npx.cmd"
-args = ["-y", "sub-agents-mcp@0.12.0"]
-startup_timeout_sec = 30
-tool_timeout_sec = 600
-
-[mcp_servers.opencode_hybrid_worker.env]
-AGENTS_DIR = "E:\\Repositories\\codex-workflows-prompt-pad\\agents\\opencode-hybrid"
-AGENT_TYPE = "opencode"
-AGENT_MODEL = "opencode-go/deepseek-v4-flash"
-AGENT_EFFORT = "max"
-AGENT_PERMISSION = "safe-edit"
-EXECUTION_TIMEOUT_MS = "600000"
-SESSION_ENABLED = "false"
-PATH = "C:\\Users\\mathe\\AppData\\Roaming\\npm\\node_modules\\opencode-ai\\bin;C:\\Program Files\\nodejs;C:\\Users\\mathe\\AppData\\Roaming\\npm;C:\\Program Files\\Git\\cmd;C:\\Windows\\System32;C:\\Windows"
-```
-
-O writer híbrido também permanece sem persistência de sessão; cada tentativa
-usa uma conversa MCP nova.
-
-Esse servidor só deve ser habilitado depois de preparar um worktree descartável
-e reiniciar/reconectar o MCP. `safe-edit` não é sandbox de nível de sistema;
-não passe segredos. Se o servidor ou o worktree não estiver disponível, o
-canary deve ficar bloqueado, sem fallback silencioso para outro writer.
-Os marcadores internos `HYBRID_ROUTE=writer`, `HYBRID_WORKTREE`,
-`HYBRID_MAIN_CHECKOUT` e `HYBRID_BASELINE` são acrescentados pelo
-orquestrador apenas quando essa rota foi autorizada pelo claim map e o commit
-base foi fixado; não os use para contornar a flag.
-
-O protocolo e a matriz de tasks estão em
-[`experiments/hybrid-canary.md`](experiments/hybrid-canary.md). Compare
-`hybrid=off` e `hybrid=canary` com o mesmo estado, prompt e critérios; registre
-qualidade, retrabalho, validação, latência e uso relativo do modelo principal
-antes de considerar ativar a flag fora do canary.
 
 Referências primárias: [OpenCode CLI](https://dev.opencode.ai/docs/cli/),
 [OpenCode Go](https://dev.opencode.ai/docs/de/go/) e
