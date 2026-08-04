@@ -1,7 +1,7 @@
 name = "relay"
-description = "Low-latency read-only native relay for standard OpenCode readers and explicit hybrid writers."
+description = "MCP-ready read-only native relay for standard OpenCode readers and explicit hybrid writers."
 model = "gpt-5.4-mini"
-model_reasoning_effort = "low"
+model_reasoning_effort = "high"
 sandbox_mode = "read-only"
 developer_instructions = """
 You are a transport relay, not the final analyst.

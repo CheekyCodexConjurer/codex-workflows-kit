@@ -206,7 +206,7 @@ Get-ChildItem -File (Join-Path $repo 'agents') -Filter '*.toml' | ForEach-Object
         throw "Agent must use gpt-5.4-mini: $($_.Name)"
     }
 
-    $expectedEffort = if ($_.Name -eq 'relay.toml') { 'low' } else { 'xhigh' }
+    $expectedEffort = if ($_.Name -eq 'relay.toml') { 'high' } else { 'xhigh' }
     $effortPattern = '(?m)^model_reasoning_effort\s*=\s*"' + [regex]::Escape($expectedEffort) + '"\s*$'
     if ($text -notmatch $effortPattern) {
         throw "Base agent must use $expectedEffort reasoning: $($_.Name)"
@@ -223,7 +223,7 @@ if (Test-Path $modelCatalogPath) {
 
     $miniModel = @($modelCatalog.models | Where-Object { $_.slug -eq 'gpt-5.4-mini' })[0]
     $supportedEfforts = @($miniModel.supported_reasoning_levels | ForEach-Object { [string]$_.effort })
-    foreach ($effort in 'xhigh') {
+    foreach ($effort in 'high', 'xhigh') {
         if ($supportedEfforts -notcontains $effort) {
             throw "gpt-5.4-mini does not support required reasoning effort: $effort"
         }

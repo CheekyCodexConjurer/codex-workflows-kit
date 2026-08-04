@@ -34,7 +34,7 @@ Models:
 - `subA-model`: every custom profile uses 5.4 Mini. The custom-role spawn itself still omits `model` and `reasoning_effort`.
 - `subA-effort`: analytical unsuffixed roles use the installation default,
   GPT-5.4 Mini with `xhigh`; the native transport `relay` is intentionally
-  pinned to `low` because it only routes the MCP call. Use `<role>-{low|high|max}`
+  pinned to `high` so it reliably activates the known deferred MCP function. Use `<role>-{low|high|max}`
   for an explicit effort override.
 - `subA-worker-model`: apply the same 5.4 Mini effort selection to writable claim-mapped workers; select `max` only for a material, explicit decision gate.
 
