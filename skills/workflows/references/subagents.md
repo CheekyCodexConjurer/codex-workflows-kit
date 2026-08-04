@@ -9,6 +9,12 @@ Principles:
 
 Lifecycle:
 
+- `subA-fast`: for a one-step read-only smoke or health test with explicit
+  `target_agent`, absolute `cwd`, and bounded `task`, skip repository, memory,
+  and configuration preflight; `target_agent` is the child role (`scout`,
+  `researcher`, or `reviewer`), never the MCP server name `opencode_worker`;
+  spawn one native `relay` immediately and join that same relay. Use the full
+  lifecycle below for implementation, high-risk, unclear, or multi-phase work.
 - `subA-bg`: spawn/message subA, then immediately continue main-path/local non-overlap work.
 - `subA-join`: collect/integrate at decision/final/merge-gate or when critical path is blocked.
 - `wait-smart`: `subA-bg→main-path until no useful non-overlap work→subA-join`; long waits are correct only at join gate.
@@ -26,7 +32,10 @@ Lifecycle:
 Models:
 
 - `subA-model`: every custom profile uses 5.4 Mini. The custom-role spawn itself still omits `model` and `reasoning_effort`.
-- `subA-effort`: the unsuffixed role is pinned to the installation default, GPT-5.4 Mini with `xhigh`; use `<role>-{low|high|max}` only for an explicit effort override.
+- `subA-effort`: analytical unsuffixed roles use the installation default,
+  GPT-5.4 Mini with `xhigh`; the native transport `relay` is intentionally
+  pinned to `low` because it only routes the MCP call. Use `<role>-{low|high|max}`
+  for an explicit effort override.
 - `subA-worker-model`: apply the same 5.4 Mini effort selection to writable claim-mapped workers; select `max` only for a material, explicit decision gate.
 
 Roles:
@@ -83,7 +92,7 @@ MCP directly.
   available.
 - The canonical MCP server name is `opencode_worker`, backed by the pinned
   `sub-agents-mcp@0.12.0` package with `AGENT_TYPE=opencode`,
-  `AGENT_MODEL=opencode-go/deepseek-v4-pro`, `AGENT_EFFORT=max`,
+  `AGENT_MODEL=opencode-go/deepseek-v4-flash`, `AGENT_EFFORT=max`,
   `AGENT_PERMISSION=yolo` coarse launch profile, a bounded execution timeout,
   and a Windows
   `PATH` entry for the directory containing `opencode.exe`.

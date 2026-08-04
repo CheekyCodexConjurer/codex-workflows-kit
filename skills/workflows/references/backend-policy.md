@@ -19,6 +19,12 @@ provider or transport flag to any prompt.
 - A completed relay is not reused for a later prompt. Every prompt therefore
   starts an isolated MCP conversation and there is no continuation state to
   persist or forward.
+- For a one-step read-only smoke or health test with explicit
+  `{target_agent,cwd,task}`, use the fast path: do not read repository or
+  backend files before the spawn. In a new Desktop relay, the MCP function can
+  be deferred, so activate its known capability through the relay's one exact
+  `tool_search`, then call only `opencode_worker`; a missing result remains
+  blocked rather than searching for another connector.
 - The parent continues useful work and joins the relay at the decision/final
   gate. Native workers remain responsible for every write, patch, test, and
   claim-map-scoped implementation.
@@ -65,6 +71,10 @@ This keeps the experimental write boundary explicit and reversible.
   hybrid writer marker to `mcp__opencode_hybrid_worker__run_agent`, preserves
   the original response, and never falls back to a native or direct-CLI
   provider.
+- The Desktop may defer MCP tools in a new relay. The relay performs exactly
+  one built-in `tool_search` for its already-known exact MCP function before
+  calling it; this is activation rather than broad tool/route discovery. A
+  missing result remains a blocked route.
 - All standard OpenCode read-only sub-agents may use the OpenCode `task` tool
   and read paths through `external_directory`. Their per-agent definitions
   must still deny `edit` and `bash`; `question`, `skill`, `todowrite`, and `lsp`

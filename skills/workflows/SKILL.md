@@ -9,11 +9,30 @@ Use this skill when a prompt invokes `$workflows`, one of the compatibility alia
 `$codex-workflows`, `$antigravity-workflows`, or `$opencode-workflows`, or uses
 Matheus compact workflow syntax in Codex, OpenCode, or Google Antigravity.
 
-Load references by need:
+## Fast path: one-step read-only probe
 
-- `references/dictionary.md`: always for alias expansion.
-- `references/mode-matrix.md`: always to route the requested mode.
-- `references/runtime-adapters.md`: always before routing tools or sub-agents;
+When a prompt is a one-step smoke test or health check and already supplies
+`target_agent`, an absolute `cwd`, and a bounded read-only `task`, treat the
+installed route as a cache hit. `target_agent` is the child role (`scout`,
+`researcher`, or `reviewer`), not the MCP server name `opencode_worker`:
+
+- Do not read repository files, memory, backend references, or run shell or
+  CodeGraph before spawning.
+- Spawn exactly one native `relay` with `agent_type=relay` and
+  `{target_agent,cwd,task}`.
+- Join that same relay; do not create a second relay or perform MCP discovery
+  first.
+- Only after a spawn or relay failure, inspect the relevant configuration.
+
+This shortcut does not apply to implementation, high-risk, unclear, or
+multi-phase work.
+
+Load references by need, except for the fast path above:
+
+- `references/dictionary.md`: for alias expansion on non-fast-path work.
+- `references/mode-matrix.md`: to route non-fast-path modes.
+- `references/runtime-adapters.md`: before routing tools or sub-agents on
+  non-fast-path work;
   select exactly one adapter from the currently exposed host surface.
 - `references/backend-policy.md`: for the Codex/Antigravity adapter when a
   sidecar is needed; do not ask the user to provide its routing token.
@@ -36,9 +55,10 @@ Operational rules:
   execution surface, never the workflow contract.
 - Treat `hybrid=canary` as an explicit experimental workflow flag only; it is not a provider/transport setting and must not alter the default route when absent.
 - Use `hybrid=off` for the paired baseline; never infer either hybrid route from ordinary task wording.
-- Read the internal backend policy before routing any sidecar. Its installed
-  default is `internal_subagent_backend=opencode`; only an explicit maintenance
-  request changes it to `native`.
+- Read the internal backend policy before routing a non-fast-path sidecar. The
+  fast path uses the pinned `internal_subagent_backend=opencode` and
+  `internal_subagent_transport=native_relay` contract; only an explicit
+  maintenance request changes the backend to `native`.
 - Apply the assigned TN quality-ratchet profile; never split for line count alone or broaden structural work beyond its paydown gate.
 - Route by mode+risk+blast before work; keep simple tasks simple.
 - Apply `proportional-cadence` to every mode: start with the smallest route, expand scope or depth only when existing evidence or material risk reveals uncertainty, or a required gate is still open; parallelize approved independent work only when it saves wall-clock; checkpoint before repeating no-progress work and, when a materially different cheapest action exists, take it once before using the mode's own done, blocked, or replan outcome; scale validation by impact; do not impose fixed timeouts on active subagents.

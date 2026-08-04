@@ -206,8 +206,10 @@ Get-ChildItem -File (Join-Path $repo 'agents') -Filter '*.toml' | ForEach-Object
         throw "Agent must use gpt-5.4-mini: $($_.Name)"
     }
 
-    if ($text -notmatch '(?m)^model_reasoning_effort\s*=\s*"xhigh"\s*$') {
-        throw "Base agent must use xhigh reasoning: $($_.Name)"
+    $expectedEffort = if ($_.Name -eq 'relay.toml') { 'low' } else { 'xhigh' }
+    $effortPattern = '(?m)^model_reasoning_effort\s*=\s*"' + [regex]::Escape($expectedEffort) + '"\s*$'
+    if ($text -notmatch $effortPattern) {
+        throw "Base agent must use $expectedEffort reasoning: $($_.Name)"
     }
 }
 
@@ -486,13 +488,13 @@ foreach ($surface in @(
     }
 }
 
-foreach ($instruction in 'internal_subagent_backend=opencode','internal_subagent_backend=native','internal_subagent_transport=native_relay','opencode_worker','opencode-go/deepseek-v4-pro','AGENT_PERMISSION=yolo','task','external_directory','read-only','blocked','native','do not silently fall back') {
+foreach ($instruction in 'internal_subagent_backend=opencode','internal_subagent_backend=native','internal_subagent_transport=native_relay','opencode_worker','opencode-go/deepseek-v4-flash','AGENT_PERMISSION=yolo','task','external_directory','read-only','blocked','native','do not silently fall back') {
     if ($subagents -notmatch [regex]::Escape($instruction)) {
         throw "Subagents reference is missing internal-backend contract: $instruction"
     }
 }
 
-foreach ($instruction in 'internal_subagent_backend=opencode','internal_subagent_backend=native','internal_subagent_transport=native_relay','native `relay`','opencode_worker','opencode-go/deepseek-v4-pro','variant=max','effective no-edit','task','external_directory','do not silently fall back') {
+foreach ($instruction in 'internal_subagent_backend=opencode','internal_subagent_backend=native','internal_subagent_transport=native_relay','native `relay`','opencode_worker','opencode-go/deepseek-v4-flash','variant=max','effective no-edit','task','external_directory','do not silently fall back') {
     if ($modeMatrixNormalized -notmatch [regex]::Escape($instruction)) {
         throw "Mode matrix is missing internal-backend contract: $instruction"
     }
@@ -504,7 +506,7 @@ foreach ($instruction in 'internal_subagent_backend=opencode','internal_subagent
     }
 }
 
-foreach ($instruction in 'opencode_worker','native','relay','AGENT_TYPE = "opencode"','AGENT_MODEL = "opencode-go/deepseek-v4-pro"','AGENT_EFFORT = "max"','AGENT_PERMISSION = "yolo"','SESSION_ENABLED = "false"','sub-agents-mcp@0.12.0','AGENTS_DIR = "E:\\Repositories\\codex-workflows-prompt-pad\\agents\\opencode"','PATH = "C:\\Users\\mathe\\AppData\\Roaming\\npm\\node_modules\\opencode-ai\\bin','opencode run --model opencode-go/deepseek-v4-pro --variant max "Responda somente OK"') {
+foreach ($instruction in 'opencode_worker','native','relay','AGENT_TYPE = "opencode"','AGENT_MODEL = "opencode-go/deepseek-v4-flash"','AGENT_EFFORT = "max"','AGENT_PERMISSION = "yolo"','SESSION_ENABLED = "false"','sub-agents-mcp@0.12.0','AGENTS_DIR = "E:\\Repositories\\codex-workflows-prompt-pad\\agents\\opencode"','PATH = "C:\\Users\\mathe\\AppData\\Roaming\\npm\\node_modules\\opencode-ai\\bin','opencode run --model opencode-go/deepseek-v4-flash --variant max "Responda somente OK"') {
     if ($readmeText -notmatch [regex]::Escape($instruction)) {
         throw "README is missing OpenCode activation evidence: $instruction"
     }
@@ -576,7 +578,7 @@ if (Test-Path -LiteralPath $codexConfigPath) {
             throw 'Configured opencode_hybrid_worker must not define a session directory or retention setting.'
         }
 
-        foreach ($instruction in 'AGENT_TYPE = "opencode"', 'AGENT_MODEL = "opencode-go/deepseek-v4-pro"', 'AGENT_EFFORT = "max"') {
+        foreach ($instruction in 'AGENT_TYPE = "opencode"', 'AGENT_MODEL = "opencode-go/deepseek-v4-flash"', 'AGENT_EFFORT = "max"') {
             if ($hybridEnvText -notmatch "(?m)^$([regex]::Escape($instruction))\s*$") {
                 throw "Configured opencode_hybrid_worker is missing: $instruction"
             }
@@ -619,9 +621,19 @@ if ($relay -notmatch '(?m)^name\s*=\s*"relay"\s*$' -or $relay -notmatch '(?m)^sa
     throw 'Native relay profile must be named relay and use read-only sandbox.'
 }
 
-foreach ($instruction in 'mcp__opencode_worker__run_agent','mcp__opencode_hybrid_worker__run_agent','A task beginning with `HYBRID_ROUTE=writer`','HYBRID_WORKTREE','HYBRID_MAIN_CHECKOUT','HYBRID_BASELINE','RELAY_STATUS=success|blocked|error','RELAY_ROUTE=read-only|hybrid-writer','RELAY_RESPONSE_BEGIN','never route a writer to the read-only server','report `RELAY_STATUS=blocked`','never downgrade the malformed writer task','never silently switch') {
+foreach ($instruction in 'mcp__opencode_worker__run_agent','mcp__opencode_hybrid_worker__run_agent','A task beginning with `HYBRID_ROUTE=writer`','HYBRID_WORKTREE','HYBRID_MAIN_CHECKOUT','HYBRID_BASELINE','RELAY_STATUS=success|blocked|error','RELAY_ROUTE=read-only|hybrid-writer','RELAY_RESPONSE_BEGIN','never route a writer to the read-only server','report `RELAY_STATUS=blocked`','never downgrade the malformed writer task','never silently switch','built-in `tool_search` query','Delegate a complex multi-step task to an autonomous agent','This is deterministic activation, not route discovery','Do not list tools or agents') {
     if ($relayNormalized -notmatch [regex]::Escape($instruction)) {
         throw "Native relay profile is missing transport contract: $instruction"
+    }
+}
+foreach ($instruction in 'the MCP function can be deferred','relay''s one exact','`tool_search`','a missing result remains blocked') {
+    if (($backendPolicy -replace '\s+', ' ') -notmatch [regex]::Escape($instruction)) {
+        throw "Backend policy is missing the deferred-MCP relay contract: $instruction"
+    }
+}
+foreach ($instruction in '[mcp_servers.opencode_worker]','command = "C:\\Users\\mathe\\.codex\\bin\\opencode-worker.cmd"','AGENT_MODEL = "opencode-go/deepseek-v4-flash"','AGENT_EFFORT = "max"','enabled_tools = ["run_agent"]','[mcp_servers.opencode_hybrid_worker]','command = "npx.cmd"','AGENT_PERMISSION = "safe-edit"') {
+    if ($relayNormalized -notmatch [regex]::Escape($instruction)) {
+        throw "Native relay profile is missing explicit MCP tool exposure: $instruction"
     }
 }
 if ($relayNormalized -notmatch '(?i)never falls? back') {

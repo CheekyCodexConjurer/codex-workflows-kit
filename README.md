@@ -86,7 +86,7 @@ tool_timeout_sec = 600
 [mcp_servers.opencode_worker.env]
 AGENTS_DIR = "E:\\Repositories\\codex-workflows-prompt-pad\\agents\\opencode"
 AGENT_TYPE = "opencode"
-AGENT_MODEL = "opencode-go/deepseek-v4-pro"
+AGENT_MODEL = "opencode-go/deepseek-v4-flash"
 AGENT_EFFORT = "max"
 AGENT_PERMISSION = "yolo"
 EXECUTION_TIMEOUT_MS = "600000"
@@ -104,13 +104,13 @@ No Windows, o `PATH` inclui o diretório que contém `opencode.exe`, porque o
 backend inicia o CLI com `spawn("opencode")`; sem esse diretório, o shell pode
 encontrar `opencode.cmd`, mas o processo filho ainda falha com `ENOENT`.
 
-O ID `opencode-go/deepseek-v4-pro` é a forma provider/model do OpenCode Go;
+O ID `opencode-go/deepseek-v4-flash` é a forma provider/model do OpenCode Go;
 `AGENT_EFFORT=max` chega ao OpenCode como `--variant max`. Antes do primeiro
 uso, confirme o binário, o modelo e a variante diretamente:
 
 ```powershell
 opencode models
-opencode run --model opencode-go/deepseek-v4-pro --variant max "Responda somente OK"
+opencode run --model opencode-go/deepseek-v4-flash --variant max "Responda somente OK"
 ```
 
 O pacote usa `AGENT_PERMISSION=yolo` porque o nível `read-only` hard-coda a
@@ -155,7 +155,7 @@ tool_timeout_sec = 600
 [mcp_servers.opencode_hybrid_worker.env]
 AGENTS_DIR = "E:\\Repositories\\codex-workflows-prompt-pad\\agents\\opencode-hybrid"
 AGENT_TYPE = "opencode"
-AGENT_MODEL = "opencode-go/deepseek-v4-pro"
+AGENT_MODEL = "opencode-go/deepseek-v4-flash"
 AGENT_EFFORT = "max"
 AGENT_PERMISSION = "safe-edit"
 EXECUTION_TIMEOUT_MS = "600000"

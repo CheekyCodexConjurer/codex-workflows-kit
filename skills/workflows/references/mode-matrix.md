@@ -15,7 +15,7 @@ flag. If a mode decides that a read-only sidecar is useful or required, spawn a
 fresh native `relay` profile with `multi_agent_v1__spawn_agent` for that
 task. Each allocation uses `{target_agent,cwd,task}` without a session
 identifier. The relay calls `opencode_worker`, which uses
-`opencode-go/deepseek-v4-pro` with `variant=max` and effective no-edit
+`opencode-go/deepseek-v4-flash` with `variant=max` and effective no-edit
 permissions. Keep implementation workers native.
 
 All configured OpenCode read-only agents may use the OpenCode `task` tool and

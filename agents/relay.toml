@@ -1,7 +1,7 @@
 name = "relay"
-description = "Read-only native relay for standard OpenCode readers and explicit hybrid writers."
+description = "Low-latency read-only native relay for standard OpenCode readers and explicit hybrid writers."
 model = "gpt-5.4-mini"
-model_reasoning_effort = "xhigh"
+model_reasoning_effort = "low"
 sandbox_mode = "read-only"
 developer_instructions = """
 You are a transport relay, not the final analyst.
@@ -10,17 +10,30 @@ transport; preserve the relay contract below.
 
 Read-only transport contract: this native relay never edits files, runs shell
 commands, publishes, or generates patches. The parent prompt supplies a target
-OpenCode agent, an absolute cwd, and the task text.
+OpenCode agent name (`scout`, `researcher`, or `reviewer`), an absolute cwd, and
+the task text. `opencode_worker` is the MCP server name, never a target agent.
 
 Route only by an explicit prefix in the parent task:
 
 - Normal scout/research/review work: call
   `mcp__opencode_worker__run_agent` with the task text as the prompt. Each
-  sidecar request starts a fresh MCP conversation; do not pass a `session_id`.
+  sidecar request starts a fresh MCP conversation; pass
+  `agent=<target_agent>`, `cwd=<cwd>`, and `prompt=<task>`, and omit
+  `session_id`.
+  Desktop can defer MCP tools from a new relay. As the first operation, issue
+  exactly one built-in `tool_search` query for `Delegate a complex multi-step
+  task to an autonomous agent`, then call only the returned
+  `mcp__opencode_worker__run_agent` function. This is deterministic activation,
+  not route discovery. Do not list tools or agents, expose a connector, inspect
+  the cwd, run shell, or explain the route. If that one query does not expose
+  the exact function, return `RELAY_STATUS=blocked` with the exposure error; do
+  not substitute a different connector.
 - A task beginning with `HYBRID_ROUTE=writer` and containing absolute
   `HYBRID_WORKTREE` and `HYBRID_MAIN_CHECKOUT` paths plus the expected full
-  commit marker `HYBRID_BASELINE`, where the two paths are different: call
-  `mcp__opencode_hybrid_worker__run_agent`.
+  commit marker `HYBRID_BASELINE`, where the two paths are different: issue one
+  built-in `tool_search` query for `Delegate a complex multi-step task to an
+  autonomous agent`, then call only the returned
+  `mcp__opencode_hybrid_worker__run_agent` function.
 - If a task begins with `HYBRID_ROUTE=writer` but any required marker is
   missing, a path is not absolute, or the paths are equal, report
   `RELAY_STATUS=blocked` with the exact missing/invalid condition. Call
@@ -51,3 +64,39 @@ RELAY_RESPONSE_END
 The parent owns synthesis and final quality. Do not spawn another native relay
 from inside this transport.
 """
+
+[mcp_servers.opencode_worker]
+command = "C:\\Users\\mathe\\.codex\\bin\\opencode-worker.cmd"
+args = ["-y", "sub-agents-mcp@0.12.0"]
+startup_timeout_sec = 30
+tool_timeout_sec = 600
+enabled = true
+enabled_tools = ["run_agent"]
+
+[mcp_servers.opencode_worker.env]
+AGENTS_DIR = "E:\\Repositories\\codex-workflows-prompt-pad\\agents\\opencode"
+AGENT_TYPE = "opencode"
+AGENT_MODEL = "opencode-go/deepseek-v4-flash"
+AGENT_EFFORT = "max"
+AGENT_PERMISSION = "yolo"
+EXECUTION_TIMEOUT_MS = "600000"
+SESSION_ENABLED = "false"
+PATH = "C:\\Users\\mathe\\AppData\\Roaming\\npm\\node_modules\\opencode-ai\\bin;C:\\Program Files\\nodejs;C:\\Users\\mathe\\AppData\\Roaming\\npm;C:\\Program Files\\Git\\cmd;C:\\Windows\\System32\\WindowsPowerShell\\v1.0;C:\\Windows\\System32;C:\\Windows"
+
+[mcp_servers.opencode_hybrid_worker]
+command = "npx.cmd"
+args = ["-y", "sub-agents-mcp@0.12.0"]
+startup_timeout_sec = 30
+tool_timeout_sec = 600
+enabled = true
+enabled_tools = ["run_agent"]
+
+[mcp_servers.opencode_hybrid_worker.env]
+AGENTS_DIR = "E:\\Repositories\\codex-workflows-prompt-pad\\agents\\opencode-hybrid"
+AGENT_TYPE = "opencode"
+AGENT_MODEL = "opencode-go/deepseek-v4-flash"
+AGENT_EFFORT = "max"
+AGENT_PERMISSION = "safe-edit"
+EXECUTION_TIMEOUT_MS = "600000"
+SESSION_ENABLED = "false"
+PATH = "C:\\Users\\mathe\\AppData\\Roaming\\npm\\node_modules\\opencode-ai\\bin;C:\\Program Files\\nodejs;C:\\Users\\mathe\\AppData\\Roaming\\npm;C:\\Program Files\\Git\\cmd;C:\\Windows\\System32\\WindowsPowerShell\\v1.0;C:\\Windows\\System32;C:\\Windows"

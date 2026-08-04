@@ -58,7 +58,10 @@ Core:
 - `delivery-contract`: plan-to-delivery handoff `{scope,invariants,acceptance,val,risk-tier,serial-core,parallel-slices?,claim-map?,quality-obligations?,observability?,review-lenses,replan-triggers}`; keep contained plans compact.
 - `subA-role-lock`: every read-only spawn selects the exact custom role `scout`, `reviewer`, or `researcher`; never use `default` or omit the role, because that inherits the parent model/effort.
 - `subA-custom-spawn`: spawn a custom role with explicit `agent_type` and omit `fork_context`, `model`, and `reasoning_effort`; never combine `fork_context=true` with `agent_type`. A full-history fork intentionally inherits the parent and is not a custom-role spawn.
-- `subA-effort`: use the unsuffixed custom role for the installation default, GPT-5.4 Mini with `xhigh`; select `<role>-{low|high|max}` only for an explicit effort override. Every profile uses 5.4 Mini.
+- `subA-effort`: use the unsuffixed analytical role for the installation default,
+  GPT-5.4 Mini with `xhigh`; the native transport `relay` is pinned to `low`
+  because it only routes the MCP call. Select `<role>-{low|high|max}` only for
+  an explicit effort override. Every profile uses 5.4 Mini.
 - `subA-same-role-retry`: after a transient launch/stream/account-availability error, continue useful local work and make one fresh retry with the same explicit role and the same valid custom-spawn shape: omit `fork_context`, `model`, and `reasoning_effort`; never retry in a tight loop or fall back to `default`. If the retry fails, skip only optional scouting with evidence; any required read-only gate stays blocked.
 - `subA-isolation`: each sidecar request uses a fresh relay and MCP conversation; do not persist a session identifier or send follow-ups through a completed relay.
 - `preflight-subA`: read-only scouts and claim-mapped implementation workers may start before/during implementation when `subA-speed`; independent reviewers remain gated by `integrated-freeze`.

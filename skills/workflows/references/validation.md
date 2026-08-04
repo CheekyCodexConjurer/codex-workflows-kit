@@ -14,7 +14,7 @@ Check strategy:
   `internal_subagent_transport=native_relay`, the native `relay` profile, the
   configured `opencode_worker` MCP server, pinned `sub-agents-mcp@0.12.0`,
   absolute `AGENTS_DIR`, `AGENT_TYPE=opencode`, model
-  `opencode-go/deepseek-v4-pro`, `AGENT_EFFORT=max`/OpenCode `--variant max`,
+  `opencode-go/deepseek-v4-flash`, `AGENT_EFFORT=max`/OpenCode `--variant max`,
   bounded timeout, Windows `PATH` resolution for `opencode.exe`,
   `AGENT_PERMISSION=yolo`, `SESSION_ENABLED=false` without a session directory
   or retention setting, and each OpenCode definition's effective `edit: deny`,
