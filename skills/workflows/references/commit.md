@@ -7,6 +7,8 @@ Use this reference for `COMMIT`. Commit a coherent, validated series rather than
 - Inspect status, staged diff, unstaged diff, untracked files, merge/rebase state, current branch, remotes, and upstream before staging.
 - Classify all staged, unstaged, and untracked candidate paths and content. Block without changing the index when a staged candidate looks secret, generated, cache, or local.
 - Run `gitignore-hygiene` first. Ignore generated, cache, local, or secret material; do not commit secrets. Include every remaining nonignored new file in the commit map.
+- When a candidate is confidently local, generated, cache, or secret and has no narrow matching rule, add the smallest evidence-based rule to the nearest `.gitignore` and include that `.gitignore` change in its `commit-unit`; if classification or scope is ambiguous, block and report.
+- Simple commits stay local. When candidate classification is non-trivial with independent candidate fronts, use the `quality-first-subA` read-only scout fan-out; Git/index/commit/push remain parent-owned.
 - When an existing ignore rule hides likely source, documentation, or configuration without explicit evidence, block the automatic series and report the rule. Do not rewrite user-authored ignore rules automatically.
 - Block before changing the index when a merge, rebase, cherry-pick, detached HEAD, or incoherent pre-staged unit prevents a safe series.
 
@@ -43,6 +45,11 @@ Operator: Codex
 - After the series, run integrated validation. Do not push when any unit validation or final validation fails.
 - On failure, preserve existing local commits and worktree changes. Never reset, amend, rebase, or force-push to recover.
 - Before push, ensure every eligible mapped change was committed; ignored artifacts may remain.
+
+## Coverage Gate
+
+- Run `commit-coverage-gate` before each commit and before push: refresh `git status --porcelain=v1 --untracked-files=all` and block any nonignored candidate outside the `commit-map`.
+- Excluded generated/cache/local/secret paths require `git check-ignore -v` evidence; preserve tracked files and negation exceptions. No candidate may disappear only through an unverified verbal classification.
 
 ## Push
 

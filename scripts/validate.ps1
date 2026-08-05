@@ -1128,7 +1128,7 @@ foreach ($instruction in 'Every read-only spawn uses its exact custom role','omi
     }
 }
 
-foreach ($alias in '`commit-map`','`commit-unit`','`commit-series`','`operator`','`commit-gate`','`push=current`') {
+foreach ($alias in '`commit-map`','`commit-unit`','`commit-series`','`operator`','`commit-gate`','`commit-coverage-gate`','`push=current`') {
     if ($dictionary -notmatch [regex]::Escape($alias)) {
         throw "Dictionary is missing commit alias: $alias"
     }
@@ -1146,6 +1146,40 @@ foreach ($instruction in 'type(scope): imperative summary','Context: factual beh
     if ($commitReference -notmatch [regex]::Escape($instruction)) {
         throw "Commit reference is missing required instruction: $instruction"
     }
+}
+
+foreach ($instruction in 'Simple commits stay local','non-trivial','independent candidate fronts','`quality-first-subA` read-only scout fan-out','Git/index/commit/push remain parent-owned') {
+    if ($commitReference -notmatch [regex]::Escape($instruction)) {
+        throw "Commit reference is missing sub-agent classification guidance: $instruction"
+    }
+}
+
+foreach ($instruction in '`commit-coverage-gate`','`git status --porcelain=v1 --untracked-files=all`','nonignored candidate outside the `commit-map`','`git check-ignore -v` evidence','tracked files','negation exceptions') {
+    if ($commitReference -notmatch [regex]::Escape($instruction)) {
+        throw "Commit reference is missing coverage-gate contract: $instruction"
+    }
+}
+
+foreach ($instruction in 'smallest evidence-based rule','nearest `.gitignore`','include that `.gitignore` change in its `commit-unit`','classification or scope is ambiguous, block and report') {
+    if ($commitReference -notmatch [regex]::Escape($instruction)) {
+        throw "Commit reference is missing explicit .gitignore remediation guidance: $instruction"
+    }
+}
+
+foreach ($instruction in '`commit-coverage-gate`','`git status --porcelain=v1 --untracked-files=all`','nonignored candidate outside the `commit-map`','smallest evidence-based `.gitignore` rule','include it in the `commit-unit`','`git check-ignore -v` evidence','preserve tracked files and negation exceptions') {
+    if ($dictionary -notmatch [regex]::Escape($instruction)) {
+        throw "Dictionary is missing commit-coverage-gate contract: $instruction"
+    }
+}
+
+foreach ($instruction in 'Keep simple commits local','independent candidate fronts','`quality-first-subA` read-only scout fan-out','Git/index/commit/push remain parent-owned','`commit-coverage-gate` before each commit and before push') {
+    if ($modeMatrix -notmatch [regex]::Escape($instruction)) {
+        throw "Mode matrix is missing COMMIT sub-agent and coverage-gate contract: $instruction"
+    }
+}
+
+if ($skillText -notmatch [regex]::Escape('when `COMMIT` faces non-trivial candidate classification')) {
+    throw 'workflows skill is missing COMMIT sub-agent loading guidance.'
 }
 
 foreach ($binding in $workflowBindings) {

@@ -40,7 +40,7 @@ Load references by need, except for the fast path above:
 - `references/observability.md`: for code-facing planning, investigation, review, or delivery; use its gate to choose no instrumentation, a bounded temporary diagnostic, or a durable event.
 - `references/commit.md`: when prompt invokes `COMMIT`.
 - `references/research.md`: when prompt invokes `RESEARCH.DEEP` or asks for deep web/GitHub research.
-- `references/subagents.md`: when mode is `PLAN.AUTO`, `P.DEEP`, `RESEARCH.DEEP`, `IMPL.AUTO`, `IMPL`, `IMPL.PHASE`, `DELIVER.AUTO`, `REVIEW`, `DEBUG`, or `R.A.F.V`; or when the task mentions subA, worker, parallel, phase graph, claim map, review, audit, or multi-agent work.
+- `references/subagents.md`: when mode is `PLAN.AUTO`, `P.DEEP`, `RESEARCH.DEEP`, `IMPL.AUTO`, `IMPL`, `IMPL.PHASE`, `DELIVER.AUTO`, `REVIEW`, `DEBUG`, or `R.A.F.V`; when `COMMIT` faces non-trivial candidate classification; or when the task mentions subA, worker, parallel, phase graph, claim map, review, audit, or multi-agent work.
 - `references/validation.md`: for every workflow mode; each mode owns its validation, evidence, or explicit no-edit gate internally. Also load it when restarting AHK or using CodeGraph.
 
 Operational rules:

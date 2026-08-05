@@ -18,6 +18,7 @@ Core:
 - `commit-series`: execute ordered proven units; `commit-series=auto` commits each unit without a confirmation pause, but stops on incoherent stage, failed validation, or unresolved dependency.
 - `operator`: commit trailer naming the proven implementer; use `user` or `worker:<name>` only with explicit provenance, otherwise `Codex`.
 - `commit-gate`: require clean staged patch plus unit-targeted validation before each commit and integrated validation before push; preserve local commits on failure.
+- `commit-coverage-gate`: before each commit and before push, refresh `git status --porcelain=v1 --untracked-files=all`; block any nonignored candidate outside the `commit-map`; for a confidently local/generated/cache/secret candidate without a narrow rule, add the smallest evidence-based `.gitignore` rule and include it in the `commit-unit`; require `git check-ignore -v` evidence for excluded paths; preserve tracked files and negation exceptions.
 - `push=current`: push the current branch without force, branch creation, or upstream changes; use upstream, then `origin`, then a sole remote, and require the matching remote branch to exist; otherwise report blocked and keep commits local.
 - `RESEARCH.DEEP`: no-edit evidence-led web/GitHub/literature research; load `research.md`, use adaptive fan-out where it improves evidence, and return a cited solution plus roadmap.
 - `academic=screen`: mandatory academic relevance screen; search for material scholarly evidence, or report why it cannot change the decision.
