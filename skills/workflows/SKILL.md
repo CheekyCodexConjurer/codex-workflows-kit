@@ -59,6 +59,15 @@ Operational rules:
   maintenance request changes the backend to `native`.
 - Apply the assigned TN quality-ratchet profile; never split for line count alone or broaden structural work beyond its paydown gate.
 - Route by mode+risk+blast before work; keep simple tasks local.
+- Apply the private `internal_subagent_policy=aggressive` default: on
+  write-authorized work, claim-mapped OpenCode writers are enabled by default
+  with no arbitrary numeric worker cap; the main agent owns architecture,
+  contracts, integration, validation, and final approval and writes directly
+  only as final fallback/no-progress or critical shared integration.
+  `internal_subagent_policy=conservative` keeps writers optional and simple
+  write tasks local. The policy is not a user-facing prompt flag, is orthogonal to
+  backend/transport/provider/model, and an explicit no-edit always prevents
+  writers.
 - Apply `proportional-cadence` to every mode: use the smallest local route for simple tasks; for non-trivial tasks (multi-file, shared/core, unclear ownership, high blast, contract risk, or explicit review/testing), default to `quality-first-subA` and fan out independent read-only scouts/researchers in parallel when distinct fronts exist, even without a wall-clock gain. Time is secondary when the user permits it; never duplicate a front or bypass role/merge gates. Expand scope or depth only when existing evidence or material risk reveals uncertainty, or a required gate is still open; checkpoint before repeating no-progress work and, when a materially different cheapest action exists, take it once before using the mode's own done, blocked, or replan outcome; scale validation by impact; do not impose fixed timeouts on active subagents.
 - Apply `plan-sync` to nontrivial work with two or more phases: initialize the real `update_plan` checklist with the first step `in_progress` and the rest `pending`; before the first command of the next phase and only after proof, mark the current phase `completed`, the next phase `in_progress`, and future phases `pending`; update it before continuing after scope changes; after the last proof, leave every step `completed` and none `in_progress`; never update it after every command, and keep the main agent as its single owner. Skip it for one-step or simple work.
 - Read direct evidence first; use CodeGraph only when cg-worthy.
@@ -89,12 +98,19 @@ configured `opencode_worker` MCP without a session identifier, and returns
 the original response through the native sub-agent conversation. Completed
 relays are not reused for later prompts, so each prompt gets an isolated MCP
 conversation.
+For image-bearing requests, when the host supports it, the native spawn may carry
+real image items outside the text message; never put image paths or raw bytes in
+`task`. The relay reads those items natively, appends a text-only
+`[VISUAL_PACKET v1]` block to the MCP prompt, and blocks if visual extraction
+fails. If items were attached but the result is `RELAY_VISUAL=none` or missing,
+the parent treats it as blocked/unknown. OpenCode receives no image item or path.
 The main chat continues local non-overlap work and joins the relay at the
 decision/final gate. After integrating a relay's final response, close that
 completed relay to release its host slot; never close an active, waiting, or
 required relay before integration. Read-only sidecars and claim-map-scoped
 writer sidecars both use the configured OpenCode MCP through the native relay;
-the relay remains transport-only, while the parent GPT owns review, tests, and
+the relay remains transport-only except for the bounded visual preflight, while
+the parent GPT owns review, tests, and
 integration. The native `worker` profile remains only as an explicit
 `internal_subagent_backend=native` maintenance override. The user does not
 need to add a provider or transport flag.

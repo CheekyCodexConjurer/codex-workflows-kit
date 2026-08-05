@@ -216,6 +216,17 @@ continua separado do chat principal e não edita o próprio contexto. Cada promp
 usa uma conversa MCP isolada, sem persistência ou retomada de sessão. O chat
 principal continua livre até o gate de decisão/final.
 
+Quando o host suporta anexos multimodais, o spawn nativo carrega os anexos reais como
+itens estruturados (`type=image` ou `type=local_image`); os caminhos não entram
+no texto de `task`. O relay faz a
+leitura visual nativa e acrescenta somente um `[VISUAL_PACKET v1]` textual ao
+prompt do MCP, com fatos observáveis, confiança e incertezas. Imagens, bytes,
+data URLs e paths não atravessam a fronteira até o DeepSeek; falha na leitura
+visual bloqueia a solicitação em vez de degradar para um prompt com path. Se os
+itens foram anexados, mas o relay retorna `RELAY_VISUAL=none` ou omite o status,
+o pai trata o sidecar como bloqueado/desconhecido e não usa o resultado em
+tarefas que dependem da imagem.
+
 Após integrar a resposta final de um relay, feche o relay concluído para liberar
 o slot. Se um novo spawn falhar porque os slots do host estão cheios, aplique
 `subA-slot-full`: recupere apenas agentes concluídos/ociosos já integrados ou
@@ -229,9 +240,33 @@ diretórios externos. A escrita continua bloqueada por `edit: deny` e
 claim-map, worktree isolada e limites no prompt, usa somente `edit` com
 `external_directory: deny`, e mantém `bash`/delegação aninhada bloqueados. O
 GPT principal verifica o `cwd` e o baseline antes do spawn, revisa o diff e
-executa o guard de caminhos antes de integrar; para edições pequenas ou
-críticas, ele ainda pode escrever diretamente. O perfil nativo `worker` fica
-apenas como override explícito de manutenção.
+executa o guard de caminhos antes de integrar; ele escreve diretamente apenas
+como fallback final, quando não há progresso ou em integração crítica
+compartilhada. O perfil nativo `worker` fica apenas como override explícito de
+manutenção.
+
+### Política de delegação (`internal_subagent_policy`)
+
+`internal_subagent_policy=aggressive` é o padrão (delegate-first): o writer
+OpenCode fica habilitado por padrão para implementação autorizada, sem limite
+numérico artificial — a quantidade segue as frentes independentes do claim-map.
+O GPT principal permanece dono da arquitetura, integração, testes e aprovação
+final. `internal_subagent_policy=conservative` mantém o comportamento
+proporcional atual: tarefas simples locais e writer somente para slices
+isoladas com claim-map.
+
+O brief do writer permanece compacto (objetivo, arquivos permitidos, no-touch,
+comportamento esperado, condição de pronto, validação e saída), nunca o
+histórico completo. Se um writer falhar ou não progredir, o religamento usa
+handoff de reparo: erro observado + diff anterior + hipótese alterada. O
+contexto do handoff é local à sessão; não há persistência de métricas de
+runtime. Quando solicitado, o resumo interno da sessão traz readers/writers,
+frentes paralelas, reparos, falhas/bloqueios de validação, trabalho deduplicado,
+diff fora de escopo, fallback GPT, tempo e resultado — sem métrica de tokens do
+GPT principal. Um pedido explícito de `no-edit` impede o spawn de writers;
+permissões não sobem silenciosamente. A política não adiciona MCP nem tools, e
+todos os gates de segurança (claim-map, worktree isolada, baseline, revisão do
+diff, merge gate) permanecem.
 
 Para voltar ao backend nativo, peça explicitamente a um agente para alterar a
 política para `internal_subagent_backend=native`. Se o OpenCode estiver
@@ -408,6 +443,9 @@ Alt+NUM6     /learn
   só edita dentro do claim-map, em worktree isolada, sem bash e sem acesso a
   diretórios externos. O nível `AGENT_PERMISSION=yolo` do MCP não é sandbox de
   sistema.
+- A política de delegação (`internal_subagent_policy`, padrão `aggressive`) não
+  relaxa permissões: `no-edit` impede o spawn de writer, e nenhum MCP/tool novo
+  é adicionado.
 - Modelo de ameaças completo em `docs/security.md`.
 
 ## Suporte e limitações

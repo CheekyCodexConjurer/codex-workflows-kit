@@ -471,15 +471,19 @@ if ($InstallAhk) {
 
 if ($ConfigureMcp) {
     Install-OpenCodeConfig
-    $maintenanceArgs = @('-Mode', 'Repair', '-RepositoryRoot', $repo, '-CodexHome', $CodexHome)
+    $maintenanceParams = @{
+        Mode = 'Repair'
+        RepositoryRoot = $repo
+        CodexHome = $CodexHome
+    }
     if ($InstallScheduledTask) {
-        $maintenanceArgs += '-InstallScheduledTask'
+        $maintenanceParams['InstallScheduledTask'] = $true
     }
     if (-not $WhatIfPreference -and -not (Test-Path -LiteralPath $maintenanceDest -PathType Leaf)) {
         throw "MCP maintenance script was not installed: $maintenanceDest"
     }
     if (Confirm-InstallAction -Target $maintenanceDest -Action 'Repair allowlisted MCP foundation') {
-        & $maintenanceDest @maintenanceArgs
+        & $maintenanceDest @maintenanceParams
     }
 }
 elseif ($InstallScheduledTask) {

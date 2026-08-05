@@ -24,8 +24,10 @@ Use the native Codex tool and agent surface. When a read-only or claim-map
 writer sidecar is required, follow `references/backend-policy.md` and create a
 fresh configured native relay for that request. The relay owns transport and
 isolation; OpenCode owns delegated writer edits, while the main agent owns
-integration and final quality. Native workers remain only for the explicit
-native-backend maintenance override.
+integration and final quality. If the native spawn carries real image items,
+the relay performs the bounded visual preflight and forwards only a text
+`[VISUAL_PACKET v1]`; attachment paths and raw image data never reach OpenCode.
+Native workers remain only for the explicit native-backend maintenance override.
 
 ## Google Antigravity
 

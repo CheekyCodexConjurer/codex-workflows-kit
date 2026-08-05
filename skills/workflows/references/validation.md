@@ -32,6 +32,12 @@ Check strategy:
   MCP directly from the main chat. The configured
   `codegraph` MCP may stay enabled when explicitly authorized, but unreviewed
   external tools must not be inferred safe from the permission profile alone.
+- For image-bearing relay requests, prove `RELAY_VISUAL=success` and a
+  `[VISUAL_PACKET v1]` reaches the MCP prompt without an image path, data URL,
+  or raw image bytes. For text-only requests, prove the task remains intact and
+  `RELAY_VISUAL=none`. If attached items produce `RELAY_VISUAL=none` or a
+  missing visual status, the parent treats the sidecar as blocked/unknown; a
+  failed visual extraction must return blocked rather than a path-only request.
 - For nontrivial work shown in the Codex checklist with two or more phases, verify `update_plan` transitions at phase boundaries: at the start, the first phase is `in_progress` and future phases are `pending`; before the first command of the next phase, the previous phase is proven and `completed`, exactly one next phase is `in_progress`, and future phases remain `pending`; after the last phase is proven, every phase is `completed` and none is `in_progress`; scope changes update the checklist before work continues, and routine commands do not trigger updates. One-step or simple work does not need a checklist.
 - For approved temporary or durable instrumentation, validate the exact question it answers, canonical logger path, field allowlist/redaction, volume cap or sampling, sink-enforced retention and access, disable/removal path, and `failure-behavior`: fail-open by default, with fail-closed only under an explicitly approved audit/compliance contract, so a logging failure does not break the primary flow.
 - Do not accept a retention promise written only in source text; identify the real sink, rotation, cleanup, or lifecycle mechanism.

@@ -55,11 +55,27 @@ Vincule-se aos contratos do Codex Workflows Kit antes de qualquer tarefa:
    `worker` (edit em claim-map, worktree isolada, sem bash). Nunca caia para o
    papel `default`; nao feche sub-agents ativos/aguardando/obrigatorios; com
    slots cheios, aplique `subA-slot-full` e reporte bloqueio explicito.
+   Quando o host suporta anexos multimodais, anexe os itens reais ao relay
+   nativo, mantenha `{target_agent,cwd,task}` sem paths e consuma o
+   `[VISUAL_PACKET v1]`; nunca encaminhe paths, bytes ou data URLs ao MCP. Se
+   itens foram anexados, mas o relay retorna `RELAY_VISUAL=none` ou omite o
+   status, trate o sidecar como bloqueado/desconhecido.
 
-7. Aplique o quality ratchet do modo (perfil TN correspondente) e encerre
+7. Use a politica `internal_subagent_policy=aggressive` (padrao,
+   delegate-first): o writer OpenCode fica habilitado por padrao para
+   implementacao autorizada, sem limite numerico artificial; voce permanece
+   dono da arquitetura, integracao, testes e aprovacao final, escrevendo
+   diretamente apenas em fallback final, sem progresso ou integracao critica
+   compartilhada. `conservative` mantem o comportamento proporcional (tarefas
+   simples locais; writer so para slices isoladas). Se um writer falhar,
+   religue com handoff de reparo (erro + diff anterior + hipotese alterada) e
+   brief compacto (claim-map, no-touch, contrato de validacao); `no-edit`
+   impede o spawn de writer; contexto do handoff e local a sessao.
+
+8. Aplique o quality ratchet do modo (perfil TN correspondente) e encerre
    trabalho que muda codigo com `quality-delta`.
 
-8. Antes de declarar entrega: releia os requisitos originais e prove cada item
+9. Antes de declarar entrega: releia os requisitos originais e prove cada item
    com evidencia; codigo que funciona mas nao cobre o pedido nao e entrega.
 
 Confirme com "OK" e o modo que voce vai assumir ao receber a tarefa.
@@ -72,8 +88,10 @@ Para sessões rapidas, uma versao reduzida que mantem os gates essenciais:
 ```text
 Siga o Codex Workflows Kit: carregue a skill `workflows` e trate
 `mode=<MODE>` como contrato completo; use `evidence-first` para claims
-materiais; mantenha tarefas simples locais e, em tarefas nao triviais,
-distribua frentes independentes entre read-only sub-agents por padrao; nao crie
+materiais; siga `internal_subagent_policy` — padrao `aggressive` (writer
+habilitado por padrao para implementacao autorizada, sem cap artificial; voce
+aprova, testa e integra; handoff de reparo com erro + diff anterior + hipotese
+alterada), `conservative` mantem tarefas simples locais; nao crie
 instrumentacao sem contrato explicito; use os papéis exatos de sub-agent
 (scout/researcher/reviewer read-only, worker OpenCode com claim-map em
 worktree isolada); valide cada item pedido antes de concluir.

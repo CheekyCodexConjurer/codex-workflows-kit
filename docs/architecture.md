@@ -117,10 +117,13 @@ O instalador faz backup do arquivo existente antes de sobrescrever.
    validacao); tarefas simples permanecem locais, enquanto tarefas nao triviais
    ativam o fan-out read-only `quality-first-subA` entre frentes independentes.
 4. Quando ha sidecar, o chat principal abre um perfil nativo `relay` novo com
-   `{target_agent, cwd, task}`; o relay chama o MCP `opencode_worker` com o
-   modelo/variante configurados e repassa a resposta.
+   `{target_agent, cwd, task}`; quando o host suporta anexos multimodais, os anexos reais seguem
+   como itens nativos fora do texto. O relay le esses itens, cria um
+   `[VISUAL_PACKET v1]` textual sem paths/bytes e chama o MCP `opencode_worker`
+   apenas com texto, modelo/variante configurados, repassando a resposta.
 5. Readers preservam no-edit efetivo; writers usam o OpenCode `worker` com
-   claim-map, worktree isolada e baseline registrado.
+   claim-map, worktree isolada e baseline registrado — habilitado por padrao
+   sob `internal_subagent_policy=aggressive`, sem limite numerico artificial.
 6. O chat principal revisa o diff, aplica o guard de caminhos e decide o merge
    no gate de decisao/final.
 
@@ -139,7 +142,9 @@ flowchart LR
     SKILL --> MM["mode matrix + referencias"]
     MM --> SUB["scout / researcher / reviewer"]
     SUB --> RELAY["native relay"]
-    RELAY --> WORKER["OpenCode worker em worktree isolada"]
+    IMG["image items"] --> VISION["native visual preflight"]
+    VISION -->|"VISUAL_PACKET v1"| RELAY
+    RELAY -->|"text only"| WORKER["OpenCode worker em worktree isolada"]
     MM --> EF["evidence-first skill"]
     MM --> RATCHET["quality ratchet + validation"]
     MM --> MCP["mcp-foundation plugin"]
@@ -190,6 +195,35 @@ contrato de validacao.
   manutencao, solicitado pelo usuario.
 - Indisponibilidade do relay/OpenCode preserva o gate como bloqueado; nunca
   ha fallback silencioso de provedor, modelo, esforco ou permissao.
+- Quando o host suporta anexos multimodais, imagens seguem somente como itens
+  nativos ate o relay. O MCP recebe um `[VISUAL_PACKET v1]` textual, sem path,
+  data URL, base64 ou bytes de imagem; falha na leitura visual permanece
+  bloqueada. Se itens anexados resultam em `RELAY_VISUAL=none` ou status ausente,
+  o pai trata o sidecar como bloqueado/desconhecido.
+
+### Politica de delegacao (`internal_subagent_policy`)
+
+- `internal_subagent_policy=aggressive` e o padrao (delegate-first): o writer
+  OpenCode fica habilitado por padrao para implementacao autorizada, sem limite
+  numerico artificial — a quantidade de writers segue as frentes independentes
+  do claim-map. O GPT principal permanece dono da arquitetura, integracao,
+  testes e aprovacao final, e escreve diretamente apenas em fallback final, sem
+  progresso ou integracao critica compartilhada.
+- `internal_subagent_policy=conservative` mantem o comportamento proporcional
+  atual: tarefas simples locais; writer somente para slices isoladas de
+  claim-map.
+- A politica nao muda os gates: claim-map, no-touch, worktree isolada,
+  `WRITER_BASELINE`, revisao do diff e merge gate continuam obrigatorios; nenhum
+  MCP ou tool novo e adicionado.
+- Handoff de reparo: writer que falha ou nao progride e religado com erro
+  observado + diff anterior + hipotese alterada; briefs compactos (claim-map,
+  no-touch, contrato de validacao), sem historico completo. O contexto do
+  handoff e local a sessao; quando solicitado, o resumo inclui
+  readers/writers, frentes paralelas, reparos, falhas/bloqueios, deduplicacao,
+  diff fora de escopo, fallback GPT, tempo e resultado, sem persistencia,
+  telemetria ou metrica de tokens do GPT principal.
+- `no-edit` impede o spawn de writer sob qualquer politica; nao elevar
+  permissoes silenciosamente — preserve o gate como bloqueado.
 
 ### Writer isolado
 

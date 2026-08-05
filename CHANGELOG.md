@@ -9,6 +9,9 @@ Versoes ainda nao publicadas ficam em `Unreleased`.
 
 ### Added
 
+- Pré-processamento visual nativo opcional no relay: anexos reais geram um
+  `[VISUAL_PACKET v1]` textual para o MCP, sem encaminhar paths, bytes ou data
+  URLs de imagens; falha de leitura permanece bloqueada.
 - Documentacao publica: `README.md` reescrito para apresentar o kit,
   `docs/architecture.md`, `docs/security.md`,
   `docs/agent-bootstrap-prompt.md`, `LICENSE` (MIT), `CONTRIBUTING.md`,
