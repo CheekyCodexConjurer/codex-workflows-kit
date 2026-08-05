@@ -312,17 +312,21 @@ inspeção; nunca ordena um split. Refatorações amplas continuam exigindo
 
 ## Cadência proporcional
 
-O workflow começa pelo menor caminho capaz de responder à dúvida ou provar o
-comportamento pedido. Ele só amplia escopo ou profundidade quando uma evidência
-existente ou um risco material revela incerteza, ou quando há um gate obrigatório
-ainda aberto; paraleliza trabalho independente já aprovado somente quando isso economiza tempo. Antes de
-repetir uma ação sem evidência nova, ele faz um checkpoint e, quando houver uma,
+O workflow mantém tarefas simples no menor caminho local capaz de responder à
+dúvida ou provar o comportamento pedido. Em tarefas não triviais (multi-arquivo,
+core compartilhado, ownership incerto, alto impacto, risco de contrato ou revisão
+explícita), ele ativa `quality-first-subA`: distribui frentes independentes entre
+read-only scouts/researchers em paralelo quando elas existem, mesmo sem ganho de
+tempo. Quando o usuário não limita latência, tempo é secundário; não se duplicam
+frentes nem se relaxam gates de papel, escopo ou integração. O workflow só amplia
+profundidade além dessas frentes quando uma evidência existente ou um risco
+material revela incerteza, ou quando há um gate obrigatório ainda aberto. Antes de
+repetir uma ação sem evidência nova, faz um checkpoint e, quando houver uma,
 tenta uma única ação diferente e mais barata; se ela falhar ou não existir, e não
-houver progresso ou fechamento de gate,
-reporta bloqueio ou replaneja. Cada modo tem seu próprio critério de
-encerramento; em entregas de código, o caminho do usuário precisa cumprir o
-aceite. Melhorias sem relação causal ficam para depois. Não há prazo fixo para
-interromper subagents ativos.
+houver progresso ou fechamento de gate, reporta bloqueio ou replaneja. Cada modo
+tem seu próprio critério de encerramento; em entregas de código, o caminho do
+usuário precisa cumprir o aceite. Melhorias sem relação causal ficam para depois.
+Não há prazo fixo para interromper subagents ativos.
 
 ## Sincronização do plano no Codex App
 

@@ -27,11 +27,15 @@ Vincule-se aos contratos do Codex Workflows Kit antes de qualquer tarefa:
    status}; nunca invente fontes, citacoes, versoes, resultados ou suporte de
    codigo, e separe observacao, inferencia e desconhecido.
 
-3. Siga a cadencia proporcional: comeca pelo menor caminho capaz de provar o
-   pedido; amplia escopo ou profundidade apenas com evidencia existente ou
-   risco material; paraleliza trabalho independente aprovado somente quando
-   economiza tempo real; faz checkpoint antes de repetir trabalho sem
-   progresso; dimensiona a validacao pelo impacto.
+3. Siga a cadencia proporcional: mantenha tarefas simples no menor caminho
+   local; em trabalho nao trivial (multi-arquivo, core compartilhado, ownership
+   incerto, alto impacto, risco de contrato ou revisao explicita), use por
+   padrao `quality-first-subA` e distribua frentes independentes entre
+   read-only `scout`/`researcher`, mesmo sem economizar tempo. Quando a
+   latencia nao for uma restricao, tempo e secundario; nao duplique frentes nem
+   relaxe gates. Amplie profundidade somente com evidencia, risco ou gate aberto;
+   faca checkpoint antes de repetir trabalho sem progresso e dimensione a
+   validacao pelo impacto.
 
 4. Em trabalho nao trivial com duas ou mais fases, mantenha um checklist
    curto (2-5 passos observaveis) sincronizado com `update_plan`: primeiro
@@ -45,7 +49,8 @@ Vincule-se aos contratos do Codex Workflows Kit antes de qualquer tarefa:
    cap/sampling, sink+TTL, access, off/removal, failure-behavior, validation}
    com fail-open e remocao definida.
 
-6. Para trabalho profundo ou de entrega, use os sub-agents com o papel exato:
+6. Para trabalho profundo ou de entrega, use por padrao os read-only em frentes
+   independentes quando a tarefa for nao trivial, sempre com o papel exato:
    `scout`, `researcher` ou `reviewer` (somente leitura) e o writer OpenCode
    `worker` (edit em claim-map, worktree isolada, sem bash). Nunca caia para o
    papel `default`; nao feche sub-agents ativos/aguardando/obrigatorios; com
@@ -67,7 +72,8 @@ Para sessões rapidas, uma versao reduzida que mantem os gates essenciais:
 ```text
 Siga o Codex Workflows Kit: carregue a skill `workflows` e trate
 `mode=<MODE>` como contrato completo; use `evidence-first` para claims
-materiais; comece pelo menor caminho que prove o pedido; nao crie
+materiais; mantenha tarefas simples locais e, em tarefas nao triviais,
+distribua frentes independentes entre read-only sub-agents por padrao; nao crie
 instrumentacao sem contrato explicito; use os papéis exatos de sub-agent
 (scout/researcher/reviewer read-only, worker OpenCode com claim-map em
 worktree isolada); valide cada item pedido antes de concluir.

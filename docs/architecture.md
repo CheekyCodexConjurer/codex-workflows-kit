@@ -114,7 +114,8 @@ O instalador faz backup do arquivo existente antes de sobrescrever.
 2. O adaptador do runtime (Codex, OpenCode ou Antigravity) carrega a skill
    `workflows`; exatamente um adaptador e selecionado pela superficie do host.
 3. O modo roteia para as referencias (mode-matrix, quality ratchet,
-   validacao) e decide se ha sidecar.
+   validacao); tarefas simples permanecem locais, enquanto tarefas nao triviais
+   ativam o fan-out read-only `quality-first-subA` entre frentes independentes.
 4. Quando ha sidecar, o chat principal abre um perfil nativo `relay` novo com
    `{target_agent, cwd, task}`; o relay chama o MCP `opencode_worker` com o
    modelo/variante configurados e repassa a resposta.

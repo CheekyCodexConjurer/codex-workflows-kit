@@ -4,8 +4,9 @@ Principles:
 
 - `orchestrator`: main owns plan, contracts, claim-map, integration, final quality.
 - `main-path`: main keeps critical path moving; delegate only sidecar/non-overlap work.
-- `subA-speed`: use subA only when expected wall-clock gain/evidence exceeds coordination+merge cost.
-- `subA-cost`: optimize wall-clock and evidence, not maximum reasoning.
+- `subA-speed`: use subA when it improves wall-clock or evidence; for non-trivial work, evidence quality is sufficient even without a speed gain.
+- `subA-cost`: optimize main-GPT context/tokens and evidence quality, not latency; avoid redundant fronts and unnecessary synthesis/merge work.
+- `quality-first-subA`: for non-trivial work, fan out one read-only scout/researcher per independent front by default; time is secondary when the user permits it, while simple tasks remain local.
 
 Lifecycle:
 
@@ -18,7 +19,7 @@ Lifecycle:
 - `subA-bg`: spawn/message subA, then immediately continue main-path/local non-overlap work.
 - `subA-join`: collect/integrate at decision/final/merge-gate or when critical path is blocked.
 - `wait-smart`: `subA-bg→main-path until no useful non-overlap work→subA-join`; long waits are correct only at join gate.
-- `must-subA`: required before decision/final; not required before independent local work.
+- `must-subA`: required before decision/final only when the mode or delivery contract marks it required; quality-first read-only fan-out is the default dispatch for non-trivial work when independent fronts exist, but is not automatically a blocking gate.
 - `subA-wait`: wait until replies arrive and integrate; tool timeout is polling noise, wait again unless cancelled.
 - `subA-life`: timeout/slow/not-in-time is not failure; never close active/waiting/required subA before final reply is integrated or explicit user cancel.
 - `subA-block`: if must-subA cannot return due tool/external failure, leave it open and report blocked; do not pretend gate passed.
@@ -29,7 +30,7 @@ Lifecycle:
 - `subA-retry`: on a transient launch, stream, or account-availability error, continue useful local work and make one fresh retry with the same exact role and the same valid custom-spawn shape; route a slot-occupied failure through `subA-slot-full` first; omit `fork_context`, `model`, and `reasoning_effort`, do not retry in a tight loop, and never fall back to `default`.
 - `subA-retry-block`: if the same-role retry fails, optional scouting may be skipped with evidence; any required read-only gate remains blocked and must be reported rather than bypassed.
 - `subA-isolation`: allocate one native relay and one MCP conversation per sidecar request; do not reuse completed relays or persist continuation state; close each completed relay after integrating its final response.
-- `nested-opencode`: when one or more independent fronts exist, or delegation materially improves evidence or wall-clock time, a configured OpenCode reader may delegate one or more read-only tasks using nested types `explore` or `general`; choose the count by the independent fronts, do not cap it at one, wait for and integrate all results, and keep simple serial work local.
+- `nested-opencode`: when one or more independent fronts exist, a configured OpenCode reader delegates one or more read-only tasks under `quality-first-subA` using nested types `explore` or `general`; choose the count by the independent fronts, do not cap it at one, delegate only explicit uncovered subfronts supplied by the parent, never re-delegate the assigned front, and allow at most one nested level after the main fan-out. Wait for and integrate all results, and keep simple serial work local.
 
 Models:
 
@@ -47,8 +48,8 @@ Roles:
 
 - `subA`: inspect-only by default; writes only via `subA-worker`.
 - `subA-ro`: read-only scout/reviewer/auditor; no edits; output evidence+files+risks.
-- `subA?`: use if scope/risk/shared/multi-file/unclear and `subA-speed`; if used, `subA-bg/wait` applies.
-- `subA-gate`: use if high blast, unclear ownership, security/auth/data risk, multi-file/core, failed first validation, or clear wall-clock gain.
+- `subA?`: use by default for non-trivial scope/risk/shared/multi-file/unclear work under `quality-first-subA`; it is not a hard gate unless `must-subA` applies; if used, `subA-bg/wait` applies.
+- `subA-gate`: use if high blast, unclear ownership, security/auth/data risk, multi-file/core, failed first validation, or an explicit required quality obligation.
 - `subA-worker`: writable only with claim-map; before spawning, verify the
   absolute `cwd` is a distinct clean isolated worktree and pass matching
   `WRITER_WORKTREE=<cwd>`/`WRITER_BASELINE=<full-commit>` tokens. The OpenCode
@@ -101,7 +102,7 @@ Roles:
 
 Delivery loop:
 
-- `preflight-subA`: scouts may map ownership/risk and claim-mapped workers may implement parallel-safe slices from the start; this does not open the reviewer gate.
+- `preflight-subA`: for non-trivial work, start the quality-first read-only fan-out across independent fronts; simple tasks stay local, and claim-mapped workers may implement parallel-safe slices from the start; this does not open the reviewer gate.
 - `review-embargo`: independent reviewers remain blocked during implementation and after phase checkpoints; `phase-val` is deterministic validation, not review. A failed or unclear check may use a targeted scout without starting general review.
 - `review-snapshot`: open the reviewer spawn gate only after all approved phases and workers complete, main integrates and inspects their diffs, and `integrated-freeze` passes; never review a moving diff.
 - `review-tier`: contained work gets main validation plus one independent reviewer; shared/core, materially failed validation, or high-risk work gets two non-overlapping reviewer lenses. Add a separate scout only for a real evidence gap.

@@ -4,8 +4,8 @@ Compact syntax: `⇢` left-to-right | `{}` scope/output | `[]` roles/options | `
 
 Global rules:
 
-- Route by task+risk+blast before work; simple tasks stay simple unless evidence forces escalation.
-- Use proportional cadence: start with the smallest route that can prove the request; expand scope or depth only when existing evidence or material risk reveals uncertainty, or a required gate is still open; parallelize approved independent work only when it saves wall-clock; checkpoint before repeating no-progress work and, when a materially different cheapest action exists, take it once before using the mode's own done, blocked, or replan outcome; scale validation by impact.
+- Route by task+risk+blast before work; simple tasks stay local unless evidence forces escalation.
+- Use proportional cadence: keep simple tasks on the smallest local route; for non-trivial work (multi-file, shared/core, unclear ownership, high blast, contract risk, or explicit review/testing), default to `quality-first-subA` and fan out independent read-only scouts/researchers in parallel when distinct fronts exist, even without a wall-clock gain. Time is secondary when the user permits it; never duplicate fronts or bypass role/merge gates. Expand scope or depth only when existing evidence or material risk reveals uncertainty, or a required gate is still open; checkpoint before repeating no-progress work and, when a materially different cheapest action exists, take it once before using the mode's own done, blocked, or replan outcome; scale validation by impact.
 - For `$workflows` or compact modes, use the `workflows` skill and expand aliases from its references.
 - Define criteria before action: goal, expected behavior, done condition, validation.
 - For nontrivial work with two or more phases, the main agent must keep the Codex checklist synchronized with `update_plan`: create 2-5 short observable steps, start the first as `in_progress` and the rest as `pending`, before the first command of the next phase and only after proof mark the current phase `completed`, the next phase `in_progress`, and future phases `pending`, and after the last proof leave every step `completed` with no `in_progress`. Update the list before continuing after scope changes, never after every command, and reconcile it before finishing. One-step or simple tasks do not need a checklist; subagents report to the main agent instead of editing its plan.
@@ -28,7 +28,7 @@ Evidence & uncertainty:
 Subagents:
 
 - Main agent owns critical path, contracts, integration, and final quality.
-- Use subagents only when they improve wall-clock time or evidence quality.
+- Use read-only subagents by default for non-trivial work when independent fronts exist; evidence quality is sufficient justification even without a wall-clock gain. Keep simple tasks local, and use OpenCode writers only for isolated claim-map slices.
 - Spawn/message subagents in background, continue useful local non-overlap work, then join at decision/final/merge gate.
 - Required subagents must reply before decision/final. Timeout/slow/not-in-time is not failure; wait again unless user cancels.
 - Never close active/waiting/required subagents before integrating their final reply. Close only completed/idle unrelated stale ones after integration. If a spawn fails because host sub-agent slots are full, use `subA-slot-full`: reclaim only completed/idle integrated agents or wait for an optional one to finish, retry the same role, and report an explicit capacity block rather than silently skipping a required gate.

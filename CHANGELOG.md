@@ -24,6 +24,10 @@ Versoes ainda nao publicadas ficam em `Unreleased`.
 
 - `README.md` documenta agora o produto como kit publico Windows-first, com
   instalacao parametrizada e secoes de seguranca e limitacoes.
+- A delegacao passa a ser quality-first em tarefas nao triviais: read-only
+  scouts/researchers cobrem frentes independentes por padrao mesmo sem ganho de
+  latencia; tarefas simples permanecem locais e writers continuam isolados por
+  claim-map.
 - O perfil `full` documenta seus destinos Antigravity; o perfil `safe` continua
   sem MCP, OpenCode, tarefa agendada ou AHK por padrão.
 - O instalador preserva o identificador de marketplace existente

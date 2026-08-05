@@ -192,9 +192,15 @@ foreach ($file in $opencodeReaderAgentFiles) {
     }
 
     $text = Get-Content -Raw -Encoding UTF8 $path
+    $textNormalized = $text -replace '\s+', ' '
     foreach ($fragment in 'mode: subagent', 'edit: deny', 'bash: deny', 'task: allow', 'external_directory: allow', 'question: deny', 'skill: deny', 'todowrite: deny', 'lsp: deny') {
         if ($text -notmatch [regex]::Escape($fragment)) {
             throw "OpenCode agent $file is missing nested-read-only guardrail: $fragment"
+        }
+    }
+    foreach ($fragment in 'quality-first default', 'even without a wall-clock gain', 'For simple serial tasks, do not delegate', 'Nested delegation is bounded to one level', 'only explicit uncovered subfronts', 'never re-delegate the assigned front') {
+        if ($textNormalized -notmatch [regex]::Escape($fragment)) {
+            throw "OpenCode agent $file is missing quality-first delegation guidance: $fragment"
         }
     }
 }
@@ -351,27 +357,51 @@ if ($dictionaryCadenceDefinitions -ne 1 -or $allCadenceDefinitions -ne 1) {
     throw 'proportional-cadence must have exactly one definition in the dictionary and no duplicate definition elsewhere.'
 }
 
-foreach ($instruction in '`proportional-cadence`','start with the smallest route that can answer the current question or prove the requested behavior','expand scope or depth only when existing evidence or material risk reveals uncertainty, or a required gate is still open','parallelize already-approved independent work only when it saves wall-clock time','before repeating a step that produced no new evidence','when one exists, take one materially different cheapest action','if no such action exists or it fails to produce progress or close a required gate','report blocked or use the mode''s replan path','finish at the current mode''s own done/clean gate','functional-gate','code delivery','defer unrelated work with `tn-defer`','never cancel active subA solely for slowness','keep a required subA wait as an explicit gate') {
+foreach ($instruction in '`proportional-cadence`','simple tasks on the smallest local route','non-trivial tasks','`quality-first-subA`','one read-only scout/researcher per independent front','even without a wall-clock gain','do not duplicate fronts','before repeating a step that produced no new evidence','when one exists, take one materially different cheapest action','if no such action exists or it fails to produce progress or close a required gate','report blocked or use the mode''s replan path','finish at the current mode''s own done/clean gate','functional-gate','code delivery','defer unrelated work with `tn-defer`','never cancel active subA solely for slowness','keep a required subA wait as an explicit gate') {
     if ($dictionary -notmatch [regex]::Escape($instruction)) {
         throw "Dictionary is missing proportional-cadence guardrail: $instruction"
     }
 }
 
-foreach ($instruction in 'Apply `proportional-cadence` to every mode','start with the smallest route','expand scope or depth only when existing evidence or material risk reveals uncertainty, or a required gate is still open','parallelize approved independent work only when it saves wall-clock','checkpoint before repeating no-progress work','when a materially different cheapest action exists, take it once','take it once before using the mode''s own done, blocked, or replan outcome','scale validation by impact','do not impose fixed timeouts on active subagents') {
+foreach ($instruction in 'Apply `proportional-cadence` to every mode','smallest local route for simple tasks','non-trivial tasks','default to `quality-first-subA`','independent read-only scouts/researchers in parallel','even without a wall-clock gain','never duplicate a front','checkpoint before repeating no-progress work','when a materially different cheapest action exists, take it once','take it once before using the mode''s own done, blocked, or replan outcome','scale validation by impact','do not impose fixed timeouts on active subagents') {
     if ($skillText -notmatch [regex]::Escape($instruction)) {
         throw "workflows skill is missing proportional-cadence routing: $instruction"
     }
 }
 
-foreach ($instruction in 'Use proportional cadence:','start with the smallest route that can prove the request','expand scope or depth only when existing evidence or material risk reveals uncertainty, or a required gate is still open','parallelize approved independent work only when it saves wall-clock','checkpoint before repeating no-progress work','when a materially different cheapest action exists, take it once','before using the mode''s own done, blocked, or replan outcome','scale validation by impact') {
+foreach ($instruction in 'Use proportional cadence:','simple tasks stay local','non-trivial work','default to `quality-first-subA`','independent read-only scouts/researchers in parallel','even without a wall-clock gain','never duplicate fronts','checkpoint before repeating no-progress work','when a materially different cheapest action exists, take it once','before using the mode''s own done, blocked, or replan outcome','scale validation by impact') {
     if ($agentsMdText -notmatch [regex]::Escape($instruction)) {
         throw "AGENTS.md is missing proportional-cadence guidance: $instruction"
     }
 }
 
-foreach ($instruction in '## Cad.+?ncia proporcional','menor caminho capaz de responder . d.vida ou provar o comportamento pedido','amplia escopo ou profundidade quando uma evid.ncia existente ou um risco material revela incerteza, ou quando h. um gate obrigat.rio ainda aberto','paraleliza trabalho independente j. aprovado somente quando isso economiza tempo','quando houver uma,','tenta uma .nica a..o diferente e mais barata','se ela falhar ou n.o existir','reporta bloqueio ou replaneja','Cada modo tem seu pr.prio crit.rio de encerramento','N.o h. prazo fixo para interromper subagents ativos') {
+foreach ($instruction in '## Cad.+?ncia proporcional','tarefas simples no menor caminho local','tarefas n.o triviais','quality-first-subA','frentes independentes entre','read-only scouts/researchers em paralelo','mesmo sem ganho de tempo','n.o se duplicam','quando houver uma,','tenta uma .nica a..o diferente e mais barata','se ela falhar ou n.o existir','reporta bloqueio ou replaneja','Cada modo tem seu pr.prio crit.rio de encerramento','N.o h. prazo fixo para interromper subagents ativos') {
     if ($readmeTextNormalized -notmatch $instruction) {
         throw "README is missing proportional-cadence guidance: $instruction"
+    }
+}
+
+foreach ($instruction in '`quality-first-subA`','one read-only scout/researcher per independent front','Simple tasks stay local','duplicate fronts are not useful','Nested fan-out is bounded to one level after the main fan-out','only explicit uncovered subfronts','never re-delegate their assigned front') {
+    if ($dictionary -notmatch [regex]::Escape($instruction)) {
+        throw "Dictionary is missing quality-first delegation guidance: $instruction"
+    }
+}
+
+foreach ($instruction in 'quality-first-subA','even without a speed gain','simple tasks stay local') {
+    if ($modeMatrix -notmatch [regex]::Escape($instruction)) {
+        throw "Mode matrix is missing quality-first delegation guidance: $instruction"
+    }
+}
+
+foreach ($instruction in 'quality-first-subA','one read-only scout/researcher per independent front','delegate only explicit uncovered subfronts supplied by the parent','never re-delegate the assigned front','at most one nested level after the main fan-out','only when the mode or delivery contract marks it required','not automatically a blocking gate','it is not a hard gate unless `must-subA` applies','an explicit required quality obligation') {
+    if ($subagents -notmatch [regex]::Escape($instruction)) {
+        throw "Subagents reference is missing bounded quality-first delegation guidance: $instruction"
+    }
+}
+
+foreach ($instruction in 'Run `research-fanout` across the independent fronts by default','even without a wall-clock gain','Avoid duplicate fronts') {
+    if ($research -notmatch [regex]::Escape($instruction)) {
+        throw "Research reference is missing quality-first fan-out guidance: $instruction"
     }
 }
 
