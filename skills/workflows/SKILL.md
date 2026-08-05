@@ -1,13 +1,13 @@
 ---
 name: workflows
-description: Matheus universal workflow router for Codex, Antigravity, and OpenCode using $workflows, with compatibility aliases $codex-workflows, $antigravity-workflows, and $opencode-workflows; compact modes, evidence-first investigation, quality ratchets, sub-agents, phase graphs, claim maps, and strict validation.
+description: Universal workflow router for Codex, Antigravity, and OpenCode using $workflows, with compatibility aliases $codex-workflows, $antigravity-workflows, and $opencode-workflows; compact modes, evidence-first investigation, quality ratchets, sub-agents, phase graphs, claim maps, and strict validation.
 ---
 
 # Workflows
 
 Use this skill when a prompt invokes `$workflows`, one of the compatibility aliases
 `$codex-workflows`, `$antigravity-workflows`, or `$opencode-workflows`, or uses
-Matheus compact workflow syntax in Codex, OpenCode, or Google Antigravity.
+Compact workflow syntax in Codex, OpenCode, or Google Antigravity.
 
 ## Fast path: one-step read-only probe
 

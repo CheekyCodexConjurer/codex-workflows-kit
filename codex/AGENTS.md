@@ -49,7 +49,7 @@ Subagents:
 
 MCP foundation:
 
-- Allowlisted baseline: `codegraph`, `context7`, and `openaiDeveloperDocs`; never auto-install an MCP outside this list. The internal route uses the manually configured `opencode_worker` MCP server and the canonical reader/writer role definitions under `E:\Repositories\codex-workflows-prompt-pad\agents\opencode` (the installer also mirrors them to `C:\Users\mathe\.codex\opencode-agents`); its OpenCode permissions are not an OS-level sandbox, so do not pass secrets or enable unreviewed side-effectful custom/MCP tools.
+- Allowlisted baseline: `codegraph`, `context7`, and `openaiDeveloperDocs`; never auto-install an MCP outside this list. The internal route uses the `opencode_worker` MCP configured by `-ConfigureMcp` or maintained manually, plus the canonical reader/writer role definitions under `agents/opencode` (the installer mirrors them to `%CODEX_HOME%\opencode-agents`); its OpenCode permissions are not an OS-level sandbox, so do not pass secrets or enable unreviewed side-effectful custom/MCP tools.
 - Use Context7 for current library/framework/API documentation when version or syntax matters; use OpenAI Developer Docs for OpenAI products and Codex.
 - If an allowlisted MCP is missing, run `~/.codex/maintenance/maintain-mcps.ps1 -Mode Repair` once. If registration changes, report that Codex must restart or open a new task before the tool can appear.
 - Do not perform network/version checks on every turn. Session-start audit uses a 24-hour TTL; the weekly maintenance task owns updates.

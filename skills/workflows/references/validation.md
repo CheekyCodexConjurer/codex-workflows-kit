@@ -52,8 +52,8 @@ Check strategy:
 AHK prompt pad:
 
 ```powershell
-$script = 'C:\Users\mathe\Documents\Codex\2026-07-01\pod\outputs\codex_prompt_pad.ahk'
-$exe = 'E:\Programs\AHK\v2\AutoHotkey64.exe'
+$script = Join-Path $env:USERPROFILE 'Documents\Codex\PromptPad\codex_prompt_pad.ahk'
+$exe = (Get-Command AutoHotkey64.exe -ErrorAction Stop).Source
 & $exe /ErrorStdOut /Validate $script
 ```
 
@@ -74,5 +74,5 @@ CodeGraph:
 Skill validation:
 
 ```powershell
-python 'C:\Users\mathe\.codex\skills\.system\skill-creator\scripts\quick_validate.py' 'C:\Users\mathe\.agents\skills\workflows'
+python "$env:CODEX_HOME\skills\.system\skill-creator\scripts\quick_validate.py" "$env:AGENTS_HOME\skills\workflows"
 ```

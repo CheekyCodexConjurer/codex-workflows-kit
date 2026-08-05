@@ -83,7 +83,7 @@ Codex/OpenAI route. With that value, all sub-agent roles use the native
 profiles, while the workflow and worker ownership rules remain unchanged.
 
 The canonical source is this file in the repository and the synchronized copy
-under `C:\Users\mathe\.agents\skills\workflows\references`. Keep both
+under `%AGENTS_HOME%\skills\workflows\references`. Keep both
 copies aligned when changing the backend or relay transport.
 
 ## Failure rule
