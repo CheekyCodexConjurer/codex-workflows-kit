@@ -1,6 +1,10 @@
 ﻿$ErrorActionPreference = 'Stop'
 
 $repo = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
+$defaultCodexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE '.codex' }
+$defaultAgentsHome = if ($env:AGENTS_HOME) { $env:AGENTS_HOME } else { Join-Path $env:USERPROFILE '.agents' }
+$codexHome = [IO.Path]::GetFullPath($defaultCodexHome)
+$agentsHome = [IO.Path]::GetFullPath($defaultAgentsHome)
 $skill = Join-Path $repo 'skills\workflows\SKILL.md'
 $evidenceSkill = Join-Path $repo 'skills\evidence-first\SKILL.md'
 $evidenceSkillInterface = Join-Path $repo 'skills\evidence-first\agents\openai.yaml'
@@ -13,12 +17,34 @@ $mcpManifestPath = Join-Path $mcpPluginRoot '.mcp.json'
 $mcpHookPath = Join-Path $mcpPluginRoot 'hooks\hooks.json'
 $mcpMaintenancePath = Join-Path $mcpPluginRoot 'scripts\maintain-mcps.ps1'
 $installScriptPath = Join-Path $repo 'scripts\install.ps1'
+$doctorScriptPath = Join-Path $repo 'scripts\doctor.ps1'
+$uninstallScriptPath = Join-Path $repo 'scripts\uninstall.ps1'
+$workerWrapperPath = Join-Path $repo 'bin\opencode-worker.cmd'
 $ahk = Join-Path $repo 'ahk\codex_prompt_pad.ahk'
 $opencodeAgentsRoot = Join-Path $repo 'agents\opencode'
-$ahkExe = 'E:\Programs\AHK\v2\AutoHotkey64.exe'
+$ahkExe = if ($env:AUTOHOTKEY_EXE) {
+    $env:AUTOHOTKEY_EXE
+} else {
+    $detectedAhk = Get-Command AutoHotkey64.exe -ErrorAction SilentlyContinue
+    if ($detectedAhk) { $detectedAhk.Source } else { '__AHK_NOT_DETECTED__' }
+}
 
 $skillText = Get-Content -Raw -Encoding UTF8 $skill
 $installScriptText = Get-Content -Raw -Encoding UTF8 $installScriptPath
+foreach ($requiredPath in $doctorScriptPath, $uninstallScriptPath, $workerWrapperPath, (Join-Path $repo 'LICENSE'), (Join-Path $repo 'CONTRIBUTING.md'), (Join-Path $repo 'SECURITY.md'), (Join-Path $repo 'CHANGELOG.md'), (Join-Path $repo 'docs\architecture.md'), (Join-Path $repo 'docs\security.md'), (Join-Path $repo 'docs\agent-bootstrap-prompt.md')) {
+    if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
+        throw "Public distribution artifact is missing: $requiredPath"
+    }
+}
+
+foreach ($scriptPath in $installScriptPath, $doctorScriptPath, $uninstallScriptPath, $mcpMaintenancePath) {
+    $tokens = $null
+    $parseErrors = $null
+    [Management.Automation.Language.Parser]::ParseFile($scriptPath, [ref]$tokens, [ref]$parseErrors) | Out-Null
+    if ($parseErrors.Count -gt 0) {
+        throw "Invalid PowerShell syntax in ${scriptPath}: $($parseErrors.Message -join '; ')"
+    }
+}
 if ($skillText -notmatch "(?s)^---\s*\r?\nname:\s*workflows\r?\ndescription:\s*.+?\r?\n---\s*\r?\n") {
     throw 'Invalid workflows SKILL.md frontmatter.'
 }
@@ -215,7 +241,7 @@ Get-ChildItem -File (Join-Path $repo 'agents') -Filter '*.toml' | ForEach-Object
     }
 }
 
-$modelCatalogPath = 'C:\Users\mathe\.codex\super-app-manager\custom_model_catalog.json'
+$modelCatalogPath = if ($env:CODEX_MODEL_CATALOG) { $env:CODEX_MODEL_CATALOG } else { Join-Path $codexHome 'super-app-manager\custom_model_catalog.json' }
 if (Test-Path $modelCatalogPath) {
     $modelCatalog = Get-Content -Raw -Encoding UTF8 $modelCatalogPath | ConvertFrom-Json
     $modelSlugs = @($modelCatalog.models | ForEach-Object { [string]$_.slug })
@@ -233,13 +259,13 @@ if (Test-Path $modelCatalogPath) {
 }
 
 $installerText = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'scripts\install.ps1')
-foreach ($fragment in '$agentEfforts = @(''low'', ''high'', ''xhigh'', ''max'')', 'function Install-AgentEffortVariants', 'model_reasoning_effort = `"$effort`"') {
+foreach ($fragment in '$agentEfforts = @(''low'', ''high'', ''xhigh'', ''max'')', 'function Install-AgentProfile', 'model_reasoning_effort = `"$effort`"', 'SupportsShouldProcess', 'function Install-ManagedContent', 'function Save-InstallState') {
     if ($installerText -notmatch [regex]::Escape($fragment)) {
         throw "Agent installer is missing effort-variant support: $fragment"
     }
 }
 
-foreach ($fragment in 'opencodeAgentsSource', 'opencodeAgentsDest', 'opencode-agents', 'Copy-Item -Force (Join-Path $opencodeAgentsSource') {
+foreach ($fragment in 'opencodeAgentsSource', 'opencodeAgentsDest', 'opencode-agents', 'Copy-ManagedTree -Source $opencodeAgentsSource', 'bin\opencode-worker.cmd', '$Profile', '$ConfigureMcp', '$InstallAhk') {
     if ($installerText -notmatch [regex]::Escape($fragment)) {
         throw "Agent installer is missing OpenCode agent synchronization: $fragment"
     }
@@ -273,6 +299,27 @@ $workflowSkillInterfaceText = Get-Content -Raw -Encoding UTF8 $workflowSkillInte
 $ahkText = Get-Content -Raw -Encoding UTF8 $ahk
 $readmeText = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'README.md')
 $readmeTextNormalized = $readmeText -replace '\s+', ' '
+$publicDocsText = @(Get-ChildItem -LiteralPath (Join-Path $repo 'docs') -Filter '*.md' -File | ForEach-Object {
+    Get-Content -Raw -Encoding UTF8 $_.FullName
+})
+$distributionText = @('CHANGELOG.md', 'SECURITY.md', 'CONTRIBUTING.md', 'LICENSE', 'bin\opencode-worker.cmd') | ForEach-Object {
+    Get-Content -Raw -Encoding UTF8 (Join-Path $repo $_)
+}
+$portableSurfaces = @(
+    @{ Name = 'README'; Text = $readmeText }
+    @{ Name = 'public docs'; Text = $publicDocsText }
+    @{ Name = 'distribution docs'; Text = $distributionText }
+    @{ Name = 'AGENTS.md'; Text = $agentsMdText }
+    @{ Name = 'relay'; Text = $relay }
+    @{ Name = 'backend policy'; Text = $backendPolicy }
+    @{ Name = 'validation reference'; Text = $validationReference }
+    @{ Name = 'AHK'; Text = $ahkText }
+)
+foreach ($surface in $portableSurfaces) {
+    if ($surface.Text -match '(?i)C:\\Users\\|[A-Z]:\\Repositories\\|[A-Z]:\\Pessoal\\|[A-Z]:\\Programs\\AHK|2026-07-01') {
+        throw "$($surface.Name) contains a machine-specific path or dated destination."
+    }
+}
 $skillTextNormalized = $skillText -replace '\s+', ' '
 $runtimeAdaptersNormalized = $runtimeAdapters -replace '\s+', ' '
 $opencodeNativeProfiles = @($relay, $scout, $researcher, $reviewer, $worker)
@@ -504,22 +551,29 @@ foreach ($instruction in 'internal_subagent_backend=opencode','internal_subagent
     }
 }
 
-foreach ($instruction in 'opencode_worker','native','relay','AGENT_TYPE = "opencode"','AGENT_MODEL = "opencode-go/deepseek-v4-flash"','AGENT_EFFORT = "max"','AGENT_PERMISSION = "yolo"','SESSION_ENABLED = "false"','sub-agents-mcp@0.12.0','AGENTS_DIR = "E:\\Repositories\\codex-workflows-prompt-pad\\agents\\opencode"','PATH = "C:\\Users\\mathe\\AppData\\Roaming\\npm\\node_modules\\opencode-ai\\bin','opencode run --model opencode-go/deepseek-v4-flash --variant max "Responda somente OK"') {
+$tomlCodexHome = $codexHome.Replace('\', '\\')
+$expectedWorkerCommand = 'command = "' + $tomlCodexHome + '\\bin\\opencode-worker.cmd"'
+$expectedAgentsDir = 'AGENTS_DIR = "' + $tomlCodexHome + '\\opencode-agents"'
+foreach ($instruction in 'opencode_worker','native','relay','AGENT_TYPE = "opencode"','AGENT_MODEL = "opencode-go/deepseek-v4-flash"','AGENT_EFFORT = "max"','AGENT_PERMISSION = "yolo"','SESSION_ENABLED = "false"','sub-agents-mcp@0.12.0','AGENTS_DIR = "%CODEX_HOME%\\opencode-agents"','PATH = "<gerado pelo instalador a partir do PATH do Windows>"','opencode run --model opencode-go/deepseek-v4-flash --variant max "Responda somente OK"') {
     if ($readmeText -notmatch [regex]::Escape($instruction)) {
         throw "README is missing OpenCode activation evidence: $instruction"
     }
 }
 
-$codexConfigPath = 'C:\Users\mathe\.codex\config.toml'
+$codexConfigPath = Join-Path $codexHome 'config.toml'
 if (Test-Path -LiteralPath $codexConfigPath) {
     $codexConfigText = Get-Content -Raw -Encoding UTF8 $codexConfigPath
+    if ($codexConfigText -notmatch '(?m)^\[mcp_servers\.opencode_worker\]') {
+        Write-Warning 'Codex config exists without opencode_worker; MCP checks are skipped until -ConfigureMcp is used.'
+    }
+    else {
     $workerConfigMatch = [regex]::Match($codexConfigText, '(?ms)^\[mcp_servers\.opencode_worker\]\s*(?<body>.*?)(?=^\[|\z)')
     if (!$workerConfigMatch.Success) {
         throw 'Configured Codex runtime is missing the [mcp_servers.opencode_worker] table.'
     }
 
     $workerConfigText = $workerConfigMatch.Groups['body'].Value
-    foreach ($instruction in 'command = "C:\\Users\\mathe\\.codex\\bin\\opencode-worker.cmd"', 'args = ["-y", "sub-agents-mcp@0.12.0"]', 'startup_timeout_sec = 30', 'tool_timeout_sec = 600') {
+    foreach ($instruction in $expectedWorkerCommand, 'args = ["-y", "sub-agents-mcp@0.12.0"]', 'startup_timeout_sec = 30', 'tool_timeout_sec = 600') {
         if ($workerConfigText -notmatch [regex]::Escape($instruction)) {
             throw "Configured opencode_worker is missing runtime wiring: $instruction"
         }
@@ -551,8 +605,9 @@ if (Test-Path -LiteralPath $codexConfigPath) {
         throw 'Codex configuration still contains removed hybrid/writer routing.'
     }
 }
+}
 
-$installedOpenCodeAgentsRoot = 'C:\Users\mathe\.codex\opencode-agents'
+$installedOpenCodeAgentsRoot = Join-Path $codexHome 'opencode-agents'
 if (Test-Path -LiteralPath $installedOpenCodeAgentsRoot) {
     foreach ($file in $opencodeAgentFiles) {
         $sourcePath = Join-Path $opencodeAgentsRoot $file
@@ -589,7 +644,7 @@ foreach ($instruction in 'the MCP function can be deferred','relay''s one exact'
         throw "Backend policy is missing the deferred-MCP relay contract: $instruction"
     }
 }
-foreach ($instruction in '[mcp_servers.opencode_worker]','command = "C:\\Users\\mathe\\.codex\\bin\\opencode-worker.cmd"','AGENT_MODEL = "opencode-go/deepseek-v4-flash"','AGENT_EFFORT = "max"','enabled_tools = ["run_agent"]') {
+foreach ($instruction in '[mcp_servers.opencode_worker]','command = "__OPENCODE_WORKER_COMMAND__"','AGENTS_DIR = "__OPENCODE_AGENTS_DIR__"','AGENT_MODEL = "opencode-go/deepseek-v4-flash"','AGENT_EFFORT = "max"','enabled_tools = ["run_agent"]') {
     if ($relayNormalized -notmatch [regex]::Escape($instruction)) {
         throw "Native relay profile is missing explicit MCP tool exposure: $instruction"
     }
@@ -632,7 +687,7 @@ foreach ($instruction in '## Common contract','## Codex','## Google Antigravity'
     }
 }
 
-foreach ($instruction in 'Install-WorkflowAlias','workflows','codex-workflows','antigravity-workflows','opencode-workflows') {
+foreach ($instruction in 'Install-WorkflowSkill','workflows','codex-workflows','antigravity-workflows','opencode-workflows') {
     if ($installScriptText -notmatch [regex]::Escape($instruction)) {
         throw "Installer is missing workflows compatibility handling: $instruction"
     }
@@ -806,15 +861,7 @@ $workflowBindings = @(
     @{ Key = 'Numpad9'; Shortcut = 'NUM9'; Prompt = '$workflows mode=TN.SKILL'; Label = 'TN.SKILL' }
     @{ Key = 'NumpadMult'; Shortcut = 'NUM*'; Prompt = '$workflows mode=RESEARCH.DEEP'; Label = 'RESEARCH.DEEP' }
 )
-$audiobookMapPrompt = '$audiobook-codex stage=MAP native-only source{PDF|EPUB} library-root{E:\Pessoal\e-books} output{book-map.json|assets-manifest.json} visual-fallback{pdf|computer} swarm{bounded}'
-$audiobookTranscribePrompt = '$audiobook-codex stage=TRANSCRIBE native-only input{book-map.json|assets-manifest.json} output{text/source|epub-manifest.json} fidelity=strict ledger=required epub-profile{antique-paper}'
-$audiobookRenderPrompt = '$audiobook-codex stage=RENDER native-only input{text/source|epub-manifest.json} output{text/locutor|audio|epub|publish-root} tts{chatterbox-pt-br} voice-profile{feminina-v1} locutor{line-delimited-v1|max=320} language=pt-BR epub-profile{antique-paper} epub-images{original|approved-restored} restoration=review-required'
-
-$modifierBindings = @(
-    @{ Key = '^Numpad7'; Shortcut = 'Ctrl+NUM7'; Prompt = $audiobookMapPrompt; Label = 'audiobook MAP' }
-    @{ Key = '^Numpad8'; Shortcut = 'Ctrl+NUM8'; Prompt = $audiobookTranscribePrompt; Label = 'audiobook TRANSCRIBE' }
-    @{ Key = '^Numpad9'; Shortcut = 'Ctrl+NUM9'; Prompt = $audiobookRenderPrompt; Label = 'audiobook RENDER' }
-)
+$modifierBindings = @()
 $deepWorkflowBindings = @(
     @{ Key = 'Numpad0 & Numpad1'; Shortcut = 'NUM0+1'; Prompt = '$workflows mode=P.DEEP'; Label = 'P.DEEP' }
     @{ Key = 'Numpad0 & Numpad2'; Shortcut = 'NUM0+2'; Prompt = '$workflows mode=IMPL.PHASE'; Label = 'IMPL.PHASE' }
@@ -965,7 +1012,7 @@ foreach ($binding in $deepWorkflowBindings) {
 if (Test-Path $ahkExe) {
     & $ahkExe /ErrorStdOut /Validate $ahk
 } else {
-    Write-Warning "AHK executable not found: $ahkExe"
+    Write-Warning "AHK executable not found; skipping runtime syntax validation."
 }
 
 if (Get-Command codegraph -ErrorAction SilentlyContinue) {

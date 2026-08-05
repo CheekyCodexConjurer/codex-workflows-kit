@@ -8,6 +8,8 @@ param(
 
     [string]$RepositoryRoot,
 
+    [string]$CodexHome,
+
     [switch]$Hook,
 
     [switch]$InstallScheduledTask
@@ -21,10 +23,14 @@ $MarketplaceName = 'codex-workflows-local'
 $PluginName = 'mcp-foundation'
 $PluginSelector = "$PluginName@$MarketplaceName"
 $RequiredMcpServers = @('codegraph', 'context7', 'openaiDeveloperDocs')
-$MaintenanceRoot = Join-Path $env:USERPROFILE '.codex\maintenance'
+if ([string]::IsNullOrWhiteSpace($CodexHome)) {
+    $CodexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE '.codex' }
+}
+$CodexHome = [IO.Path]::GetFullPath($CodexHome)
+$MaintenanceRoot = Join-Path $CodexHome 'maintenance'
 $LogRoot = Join-Path $MaintenanceRoot 'logs'
 $StatePath = Join-Path $MaintenanceRoot 'mcp-foundation-state.json'
-$ConfigPath = Join-Path $env:USERPROFILE '.codex\config.toml'
+$ConfigPath = Join-Path $CodexHome 'config.toml'
 
 New-Item -ItemType Directory -Force -Path $MaintenanceRoot, $LogRoot | Out-Null
 $LogPath = Join-Path $LogRoot ("mcp-foundation-{0}.log" -f (Get-Date -Format 'yyyy-MM-dd'))
@@ -210,7 +216,7 @@ function Backup-CodexConfig {
         return
     }
 
-    $backupRoot = Join-Path $env:USERPROFILE '.codex\backups'
+    $backupRoot = Join-Path $CodexHome 'backups'
     New-Item -ItemType Directory -Force -Path $backupRoot | Out-Null
     $backupPath = Join-Path $backupRoot (
         'config.toml.{0}.mcp-foundation.bak' -f (Get-Date -Format 'yyyyMMdd-HHmmss')
@@ -504,13 +510,15 @@ function Ensure-MarketplaceAndPlugin {
 function Ensure-ScheduledMaintenance {
     param(
         [Parameter(Mandatory)][string]$RepoRoot,
-        [Parameter(Mandatory)][string]$ScriptPath
+        [Parameter(Mandatory)][string]$ScriptPath,
+        [Parameter(Mandatory)][string]$CodexHome
     )
 
     $description = 'Maintains the allowlisted Codex MCP foundation without terminating active MCP sessions.'
-    $arguments = '-NoProfile -ExecutionPolicy Bypass -File "{0}" -Mode Repair -RepositoryRoot "{1}"' -f (
+    $arguments = '-NoProfile -ExecutionPolicy Bypass -File "{0}" -Mode Repair -RepositoryRoot "{1}" -CodexHome "{2}"' -f (
         [IO.Path]::GetFullPath($ScriptPath),
-        [IO.Path]::GetFullPath($RepoRoot)
+        [IO.Path]::GetFullPath($RepoRoot),
+        [IO.Path]::GetFullPath($CodexHome)
     )
     $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $arguments
 
@@ -620,7 +628,7 @@ try {
         Ensure-MarketplaceAndPlugin -RepoRoot $resolvedRepositoryRoot -PluginVersion $plugin.Version
 
         if ($InstallScheduledTask) {
-            $taskName = Ensure-ScheduledMaintenance -RepoRoot $resolvedRepositoryRoot -ScriptPath $PSCommandPath
+            $taskName = Ensure-ScheduledMaintenance -RepoRoot $resolvedRepositoryRoot -ScriptPath $PSCommandPath -CodexHome $CodexHome
             $state['scheduledTask'] = $taskName
         }
 
