@@ -119,7 +119,10 @@ Custom-role spawn calls still omit `fork_context`, `model`, and
 
 For a sidecar that may outlive one MCP call, use the durable job surface through
 the relay: send `JOB_OPERATION=start`, retain the returned `job_id`, and use a
-fresh relay with `JOB_OPERATION=status|result` plus `JOB_ID=<opaque id>`. A
+fresh relay with `JOB_OPERATION=status|result` plus `JOB_ID=<opaque id>`. An
+OpenCode `worker` is always durable-first: omitted operation selects
+`start_agent` for that target, while `JOB_OPERATION=run` is blocked instead of
+exposing the writer to the synchronous MCP timeout. A
 status-call timeout or `freshness=stale` is polling uncertainty, not proof of
 failure and not a reason to relaunch. Do not poll continuously or impose a
 deadline: consult `status` only under a concrete suspicion that the MCP,

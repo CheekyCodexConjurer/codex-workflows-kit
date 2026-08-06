@@ -49,6 +49,11 @@ provider, transport, or policy flag to any prompt.
   cancel, or relaunch a non-terminal job merely because it is slow. Only an
   explicit cancellation uses `JOB_OPERATION=cancel`; read the result after
   `result_available=true` or a terminal state.
+- The OpenCode `worker` target is durable-first: when the parent omits an
+  operation, the relay selects `start_agent` for the writer; an explicit
+  `JOB_OPERATION=run` for `worker` is blocked with
+  `RELAY_REASON=worker-requires-durable-start`. `run_agent` remains available
+  for bounded reader work only.
 - For a one-step read-only smoke or health test with explicit
   `{target_agent,cwd,task}`, use the fast path: do not read repository or
   backend files before the spawn. In a new Desktop relay, the MCP function can

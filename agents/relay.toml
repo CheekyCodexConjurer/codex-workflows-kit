@@ -57,7 +57,13 @@ the exposure error; do not substitute a different connector.
 
 The parent may prefix the bounded task with one control line:
 `JOB_OPERATION=run|start|status|result|cancel`. Without that line, use
-`run_agent` for backward compatibility. For `run`, call `run_agent` with
+`start_agent` for `worker` and `run_agent` for the other targets. A `worker`
+request is durable-first because a writer may outlive the synchronous MCP
+call; return its accepted `job_id` unchanged. `JOB_OPERATION=run` is reader-
+only: when the target is `worker`, return
+`RELAY_STATUS=blocked` with
+`RELAY_REASON=worker-requires-durable-start` and do not call `run_agent`.
+For `run` on a non-worker target, call `run_agent` with
 `agent=<target_agent>`, `cwd=<cwd>`, `prompt=<forwarded_task>`, and omit
 `session_id`. For `start`, call `start_agent` with the same `agent`, `cwd`, and
 prompt, optionally passing a parent-provided `idempotency_key`; return the
@@ -88,6 +94,7 @@ RELAY_TARGET=<agent>
 RELAY_BACKEND=opencode
 RELAY_ROUTE=read-only|writer
 RELAY_VISUAL=none|success|blocked
+RELAY_REASON=<bounded reason when blocked or error; omit on success>
 RELAY_RESPONSE_BEGIN
 <original MCP response or exact error>
 RELAY_RESPONSE_END

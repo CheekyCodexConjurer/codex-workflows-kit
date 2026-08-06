@@ -315,7 +315,7 @@ $scout = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'agents\scout.toml')
 $researcher = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'agents\researcher.toml')
 $relay = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'agents\relay.toml')
 $relayNormalized = $relay -replace '\s+', ' '
-$relayTransportInstructions = @('mcp__opencode_worker','run_agent','start_agent','get_agent_status','get_agent_result','cancel_agent','JOB_OPERATION=run|start|status|result|cancel','JOB_ID=<opaque id>','status timeout','freshness=stale','poll continuously','concrete suspicion','prompt shortening','early-result requests','result_available=true','only for an explicit cancellation decision','RELAY_STATUS=success|blocked|error','RELAY_ROUTE=read-only|writer','RELAY_VISUAL=none|success|blocked','RELAY_RESPONSE_BEGIN','[VISUAL_PACKET v1]','source ids','approximate regions','type=image','type=local_image','image paths','path-only request','raw image','absolute local filesystem paths','base64-looking strings','even when visible','target_agent','worker','`cwd` must be the absolute','WRITER_WORKTREE=<cwd>','WRITER_BASELINE=<full-commit>','route pairing is fixed','claim-map','isolated worktree','never fall back silently','built-in `tool_search` query','known functions','This is deterministic activation, not route discovery','Do not list tools or agents')
+$relayTransportInstructions = @('mcp__opencode_worker','run_agent','start_agent','get_agent_status','get_agent_result','cancel_agent','JOB_OPERATION=run|start|status|result|cancel','JOB_ID=<opaque id>','status timeout','freshness=stale','poll continuously','concrete suspicion','prompt shortening','early-result requests','result_available=true','only for an explicit cancellation decision','RELAY_STATUS=success|blocked|error','RELAY_ROUTE=read-only|writer','RELAY_VISUAL=none|success|blocked','RELAY_REASON=<bounded reason when blocked or error; omit on success>','RELAY_RESPONSE_BEGIN','[VISUAL_PACKET v1]','source ids','approximate regions','type=image','type=local_image','image paths','path-only request','raw image','absolute local filesystem paths','base64-looking strings','even when visible','target_agent','worker','durable-first','`start_agent` for `worker`','`JOB_OPERATION=run` is reader-','RELAY_REASON=worker-requires-durable-start','`cwd` must be the absolute','WRITER_WORKTREE=<cwd>','WRITER_BASELINE=<full-commit>','route pairing is fixed','claim-map','isolated worktree','never fall back silently','built-in `tool_search` query','known functions','This is deterministic activation, not route discovery','Do not list tools or agents')
 $worker = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'agents/worker.toml')
 $reviewer = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'agents/reviewer.toml')
 $opencodeWorker = Get-Content -Raw -Encoding UTF8 (Join-Path $opencodeAgentsRoot 'worker.md')
@@ -590,19 +590,19 @@ foreach ($surface in @(
     }
 }
 
-foreach ($instruction in 'internal_subagent_backend=opencode','internal_subagent_backend=native','internal_subagent_transport=native_relay','opencode_worker','opencode-go/deepseek-v4-flash','AGENT_PERMISSION=yolo','task','external_directory','read-only','writer','claim-map','isolated worktree','WRITER_WORKTREE','WRITER_BASELINE','blocked','native','do not silently fall back') {
+foreach ($instruction in 'internal_subagent_backend=opencode','internal_subagent_backend=native','internal_subagent_transport=native_relay','opencode_worker','opencode-go/deepseek-v4-flash','AGENT_PERMISSION=yolo','task','external_directory','read-only','writer','claim-map','isolated worktree','WRITER_WORKTREE','WRITER_BASELINE','durable-first','JOB_OPERATION=run` is','blocked','native','do not silently fall back') {
     if ($subagents -notmatch [regex]::Escape($instruction)) {
         throw "Subagents reference is missing internal-backend contract: $instruction"
     }
 }
 
-foreach ($instruction in 'internal_subagent_backend=opencode','internal_subagent_backend=native','internal_subagent_transport=native_relay','native `relay`','opencode_worker','opencode-go/deepseek-v4-flash','variant=max','OpenCode','worker','claim-map','cwd','external_directory','do not silently fall back') {
+foreach ($instruction in 'internal_subagent_backend=opencode','internal_subagent_backend=native','internal_subagent_transport=native_relay','native `relay`','opencode_worker','opencode-go/deepseek-v4-flash','variant=max','OpenCode','worker','claim-map','cwd','external_directory','always use `start_agent`','JOB_OPERATION=run` for a','do not silently fall back') {
     if ($modeMatrixNormalized -notmatch [regex]::Escape($instruction)) {
         throw "Mode matrix is missing internal-backend contract: $instruction"
     }
 }
 
-foreach ($instruction in 'internal_subagent_backend=opencode','internal_subagent_backend=native','internal_subagent_transport=native_relay','agents/relay.toml','not part of the user-facing compact syntax','OpenCode `worker`','`worker` profile is only an explicit','AGENT_PERMISSION=yolo','task','external_directory','edit','bash','isolated worktree','WRITER_WORKTREE=<cwd>','WRITER_BASELINE=<full-commit>','preserve the required gate as blocked','sub-agent=opencode') {
+foreach ($instruction in 'internal_subagent_backend=opencode','internal_subagent_backend=native','internal_subagent_transport=native_relay','agents/relay.toml','not part of the user-facing compact syntax','OpenCode `worker`','`worker` profile is only an explicit','AGENT_PERMISSION=yolo','task','external_directory','edit','bash','isolated worktree','WRITER_WORKTREE=<cwd>','WRITER_BASELINE=<full-commit>','durable-first','RELAY_REASON=worker-requires-durable-start','preserve the required gate as blocked','sub-agent=opencode') {
     if ($backendPolicy -notmatch [regex]::Escape($instruction)) {
         throw "Backend policy is missing internal-route contract: $instruction"
     }
@@ -679,7 +679,7 @@ $tomlCodexHome = $codexHome.Replace('\', '\\')
 $expectedWorkerCommand = 'command = "' + $tomlCodexHome + '\\bin\\opencode-worker.cmd"'
 $expectedAgentsDir = 'AGENTS_DIR = "' + $tomlCodexHome + '\\opencode-agents"'
 $expectedJobsDir = 'JOB_DIR = "' + $tomlCodexHome + '\\opencode-jobs"'
-foreach ($instruction in 'opencode_worker','native','relay','AGENT_TYPE = "opencode"','AGENT_MODEL = "opencode-go/deepseek-v4-flash"','AGENT_EFFORT = "max"','AGENT_PERMISSION = "yolo"','SESSION_ENABLED = "false"','github:CheekyCodexConjurer/sub-agents-mcp#v0.13.1','start_agent','get_agent_status','get_agent_result','cancel_agent','JOB_EXECUTION_TIMEOUT_MS = "0"','opencode-jobs','AGENTS_DIR = "%CODEX_HOME%\\opencode-agents"','PATH = "<gerado pelo instalador a partir do PATH do Windows>"','opencode run --model opencode-go/deepseek-v4-flash --variant max "Responda somente OK"') {
+foreach ($instruction in 'opencode_worker','native','relay','AGENT_TYPE = "opencode"','AGENT_MODEL = "opencode-go/deepseek-v4-flash"','AGENT_EFFORT = "max"','AGENT_PERMISSION = "yolo"','SESSION_ENABLED = "false"','github:CheekyCodexConjurer/sub-agents-mcp#v0.13.1','start_agent','get_agent_status','get_agent_result','cancel_agent','JOB_EXECUTION_TIMEOUT_MS = "0"','opencode-jobs','writers OpenCode usam sempre `start_agent`','JOB_OPERATION=run` para `worker` fica bloqueado','AGENTS_DIR = "%CODEX_HOME%\\opencode-agents"','PATH = "<gerado pelo instalador a partir do PATH do Windows>"','opencode run --model opencode-go/deepseek-v4-flash --variant max "Responda somente OK"') {
     if ($readmeText -notmatch [regex]::Escape($instruction)) {
         throw "README is missing OpenCode activation evidence: $instruction"
     }
@@ -845,6 +845,13 @@ foreach ($instruction in $relayTransportInstructions) {
     if ($relayNormalized -notmatch [regex]::Escape($instruction)) {
         throw "Native relay profile is missing transport contract: $instruction"
     }
+}
+if ($relayNormalized -match [regex]::Escape('Without that line, use `run_agent` for backward compatibility.')) {
+    throw 'Native relay profile still defaults every target to synchronous run_agent.'
+}
+$workerDurableDispatch = [regex]::Match($relayNormalized, 'Without that line, use `start_agent` for `worker`.*?`JOB_OPERATION=run` is reader-\s*only: when the target is `worker`, return.*?`RELAY_REASON=worker-requires-durable-start`')
+if (!$workerDurableDispatch.Success) {
+    throw 'Native relay profile is missing the worker durable-first dispatch gate.'
 }
 foreach ($instruction in 'the MCP function can be deferred','relay''s one exact','`tool_search`','a missing result remains blocked') {
     if (($backendPolicy -replace '\s+', ' ') -notmatch [regex]::Escape($instruction)) {

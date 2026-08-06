@@ -211,9 +211,11 @@ O backend interno padrão é `internal_subagent_backend=opencode` com transporte
 `skills/workflows/references/backend-policy.md`. Você não precisa incluir
 uma flag no prompt. Quando o modo precisar de um sidecar, o chat principal abre
 um perfil nativo `relay` novo; ele chama o MCP `opencode_worker`, preserva a
-resposta e a repassa como resposta de sub-agent nativo. Para tarefas rápidas,
-usa `run_agent`; para pesquisas que podem durar, usa `start_agent` e mantém o
+resposta e a repassa como resposta de sub-agent nativo. Para readers e tarefas
+rápidas, usa `run_agent`; writers OpenCode usam sempre `start_agent` e mantêm o
 `job_id` para consultar `get_agent_status`/`get_agent_result` em novos relays.
+Um pedido `JOB_OPERATION=run` para `worker` fica bloqueado, em vez de expor o
+writer ao timeout síncrono.
 Não há polling contínuo nem prazo: o status só é consultado sob suspeita
 concreta de falha do MCP, worker ou heartbeat. Lentidão nunca autoriza
 acelerar, encurtar, resumir, cancelar ou relançar o job. O resultado final deve

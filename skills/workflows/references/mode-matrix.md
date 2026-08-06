@@ -63,6 +63,10 @@ status only under a concrete suspicion, and never accelerate, shorten,
 summarize, cancel, or relaunch a slow non-terminal job. Read the result after
 `result_available=true` or a terminal state. `JOB_OPERATION=cancel` is explicit
 cancellation only; short work may use the synchronous `run_agent` tool.
+Claim-mapped OpenCode `worker` requests are an exception to the short-work
+default: they always use `start_agent`; an explicit `JOB_OPERATION=run` for a
+worker remains blocked so a writer cannot be lost behind the synchronous MCP
+timeout.
 
 ## Observability
 

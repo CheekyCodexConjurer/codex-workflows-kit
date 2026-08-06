@@ -107,7 +107,9 @@ Roles:
   explicit `run_agent`, `start_agent`, `get_agent_status`,
   `get_agent_result`, and `cancel_agent` tools. Short work may use
   `run_agent`; uncertain or long work uses `JOB_OPERATION=start` and stores
-  the returned `job_id`. New relays use `JOB_OPERATION=status|result` with
+  the returned `job_id`. The OpenCode `worker` is always durable-first:
+  omitted operation selects `start_agent`, while `JOB_OPERATION=run` is
+  blocked for that target. New relays use `JOB_OPERATION=status|result` with
   `JOB_ID=<opaque id>`; a status timeout or `freshness=stale` is not proof of
   failure. Do not poll continuously or impose a deadline: use `status` only
   under a concrete suspicion that the MCP, worker, or heartbeat may have

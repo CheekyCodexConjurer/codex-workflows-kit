@@ -195,6 +195,10 @@ contrato de validacao.
   manutencao, solicitado pelo usuario.
 - Indisponibilidade do relay/OpenCode preserva o gate como bloqueado; nunca
   ha fallback silencioso de provedor, modelo, esforco ou permissao.
+- O alvo OpenCode `worker` usa sempre o job duravel `start_agent`; `run_agent`
+  fica reservado para readers rapidos. Um `JOB_OPERATION=run` para writer deve
+  permanecer bloqueado, com motivo explicito, para nao confundir timeout
+  sincrono com falha do worker.
 - Quando o host suporta anexos multimodais, imagens seguem somente como itens
   nativos ate o relay. O MCP recebe um `[VISUAL_PACKET v1]` textual, sem path,
   data URL, base64 ou bytes de imagem; falha na leitura visual permanece
