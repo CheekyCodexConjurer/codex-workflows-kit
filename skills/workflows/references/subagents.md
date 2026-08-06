@@ -101,16 +101,26 @@ Roles:
   Do not call the OpenCode MCP directly from the main chat when the relay is
   available.
 - The canonical MCP server name is `opencode_worker`, backed by the pinned
-  `sub-agents-mcp@0.12.0` package with `AGENT_TYPE=opencode`,
-  `AGENT_MODEL=opencode-go/deepseek-v4-flash`, `AGENT_EFFORT=max`,
-  `AGENT_PERMISSION=yolo` coarse launch profile, a bounded execution timeout,
-  and a Windows
+  fork `github:CheekyCodexConjurer/sub-agents-mcp#v0.13.1` with
+  `AGENT_TYPE=opencode`, `AGENT_MODEL=opencode-go/deepseek-v4-flash`,
+  `AGENT_EFFORT=max`, `AGENT_PERMISSION=yolo` coarse launch profile, and
+  explicit `run_agent`, `start_agent`, `get_agent_status`,
+  `get_agent_result`, and `cancel_agent` tools. Short work may use
+  `run_agent`; uncertain or long work uses `JOB_OPERATION=start` and stores
+  the returned `job_id`. New relays use `JOB_OPERATION=status|result` with
+  `JOB_ID=<opaque id>`; a status timeout or `freshness=stale` is not proof of
+  failure. Do not poll continuously or impose a deadline: use `status` only
+  under a concrete suspicion that the MCP, worker, or heartbeat may have
+  failed. Never accelerate, shorten, summarize, cancel, or relaunch a
+  non-terminal job merely because it is slow. Read the result after
+  `result_available=true` or a terminal state. `JOB_OPERATION=cancel` is
+  reserved for explicit cancellation. The MCP has a bounded request timeout,
+  while detached jobs use
+  `JOB_EXECUTION_TIMEOUT_MS=0` and a Windows
   `PATH` entry for the directory containing `opencode.exe`.
 - `AGENT_EFFORT` is forwarded to OpenCode as the provider-specific
   `--variant`. Validate that `max` is accepted by the selected model before
   treating the route as ready; do not degrade silently to another variant.
-- `sub-agents-mcp@0.8.0` is incompatible with OpenCode; official support began
-  at `0.11.0`, and `0.12.0` is the explicit stable pin for this route.
 - Use this route for any configured OpenCode reader or claim-map writer
   sidecar. Read-only agents may use `task` and `external_directory`; their
   definitions must deny `edit` and `bash`, while `question`, `skill`,

@@ -5,6 +5,7 @@ $defaultCodexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $e
 $defaultAgentsHome = if ($env:AGENTS_HOME) { $env:AGENTS_HOME } else { Join-Path $env:USERPROFILE '.agents' }
 $codexHome = [IO.Path]::GetFullPath($defaultCodexHome)
 $agentsHome = [IO.Path]::GetFullPath($defaultAgentsHome)
+$opencodeJobsDest = Join-Path $codexHome 'opencode-jobs'
 $skill = Join-Path $repo 'skills\workflows\SKILL.md'
 $evidenceSkill = Join-Path $repo 'skills\evidence-first\SKILL.md'
 $evidenceSkillInterface = Join-Path $repo 'skills\evidence-first\agents\openai.yaml'
@@ -84,6 +85,12 @@ foreach ($instruction in 'Observability: default to no new instrumentation.','al
 foreach ($instruction in 'Every read-only spawn must select the exact custom role','Custom-role spawns must omit `fork_context`, `model`, and `reasoning_effort`','never combine `fork_context=true` with `agent_type`','never fall back to `default`','any required read-only gate remains blocked') {
     if ($agentsMdText -notmatch [regex]::Escape($instruction)) {
         throw "AGENTS.md is missing read-only role-lock guidance: $instruction"
+    }
+}
+
+foreach ($instruction in 'Long-running jobs have no urgency','do not poll continuously','concrete suspicion','Never accelerate','wait for its complete result','`cancel` requires explicit cancellation') {
+    if ($agentsMdText -notmatch [regex]::Escape($instruction)) {
+        throw "AGENTS.md is missing long-running patience guidance: $instruction"
     }
 }
 
@@ -281,7 +288,7 @@ foreach ($fragment in '$agentEfforts = @(''low'', ''high'', ''xhigh'', ''max'')'
     }
 }
 
-foreach ($fragment in 'opencodeAgentsSource', 'opencodeAgentsDest', 'opencode-agents', 'Copy-ManagedTree -Source $opencodeAgentsSource', 'bin\opencode-worker.cmd', '$Profile', '$ConfigureMcp', '$InstallAhk') {
+foreach ($fragment in 'opencodeAgentsSource', 'opencodeAgentsDest', 'opencodeJobsDest', 'opencode-agents', 'opencode-jobs', '__OPENCODE_JOBS_DIR__', 'Copy-ManagedTree -Source $opencodeAgentsSource', 'bin\opencode-worker.cmd', '$Profile', '$ConfigureMcp', '$InstallAhk') {
     if ($installerText -notmatch [regex]::Escape($fragment)) {
         throw "Agent installer is missing OpenCode agent synchronization: $fragment"
     }
@@ -308,7 +315,7 @@ $scout = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'agents\scout.toml')
 $researcher = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'agents\researcher.toml')
 $relay = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'agents\relay.toml')
 $relayNormalized = $relay -replace '\s+', ' '
-$relayTransportInstructions = @('mcp__opencode_worker__run_agent','RELAY_STATUS=success|blocked|error','RELAY_ROUTE=read-only|writer','RELAY_VISUAL=none|success|blocked','RELAY_RESPONSE_BEGIN','[VISUAL_PACKET v1]','source ids','approximate regions','type=image','type=local_image','image paths','path-only request','raw image','absolute local filesystem paths','base64-looking strings','even when visible','target_agent','worker','`cwd` must be the absolute','WRITER_WORKTREE=<cwd>','WRITER_BASELINE=<full-commit>','route pairing is fixed','claim-map','isolated worktree','never fall back silently','built-in `tool_search` query','Delegate a complex multi-step task to an autonomous agent','This is deterministic activation, not route discovery','Do not list tools or agents')
+$relayTransportInstructions = @('mcp__opencode_worker','run_agent','start_agent','get_agent_status','get_agent_result','cancel_agent','JOB_OPERATION=run|start|status|result|cancel','JOB_ID=<opaque id>','status timeout','freshness=stale','poll continuously','concrete suspicion','prompt shortening','early-result requests','result_available=true','only for an explicit cancellation decision','RELAY_STATUS=success|blocked|error','RELAY_ROUTE=read-only|writer','RELAY_VISUAL=none|success|blocked','RELAY_RESPONSE_BEGIN','[VISUAL_PACKET v1]','source ids','approximate regions','type=image','type=local_image','image paths','path-only request','raw image','absolute local filesystem paths','base64-looking strings','even when visible','target_agent','worker','`cwd` must be the absolute','WRITER_WORKTREE=<cwd>','WRITER_BASELINE=<full-commit>','route pairing is fixed','claim-map','isolated worktree','never fall back silently','built-in `tool_search` query','known functions','This is deterministic activation, not route discovery','Do not list tools or agents')
 $worker = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'agents/worker.toml')
 $reviewer = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'agents/reviewer.toml')
 $opencodeWorker = Get-Content -Raw -Encoding UTF8 (Join-Path $opencodeAgentsRoot 'worker.md')
@@ -408,6 +415,15 @@ foreach ($instruction in 'quality-first-subA','one read-only scout/researcher pe
     if ($subagents -notmatch [regex]::Escape($instruction)) {
         throw "Subagents reference is missing bounded quality-first delegation guidance: $instruction"
     }
+}
+
+foreach ($instruction in 'Do not poll continuously','concrete suspicion','Never accelerate','non-terminal job','result_available=true') {
+    if ($subagents -notmatch [regex]::Escape($instruction)) {
+        throw "Subagents reference is missing patience contract: $instruction"
+    }
+}
+if ($subagents -match '0\.12\.0.*stable pin') {
+    throw 'Subagents reference still contains the retired 0.12.0 stable pin.'
 }
 
 foreach ($instruction in 'Run `research-fanout` across the independent fronts by default','even without a wall-clock gain','Avoid duplicate fronts') {
@@ -662,9 +678,15 @@ if ($modeMatrixNormalized -notmatch [regex]::Escape('serialize an authorized sha
 $tomlCodexHome = $codexHome.Replace('\', '\\')
 $expectedWorkerCommand = 'command = "' + $tomlCodexHome + '\\bin\\opencode-worker.cmd"'
 $expectedAgentsDir = 'AGENTS_DIR = "' + $tomlCodexHome + '\\opencode-agents"'
-foreach ($instruction in 'opencode_worker','native','relay','AGENT_TYPE = "opencode"','AGENT_MODEL = "opencode-go/deepseek-v4-flash"','AGENT_EFFORT = "max"','AGENT_PERMISSION = "yolo"','SESSION_ENABLED = "false"','sub-agents-mcp@0.12.0','AGENTS_DIR = "%CODEX_HOME%\\opencode-agents"','PATH = "<gerado pelo instalador a partir do PATH do Windows>"','opencode run --model opencode-go/deepseek-v4-flash --variant max "Responda somente OK"') {
+$expectedJobsDir = 'JOB_DIR = "' + $tomlCodexHome + '\\opencode-jobs"'
+foreach ($instruction in 'opencode_worker','native','relay','AGENT_TYPE = "opencode"','AGENT_MODEL = "opencode-go/deepseek-v4-flash"','AGENT_EFFORT = "max"','AGENT_PERMISSION = "yolo"','SESSION_ENABLED = "false"','github:CheekyCodexConjurer/sub-agents-mcp#v0.13.1','start_agent','get_agent_status','get_agent_result','cancel_agent','JOB_EXECUTION_TIMEOUT_MS = "0"','opencode-jobs','AGENTS_DIR = "%CODEX_HOME%\\opencode-agents"','PATH = "<gerado pelo instalador a partir do PATH do Windows>"','opencode run --model opencode-go/deepseek-v4-flash --variant max "Responda somente OK"') {
     if ($readmeText -notmatch [regex]::Escape($instruction)) {
         throw "README is missing OpenCode activation evidence: $instruction"
+    }
+}
+foreach ($instruction in 'Não há polling contínuo','suspeita concreta','Lentidão nunca autoriza','result_available=true') {
+    if ($readmeTextNormalized -notmatch [regex]::Escape($instruction)) {
+        throw "README is missing patience policy: $instruction"
     }
 }
 
@@ -681,7 +703,7 @@ if (Test-Path -LiteralPath $codexConfigPath) {
     }
 
     $workerConfigText = $workerConfigMatch.Groups['body'].Value
-    foreach ($instruction in $expectedWorkerCommand, 'args = ["-y", "sub-agents-mcp@0.12.0"]', 'startup_timeout_sec = 30', 'tool_timeout_sec = 600') {
+    foreach ($instruction in $expectedWorkerCommand, 'args = ["-y", "github:CheekyCodexConjurer/sub-agents-mcp#v0.13.1"]', 'startup_timeout_sec = 30', 'tool_timeout_sec = 60', 'enabled_tools = ["run_agent", "start_agent", "get_agent_status", "get_agent_result", "cancel_agent"]') {
         if ($workerConfigText -notmatch [regex]::Escape($instruction)) {
             throw "Configured opencode_worker is missing runtime wiring: $instruction"
         }
@@ -697,7 +719,7 @@ if (Test-Path -LiteralPath $codexConfigPath) {
     }
 
     $workerEnvText = $workerEnvMatch.Groups['body'].Value
-    foreach ($instruction in 'SESSION_ENABLED = "false"') {
+    foreach ($instruction in 'SESSION_ENABLED = "false"', $expectedJobsDir, 'JOB_EXECUTION_TIMEOUT_MS = "0"', 'JOB_HEARTBEAT_INTERVAL_MS = "5000"', 'JOB_STALE_AFTER_MS = "30000"') {
         if ($workerEnvText -notmatch [regex]::Escape($instruction)) {
             throw "Configured opencode_worker must disable session persistence: $instruction"
         }
@@ -794,12 +816,12 @@ if (Test-Path -LiteralPath $installedNativeAgentsRoot -PathType Container) {
             throw "Installed native relay profile is missing transport contract: $instruction"
         }
     }
-    foreach ($instruction in 'AGENT_MODEL = "opencode-go/deepseek-v4-flash"', 'AGENT_EFFORT = "max"', 'enabled_tools = ["run_agent"]') {
+    foreach ($instruction in 'AGENT_MODEL = "opencode-go/deepseek-v4-flash"', 'AGENT_EFFORT = "max"', 'enabled_tools = ["run_agent", "start_agent", "get_agent_status", "get_agent_result", "cancel_agent"]', 'JOB_EXECUTION_TIMEOUT_MS = "0"') {
         if ($installedRelay -notmatch [regex]::Escape($instruction)) {
             throw "Installed native relay profile is missing MCP wiring: $instruction"
         }
     }
-    foreach ($instruction in $expectedWorkerCommand, $expectedAgentsDir) {
+    foreach ($instruction in $expectedWorkerCommand, $expectedAgentsDir, $expectedJobsDir) {
         if ($installedRelay -notmatch [regex]::Escape($instruction)) {
             throw "Installed native relay profile targets the wrong destination: $instruction"
         }
@@ -829,7 +851,7 @@ foreach ($instruction in 'the MCP function can be deferred','relay''s one exact'
         throw "Backend policy is missing the deferred-MCP relay contract: $instruction"
     }
 }
-foreach ($instruction in '[mcp_servers.opencode_worker]','command = "__OPENCODE_WORKER_COMMAND__"','AGENTS_DIR = "__OPENCODE_AGENTS_DIR__"','PATH = "__OPENCODE_PATH__"','AGENT_MODEL = "opencode-go/deepseek-v4-flash"','AGENT_EFFORT = "max"','enabled_tools = ["run_agent"]') {
+foreach ($instruction in '[mcp_servers.opencode_worker]','command = "__OPENCODE_WORKER_COMMAND__"','AGENTS_DIR = "__OPENCODE_AGENTS_DIR__"','JOB_DIR = "__OPENCODE_JOBS_DIR__"','PATH = "__OPENCODE_PATH__"','AGENT_MODEL = "opencode-go/deepseek-v4-flash"','AGENT_EFFORT = "max"','enabled_tools = ["run_agent", "start_agent", "get_agent_status", "get_agent_result", "cancel_agent"]') {
     if ($relayNormalized -notmatch [regex]::Escape($instruction)) {
         throw "Native relay profile is missing explicit MCP tool exposure: $instruction"
     }
@@ -1035,30 +1057,19 @@ foreach ($instruction in 'Read-only. Do not edit files','assigned, non-overlappi
 }
 
 $workflowBindings = @(
-    @{ Key = 'Numpad1'; Shortcut = 'NUM1'; Prompt = '$workflows mode=PLAN.AUTO'; Label = 'PLAN.AUTO' }
-    @{ Key = 'Numpad2'; Shortcut = 'NUM2'; Prompt = '$workflows mode=DELIVER.AUTO'; Label = 'DELIVER.AUTO' }
+    @{ Key = 'Numpad0'; Shortcut = 'NUM0'; Prompt = '$workflows mode=PLAN.AUTO'; Label = 'PLAN.AUTO' }
+    @{ Key = 'Numpad1'; Shortcut = 'NUM1'; Prompt = '$workflows mode=DELIVER.AUTO'; Label = 'DELIVER.AUTO' }
+    @{ Key = 'Numpad2'; Shortcut = 'NUM2'; Prompt = '$workflows mode=REVIEW'; Label = 'REVIEW' }
     @{ Key = 'Numpad3'; Shortcut = 'NUM3'; Prompt = '$workflows mode=COMMIT'; Label = 'COMMIT' }
     @{ Key = 'Numpad4'; Shortcut = 'NUM4'; Prompt = '$workflows mode=BUG.INV'; Label = 'BUG.INV' }
     @{ Key = 'Numpad5'; Shortcut = 'NUM5'; Prompt = '$workflows mode=BUG.FIX'; Label = 'BUG.FIX' }
     @{ Key = 'Numpad6'; Shortcut = 'NUM6'; Prompt = '$workflows mode=DEBUG'; Label = 'DEBUG' }
-    @{ Key = 'Numpad7'; Shortcut = 'NUM7'; Prompt = '$workflows mode=REWORK'; Label = 'REWORK' }
-    @{ Key = 'Numpad8'; Shortcut = 'NUM8'; Prompt = '$workflows mode=R.A.F.V'; Label = 'R.A.F.V' }
-    @{ Key = 'Numpad9'; Shortcut = 'NUM9'; Prompt = '$workflows mode=TN.SKILL'; Label = 'TN.SKILL' }
-    @{ Key = 'NumpadMult'; Shortcut = 'NUM*'; Prompt = '$workflows mode=RESEARCH.DEEP'; Label = 'RESEARCH.DEEP' }
+    @{ Key = 'Numpad7'; Shortcut = 'NUM7'; Prompt = '$workflows mode=R.A.F.V'; Label = 'R.A.F.V' }
+    @{ Key = 'Numpad8'; Shortcut = 'NUM8'; Prompt = '$workflows mode=REWORK'; Label = 'REWORK' }
+    @{ Key = 'Numpad9'; Shortcut = 'NUM9'; Prompt = '$workflows mode=RESEARCH.DEEP'; Label = 'RESEARCH.DEEP' }
 )
 $modifierBindings = @()
-$deepWorkflowBindings = @(
-    @{ Key = 'Numpad0 & Numpad1'; Shortcut = 'NUM0+1'; Prompt = '$workflows mode=P.DEEP'; Label = 'P.DEEP' }
-    @{ Key = 'Numpad0 & Numpad2'; Shortcut = 'NUM0+2'; Prompt = '$workflows mode=IMPL.PHASE'; Label = 'IMPL.PHASE' }
-    @{ Key = 'Numpad0 & Numpad3'; Shortcut = 'NUM0+3'; Prompt = '$workflows mode=COMMIT'; Label = 'deep COMMIT' }
-    @{ Key = 'Numpad0 & Numpad4'; Shortcut = 'NUM0+4'; Prompt = '$workflows mode=BUG.INV'; Label = 'deep BUG.INV' }
-    @{ Key = 'Numpad0 & Numpad5'; Shortcut = 'NUM0+5'; Prompt = '$workflows mode=BUG.FIX'; Label = 'deep BUG.FIX' }
-    @{ Key = 'Numpad0 & Numpad6'; Shortcut = 'NUM0+6'; Prompt = '$workflows mode=DEBUG'; Label = 'deep DEBUG' }
-    @{ Key = 'Numpad0 & Numpad7'; Shortcut = 'NUM0+7'; Prompt = '$workflows mode=REWORK'; Label = 'deep REWORK' }
-    @{ Key = 'Numpad0 & Numpad8'; Shortcut = 'NUM0+8'; Prompt = '$workflows mode=R.A.F.V'; Label = 'deep R.A.F.V' }
-    @{ Key = 'Numpad0 & Numpad9'; Shortcut = 'NUM0+9'; Prompt = '$workflows mode=TN.SKILL'; Label = 'deep TN.SKILL' }
-    @{ Key = 'Numpad0 & NumpadMult'; Shortcut = 'NUM0+*'; Prompt = '$workflows mode=RESEARCH.DEEP'; Label = 'deep RESEARCH.DEEP' }
-)
+$deepWorkflowBindings = @()
 
 foreach ($text in $skillText, $dictionary, $modeMatrix) {
     if ($text -notmatch [regex]::Escape('DELIVER.AUTO')) {
@@ -1199,8 +1210,14 @@ if ($workflowPromptCount -lt $workflowBindings.Count) {
     throw "AHK must contain at least $($workflowBindings.Count) minimal workflow prompts; found $workflowPromptCount."
 }
 
-if ($ahkText -match '(?m)^Numpad0::') {
-    throw 'Numpad0 must remain a modifier-only key.'
+if ($ahkText -match '(?m)^Numpad0\s*&') {
+    throw 'Numpad0 must not remain a modifier binding.'
+}
+
+foreach ($forbidden in 'Numpad0 &', 'NumpadMult::PastePrompt', 'mode=TN.SKILL', 'mode=P.DEEP', 'mode=IMPL.PHASE') {
+    if ($ahkText -match [regex]::Escape($forbidden)) {
+        throw "AHK still contains removed shortcut content: $forbidden"
+    }
 }
 
 foreach ($binding in $modifierBindings) {

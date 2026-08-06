@@ -1,5 +1,5 @@
 name = "relay"
-description = "MCP-ready native transport relay for OpenCode readers and claim-mapped writers."
+description = "MCP-ready native transport relay for OpenCode readers, writers, and durable jobs."
 model = "gpt-5.4-mini"
 model_reasoning_effort = "high"
 sandbox_mode = "read-only"
@@ -46,19 +46,35 @@ remains the owner of review, tests, and integration.
 The route pairing is fixed: `worker` returns `RELAY_ROUTE=writer`; every other
 allowed target returns `RELAY_ROUTE=read-only`.
 
-Call `mcp__opencode_worker__run_agent` with the bounded task text, optionally
-followed by the native `[VISUAL_PACKET v1]` block, as the prompt. Each sidecar request
-starts a fresh MCP conversation; pass `agent=<target_agent>`, `cwd=<cwd>`, and
-`prompt=<forwarded_task>`, and omit `session_id`. Forward only text to the MCP;
-the native image items and their paths must never cross this boundary.
 Desktop can defer MCP tools from a new relay. As the first operation, issue
-exactly one built-in `tool_search` query for `Delegate a complex multi-step
-task to an autonomous agent`, then call only the returned
-`mcp__opencode_worker__run_agent` function. This is deterministic activation,
-not route discovery. Do not list tools or agents, expose a connector, inspect
-the cwd, run shell, or explain the route. If that one query does not expose
-the exact function, return `RELAY_STATUS=blocked` with the exposure error; do
-not substitute a different connector.
+exactly one built-in `tool_search` query for the known functions
+`run_agent start_agent get_agent_status get_agent_result cancel_agent`, then
+call only the returned functions from `mcp__opencode_worker`. This is
+deterministic activation, not route discovery. Do not list tools or agents,
+expose a connector, inspect the cwd, run shell, or explain the route. If the
+query does not expose the required function, return `RELAY_STATUS=blocked` with
+the exposure error; do not substitute a different connector.
+
+The parent may prefix the bounded task with one control line:
+`JOB_OPERATION=run|start|status|result|cancel`. Without that line, use
+`run_agent` for backward compatibility. For `run`, call `run_agent` with
+`agent=<target_agent>`, `cwd=<cwd>`, `prompt=<forwarded_task>`, and omit
+`session_id`. For `start`, call `start_agent` with the same `agent`, `cwd`, and
+prompt, optionally passing a parent-provided `idempotency_key`; return the
+accepted `job_id` unchanged. For `status`, `result`, or `cancel`, require a
+parent-provided `JOB_ID=<opaque id>` and call only the matching
+`get_agent_status`, `get_agent_result`, or `cancel_agent` function with
+`job_id=<opaque id>`. A status timeout or `freshness=stale` is not proof of
+failure; preserve the returned state. Patience contract: after `start`, do not
+poll continuously and do not impose a deadline. Call `get_agent_status` only
+when the parent has a concrete suspicion of an MCP, worker, or heartbeat
+problem. A status call is diagnostic only; it never authorizes acceleration,
+prompt shortening, early-result requests, cancellation, or relaunch. While
+the job is non-terminal, wait for the complete result. Call `get_agent_result`
+only after `result_available=true` or a terminal state, and call
+`cancel_agent` only for an explicit cancellation decision. Forward only the
+task text to the MCP; control lines may be removed from the prompt, and native
+image items and their paths must never cross this boundary.
 Use the selected MCP route only. Do not replace it with a native agent, a
 direct OpenCode CLI call, or an invented answer; the selected route never falls
 back to a native or direct-CLI provider. Never fall back silently. A single
@@ -82,11 +98,11 @@ from inside this transport.
 
 [mcp_servers.opencode_worker]
 command = "__OPENCODE_WORKER_COMMAND__"
-args = ["-y", "sub-agents-mcp@0.12.0"]
+args = ["-y", "github:CheekyCodexConjurer/sub-agents-mcp#v0.13.1"]
 startup_timeout_sec = 30
-tool_timeout_sec = 600
+tool_timeout_sec = 60
 enabled = true
-enabled_tools = ["run_agent"]
+enabled_tools = ["run_agent", "start_agent", "get_agent_status", "get_agent_result", "cancel_agent"]
 
 [mcp_servers.opencode_worker.env]
 AGENTS_DIR = "__OPENCODE_AGENTS_DIR__"
@@ -95,5 +111,9 @@ AGENT_MODEL = "opencode-go/deepseek-v4-flash"
 AGENT_EFFORT = "max"
 AGENT_PERMISSION = "yolo"
 EXECUTION_TIMEOUT_MS = "600000"
+JOB_DIR = "__OPENCODE_JOBS_DIR__"
+JOB_EXECUTION_TIMEOUT_MS = "0"
+JOB_HEARTBEAT_INTERVAL_MS = "5000"
+JOB_STALE_AFTER_MS = "30000"
 SESSION_ENABLED = "false"
 PATH = "__OPENCODE_PATH__"

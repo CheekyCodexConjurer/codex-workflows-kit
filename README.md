@@ -210,11 +210,18 @@ O backend interno padrão é `internal_subagent_backend=opencode` com transporte
 `internal_subagent_transport=native_relay`, definido em
 `skills/workflows/references/backend-policy.md`. Você não precisa incluir
 uma flag no prompt. Quando o modo precisar de um sidecar, o chat principal abre
-um perfil nativo `relay` novo; ele chama o único MCP `opencode_worker`,
-preserva a resposta e a repassa como resposta de sub-agent nativo. O relay
-continua separado do chat principal e não edita o próprio contexto. Cada prompt
-usa uma conversa MCP isolada, sem persistência ou retomada de sessão. O chat
-principal continua livre até o gate de decisão/final.
+um perfil nativo `relay` novo; ele chama o MCP `opencode_worker`, preserva a
+resposta e a repassa como resposta de sub-agent nativo. Para tarefas rápidas,
+usa `run_agent`; para pesquisas que podem durar, usa `start_agent` e mantém o
+`job_id` para consultar `get_agent_status`/`get_agent_result` em novos relays.
+Não há polling contínuo nem prazo: o status só é consultado sob suspeita
+concreta de falha do MCP, worker ou heartbeat. Lentidão nunca autoriza
+acelerar, encurtar, resumir, cancelar ou relançar o job. O resultado final deve
+ser aguardado; `get_agent_result` só é lido quando `result_available=true` ou o
+job está terminal. `cancel_agent` só é usado quando o cancelamento é explícito.
+O relay continua separado do chat principal e não edita o próprio contexto.
+Cada chamada usa uma conversa MCP isolada; o job, porém, permanece consultável
+no armazenamento durável até terminar.
 
 Quando o host suporta anexos multimodais, o spawn nativo carrega os anexos reais como
 itens estruturados (`type=image` ou `type=local_image`); os caminhos não entram
@@ -281,11 +288,11 @@ O diretório canônico das definições OpenCode neste projeto é
 ```toml
 [mcp_servers.opencode_worker]
 command = "%CODEX_HOME%\\bin\\opencode-worker.cmd"
-args = ["-y", "sub-agents-mcp@0.12.0"]
+args = ["-y", "github:CheekyCodexConjurer/sub-agents-mcp#v0.13.1"]
 startup_timeout_sec = 30
-tool_timeout_sec = 600
+tool_timeout_sec = 60
 enabled = true
-enabled_tools = ["run_agent"]
+enabled_tools = ["run_agent", "start_agent", "get_agent_status", "get_agent_result", "cancel_agent"]
 
 [mcp_servers.opencode_worker.env]
 AGENTS_DIR = "%CODEX_HOME%\\opencode-agents"
@@ -294,6 +301,10 @@ AGENT_MODEL = "opencode-go/deepseek-v4-flash"
 AGENT_EFFORT = "max"
 AGENT_PERMISSION = "yolo"
 EXECUTION_TIMEOUT_MS = "600000"
+JOB_DIR = "%CODEX_HOME%\\opencode-jobs"
+JOB_EXECUTION_TIMEOUT_MS = "0"
+JOB_HEARTBEAT_INTERVAL_MS = "5000"
+JOB_STALE_AFTER_MS = "30000"
 SESSION_ENABLED = "false"
 PATH = "<gerado pelo instalador a partir do PATH do Windows>"
 ```
@@ -303,11 +314,14 @@ gera caminhos absolutos para o computador atual. Não cole o marcador literalmen
 em um `config.toml`.
 
 O pin `sub-agents-mcp@0.8.0` é incompatível com OpenCode; o suporte oficial
-começou em `0.11.0`, e esta integração usa `0.12.0`, que expõe o backend
-OpenCode, `AGENT_MODEL` e `AGENT_EFFORT`. O backend encaminha o modelo para
-`--model` e o esforço para `--variant`.
-Com `SESSION_ENABLED=false`, o MCP não persiste o histórico entre chamadas e
-cada relay inicia uma conversa nova.
+começou em `0.11.0`, e esta integração usa a tag `v0.13.1` do fork
+`CheekyCodexConjurer/sub-agents-mcp`. Além do backend OpenCode, ela expõe
+`start_agent`, `get_agent_status`, `get_agent_result` e `cancel_agent` para
+jobs duráveis. O backend encaminha o modelo para `--model` e o esforço para
+`--variant`.
+Com `SESSION_ENABLED=false`, o MCP não persiste o histórico de conversa entre
+chamadas e cada relay inicia uma conversa nova. Os jobs não dependem dessa
+sessão: seus estados/resultados ficam em `JOB_DIR`.
 No Windows, o `PATH` inclui o diretório que contém `opencode.exe`, porque o
 backend inicia o CLI com `spawn("opencode")`; sem esse diretório, o shell pode
 encontrar `opencode.cmd`, mas o processo filho ainda falha com `ENOENT`.
@@ -400,27 +414,17 @@ observabilidade quando aplicável; mudanças de comportamento não exigem
 alterar o AHK.
 
 ```text
-NUM1         $workflows mode=PLAN.AUTO
-NUM2         $workflows mode=DELIVER.AUTO
+NUM0         $workflows mode=PLAN.AUTO
+NUM1         $workflows mode=DELIVER.AUTO
+NUM2         $workflows mode=REVIEW
 NUM3         $workflows mode=COMMIT
 NUM4         $workflows mode=BUG.INV
 NUM5         $workflows mode=BUG.FIX
 NUM6         $workflows mode=DEBUG
-NUM7         $workflows mode=REWORK
-NUM8         $workflows mode=R.A.F.V
-NUM9         $workflows mode=TN.SKILL
-NUM*         $workflows mode=RESEARCH.DEEP
-
-NUM0+1       $workflows mode=P.DEEP
-NUM0+2       $workflows mode=IMPL.PHASE
-NUM0+3       $workflows mode=COMMIT
-NUM0+4       $workflows mode=BUG.INV
-NUM0+5       $workflows mode=BUG.FIX
-NUM0+6       $workflows mode=DEBUG
-NUM0+7       $workflows mode=REWORK
-NUM0+8       $workflows mode=R.A.F.V
-NUM0+9       $workflows mode=TN.SKILL
-NUM0+*       $workflows mode=RESEARCH.DEEP
+NUM7         $workflows mode=R.A.F.V
+NUM8         $workflows mode=REWORK
+NUM9         $workflows mode=RESEARCH.DEEP
+NUM*         livre
 
 Alt+NUM1     /goal
 Alt+NUM2     /grill-me

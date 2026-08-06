@@ -38,12 +38,24 @@ provider, transport, or policy flag to any prompt.
   concurrency until it is closed; after integrating its final response, close
   it to release the slot. A slot-occupied spawn failure follows
   `subA-slot-full`, not backend-unavailability fallback.
+- The configured MCP exposes `run_agent` for short synchronous work and the
+  explicit durable-job tools `start_agent`, `get_agent_status`,
+  `get_agent_result`, and `cancel_agent`. A long or uncertain task uses
+  `JOB_OPERATION=start` and returns a `job_id`; later fresh relays use
+  `JOB_OPERATION=status|result` with `JOB_ID=<opaque id>`. A status timeout or
+  `freshness=stale` is not proof of failure. Do not poll continuously or impose
+  a deadline; use `status` only under a concrete suspicion that the MCP,
+  worker, or heartbeat may have failed. Never accelerate, shorten, summarize,
+  cancel, or relaunch a non-terminal job merely because it is slow. Only an
+  explicit cancellation uses `JOB_OPERATION=cancel`; read the result after
+  `result_available=true` or a terminal state.
 - For a one-step read-only smoke or health test with explicit
   `{target_agent,cwd,task}`, use the fast path: do not read repository or
   backend files before the spawn. In a new Desktop relay, the MCP function can
   be deferred, so activate its known capability through the relay's one exact
-  `tool_search`, then call only `opencode_worker`; a missing result remains
-  blocked rather than searching for another connector.
+  `tool_search`, then call only the returned known function from
+  `opencode_worker`; a missing result remains blocked rather than searching
+  for another connector.
 - The parent continues useful work and joins the relay at the decision/final
   gate. OpenCode `worker` handles claim-map-scoped edits in the supplied
   isolated worktree through the same relay and MCP. Before spawning it, the
@@ -80,7 +92,7 @@ backend/relay/perms/no-silent-fallback/worktree/claim-map/review gates.
 
 - `agents/relay.toml` is the native transport profile. Its own context is
   read-only, but it forwards reader and explicit claim-map writer work to
-  `mcp__opencode_worker__run_agent`, preserves the original response, and never
+  `mcp__opencode_worker` lifecycle functions, preserves the original response, and never
   falls back to a native or direct-CLI provider. Its optional visual preflight
   converts native image items into `[VISUAL_PACKET v1]` text and never forwards
   raw images or attachment paths. For `worker`, `cwd` must equal the absolute
@@ -99,7 +111,10 @@ backend/relay/perms/no-silent-fallback/worktree/claim-map/review gates.
   it allows `edit`, denies `bash` and nested `task`, and uses only the supplied
   isolated worktree with `external_directory: deny`. The parent runs
   validation and owns integration.
-- `sub-agents-mcp@0.12.0` exposes only coarse permission levels. Its
+- The pinned fork `github:CheekyCodexConjurer/sub-agents-mcp#v0.13.1` exposes
+  the synchronous `run_agent` tool plus durable `start_agent`,
+  `get_agent_status`, `get_agent_result`, and `cancel_agent` tools. It still
+  exposes only coarse permission levels. Its
   `AGENT_PERMISSION=read-only` hard-denies `task` and `external_directory`, so
   this route uses `AGENT_PERMISSION=yolo` only to remove those two coarse
   denials. Reader agent frontmatter is the effective no-edit boundary;

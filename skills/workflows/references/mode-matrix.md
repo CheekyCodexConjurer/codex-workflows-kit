@@ -54,6 +54,16 @@ but the relay, MCP, or model is unavailable, leave the required gate blocked; do
 not silently fall back to another provider, model, effort, permission,
 transport, or a direct main-chat MCP call.
 
+For a task that may outlive one MCP call, the relay uses the durable job
+contract: `JOB_OPERATION=start` returns a `job_id`; later fresh relays use
+`JOB_OPERATION=status|result` with `JOB_ID=<opaque id>`. A status timeout or
+`freshness=stale` is not proof of failure, so do not relaunch solely from that
+polling uncertainty. Do not poll continuously or impose a deadline: consult
+status only under a concrete suspicion, and never accelerate, shorten,
+summarize, cancel, or relaunch a slow non-terminal job. Read the result after
+`result_available=true` or a terminal state. `JOB_OPERATION=cancel` is explicit
+cancellation only; short work may use the synchronous `run_agent` tool.
+
 ## Observability
 
 Use `obs-gate` before adding or keeping instrumentation. No-edit modes record

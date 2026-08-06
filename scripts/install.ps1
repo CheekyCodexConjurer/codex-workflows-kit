@@ -101,6 +101,7 @@ $antigravitySkillsDest1 = Join-Path $AntigravityHome 'antigravity\skills'
 $antigravitySkillsDest2 = Join-Path $AntigravityHome 'config\skills'
 $agentsDest = Join-Path $CodexHome 'agents'
 $opencodeAgentsDest = Join-Path $CodexHome 'opencode-agents'
+$opencodeJobsDest = Join-Path $CodexHome 'opencode-jobs'
 $agentsMdDest = Join-Path $CodexHome 'AGENTS.md'
 $maintenanceDest = Join-Path $CodexHome 'maintenance\maintain-mcps.ps1'
 $workerWrapperDest = Join-Path $CodexHome 'bin\opencode-worker.cmd'
@@ -265,8 +266,9 @@ function Render-AgentProfile {
 
     $workerCommand = ConvertTo-TomlString (Join-Path $CodexHome 'bin\opencode-worker.cmd')
     $opencodeAgents = ConvertTo-TomlString $opencodeAgentsDest
+    $opencodeJobs = ConvertTo-TomlString $opencodeJobsDest
     $openCodePath = ConvertTo-TomlString (Get-OpenCodePathValue)
-    return $Content.Replace('__OPENCODE_WORKER_COMMAND__', $workerCommand.Trim('"')).Replace('__OPENCODE_AGENTS_DIR__', $opencodeAgents.Trim('"')).Replace('__OPENCODE_PATH__', $openCodePath.Trim('"'))
+    return $Content.Replace('__OPENCODE_WORKER_COMMAND__', $workerCommand.Trim('"')).Replace('__OPENCODE_AGENTS_DIR__', $opencodeAgents.Trim('"')).Replace('__OPENCODE_JOBS_DIR__', $opencodeJobs.Trim('"')).Replace('__OPENCODE_PATH__', $openCodePath.Trim('"'))
 }
 
 function Install-AgentProfile {
@@ -368,11 +370,11 @@ function Install-OpenCodeConfig {
 $begin
 [mcp_servers.opencode_worker]
 command = $(ConvertTo-TomlString (Join-Path $CodexHome 'bin\opencode-worker.cmd'))
-args = ["-y", "sub-agents-mcp@0.12.0"]
+args = ["-y", "github:CheekyCodexConjurer/sub-agents-mcp#v0.13.1"]
 startup_timeout_sec = 30
-tool_timeout_sec = 600
+tool_timeout_sec = 60
 enabled = true
-enabled_tools = ["run_agent"]
+enabled_tools = ["run_agent", "start_agent", "get_agent_status", "get_agent_result", "cancel_agent"]
 
 [mcp_servers.opencode_worker.env]
 AGENTS_DIR = $(ConvertTo-TomlString $opencodeAgentsDest)
@@ -381,6 +383,10 @@ AGENT_MODEL = "opencode-go/deepseek-v4-flash"
 AGENT_EFFORT = "max"
 AGENT_PERMISSION = "yolo"
 EXECUTION_TIMEOUT_MS = "600000"
+JOB_DIR = $(ConvertTo-TomlString $opencodeJobsDest)
+JOB_EXECUTION_TIMEOUT_MS = "0"
+JOB_HEARTBEAT_INTERVAL_MS = "5000"
+JOB_STALE_AFTER_MS = "30000"
 SESSION_ENABLED = "false"
 PATH = $(ConvertTo-TomlString (Get-OpenCodePathValue))
 $end

@@ -12,7 +12,10 @@ Check strategy:
   `internal_subagent_backend=opencode`, the explicit
   `internal_subagent_backend=native` override, the default
   `internal_subagent_transport=native_relay`, the native `relay` profile, the
-  configured `opencode_worker` MCP server, pinned `sub-agents-mcp@0.12.0`,
+  configured `opencode_worker` MCP server, pinned
+  `github:CheekyCodexConjurer/sub-agents-mcp#v0.13.1`, exposed `run_agent`,
+  `start_agent`, `get_agent_status`, `get_agent_result`, and `cancel_agent`,
+  plus durable `JOB_DIR`/heartbeat settings,
   absolute `AGENTS_DIR`, `AGENT_TYPE=opencode`, model
   `opencode-go/deepseek-v4-flash`, `AGENT_EFFORT=max`/OpenCode `--variant max`,
   bounded timeout, Windows `PATH` resolution for `opencode.exe`,
@@ -32,6 +35,15 @@ Check strategy:
   MCP directly from the main chat. The configured
   `codegraph` MCP may stay enabled when explicitly authorized, but unreviewed
   external tools must not be inferred safe from the permission profile alone.
+- For long-running jobs, prove `JOB_OPERATION=start` returns a `job_id` quickly,
+  then use fresh `JOB_OPERATION=status|result` requests with
+  `JOB_ID=<opaque id>`. A status timeout or `freshness=stale` must remain
+  non-terminal evidence, not an automatic failure or relaunch trigger. Do not
+  poll continuously: status is reserved for a concrete suspicion of MCP,
+  worker, or heartbeat failure. A slow non-terminal job must not be
+  accelerated, shortened, summarized, cancelled, or relaunched. Prove that
+  result retrieval waits for `result_available=true` or a terminal state, and
+  that explicit `JOB_OPERATION=cancel` reaches the durable cancellation state.
 - For image-bearing relay requests, prove `RELAY_VISUAL=success` and a
   `[VISUAL_PACKET v1]` reaches the MCP prompt without an image path, data URL,
   or raw image bytes. For text-only requests, prove the task remains intact and

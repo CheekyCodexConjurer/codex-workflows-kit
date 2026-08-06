@@ -117,6 +117,18 @@ need to add a provider or transport flag.
 Custom-role spawn calls still omit `fork_context`, `model`, and
 `reasoning_effort`.
 
+For a sidecar that may outlive one MCP call, use the durable job surface through
+the relay: send `JOB_OPERATION=start`, retain the returned `job_id`, and use a
+fresh relay with `JOB_OPERATION=status|result` plus `JOB_ID=<opaque id>`. A
+status-call timeout or `freshness=stale` is polling uncertainty, not proof of
+failure and not a reason to relaunch. Do not poll continuously or impose a
+deadline: consult `status` only under a concrete suspicion that the MCP,
+worker, or heartbeat may have failed. Never accelerate, shorten, summarize,
+cancel, or relaunch a non-terminal job merely because it is slow. Read the
+result only after `result_available=true` or a terminal state. Use
+`JOB_OPERATION=cancel` only after an explicit cancellation decision; short
+work may continue using `run_agent`.
+
 If the internal policy is explicitly changed to
 `internal_subagent_backend=native`, use the native custom-role profiles for all
 sub-agents. If the OpenCode route is unavailable while selected, report the
