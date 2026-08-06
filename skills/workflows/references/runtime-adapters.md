@@ -12,7 +12,7 @@ Every adapter must preserve the same:
 - evidence, no-edit, write, review, commit, and clean-gate boundaries;
 - sub-agent role lock, claim maps, validation, and no-silent-fallback rules;
 - parent ownership of integration when OpenCode is selected, with delegated
-  claim-map writes performed by OpenCode through the native relay.
+  claim-map writes performed by OpenCode through the exposed MCP.
 
 An adapter may change how a tool or sub-agent is invoked. It must not change
 what the mode means, weaken a gate, or turn missing capabilities into a
@@ -20,14 +20,12 @@ success claim.
 
 ## Codex
 
-Use the native Codex tool and agent surface. When a read-only or claim-map
-writer sidecar is required, follow `references/backend-policy.md` and create a
-fresh configured native relay for that request. The relay owns transport and
-isolation; OpenCode owns delegated writer edits, while the main agent owns
-integration and final quality. If the native spawn carries real image items,
-the relay performs the bounded visual preflight and forwards only a text
-`[VISUAL_PACKET v1]`; attachment paths and raw image data never reach OpenCode.
-Native workers remain only for the explicit native-backend maintenance override.
+Use the exposed `opencode_worker` MCP for text readers, reviewers and writers.
+The parent keeps the returned `job_id`, consults status at progress
+checkpoints, and owns integration. Native analytical profiles are blocked while
+the OpenCode backend is active. A native relay is permitted only to convert
+real image items into a text-only `[VISUAL_PACKET v1]`; attachment paths and
+raw image data never reach OpenCode.
 
 ## Google Antigravity
 
@@ -39,11 +37,11 @@ falling back silently.
 
 ## OpenCode
 
-Use OpenCode's configured Task surface and the role definitions for
-`scout`, `researcher`, `reviewer`, and `worker`. Read-only roles must not edit
-or run shell commands. Writable workers remain claim-map and isolated-worktree
-scoped and must pass their merge gate before integration. Each request starts a fresh task
-conversation; session persistence and continuation reuse are disabled.
+Use the configured `opencode_worker` MCP and role definitions for `scout`,
+`researcher`, `reviewer`, and `worker`. Read-only roles must not edit or run
+shell commands. Writable workers remain claim-map and isolated-worktree scoped
+and must pass their merge gate before integration. Each request starts a fresh
+job without a session identifier.
 
 ## User-facing syntax
 

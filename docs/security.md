@@ -52,18 +52,18 @@ e so recebe claim-map, worktree e baseline verificados pelo agente principal.
 
 ### Politica de delegacao (`internal_subagent_policy`)
 
-- `aggressive` (padrao, delegate-first) habilita o writer por padrao para
-  implementacao autorizada, sem limite numerico artificial; `conservative`
-  mantem o comportamento proporcional (tarefas simples locais, writer so para
-  slices isoladas). Nenhuma politica adiciona MCP/tools nem relaxa o
-  frontmatter: o writer continua `edit: allow`, `bash: deny`, `task: deny` e
-  `external_directory: deny`, em worktree isolada.
-- Um pedido explicito de `no-edit` impede o spawn de writer, mesmo sob
-  `aggressive`: permissoes nao sobem silenciosamente; sem permissao, o gate
-  permanece bloqueado.
-- Handoff de reparo repassa erro observado + diff anterior + hipotese alterada;
-  o contexto e local a sessao, sem persistencia de metricas de runtime
-  (`SESSION_ENABLED=false` continua em vigor).
+- `writer_only` e o contrato: escrita autorizada usa o OpenCode `worker` via
+  MCP, em worktree isolada e com claim-map. O GPT orquestrador planeja,
+  diagnostica e aprova, mas nao escreve patches.
+- `no-edit` impede qualquer writer. MCP, modelo, permissao ou transporte
+  indisponível bloqueia a rota; nao existe fallback silencioso para perfil
+  nativo, CLI ou patch do GPT.
+- O ciclo de reparo repassa erro observado + diff anterior + hipótese alterada.
+  Depois de uma nova falha, o GPT faz diagnóstico read-only e envia um writer
+  novo; sem hipótese nova, o estado é `BLOCKED/REPLAN`.
+- Readers com duas ou mais frentes independentes recebem
+  `NESTED_REQUIRED=<frentes>` e devem delegar cada frente. Se `task` faltar,
+  retornam `NESTED_DELEGATION=blocked`; writers nunca delegam.
 
 ### Imagens e evidência visual
 
@@ -111,8 +111,8 @@ Recomendacoes operacionais:
   retencao e acesso definidos pelo destino, forma de desligar/remover e
   fail-open (nunca interrompe o fluxo principal) — salvo contrato
   audit/compliance explicitamente aprovado.
-- O MCP de relay usa `SESSION_ENABLED=false`: cada conversa e isolada, sem
-  persistencia ou retomada de sessao.
+- O MCP direto usa `SESSION_ENABLED=false`: cada job é isolado, sem
+  persistência ou retomada de sessão.
 
 ## Backups e artefatos
 

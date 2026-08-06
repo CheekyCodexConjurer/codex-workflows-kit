@@ -1,83 +1,60 @@
 # Validation
 
-Check strategy:
+Start with checks tied to the changed behavior. Broaden for shared contracts,
+then stop when the acceptance gate is proven. Never report a timed-out or
+blocked check as passed.
 
-- Start with targeted checks tied to changed behavior.
-- Broaden to type/build/lint/tests when shared/core/contracts are touched.
-- Use deep security/e2e/perf only when blast justifies it.
-- For UI, verify console/network/click path/state flow/responsive/a11y when feasible.
-- For bug fixes, preserve failure signature and show before/after delta.
-- For phased work, validate and checkpoint each independent unit before continuing.
-- For the internal backend policy, validate the default
-  `internal_subagent_backend=opencode`, the explicit
-  `internal_subagent_backend=native` override, the default
-  `internal_subagent_transport=native_relay`, the native `relay` profile, the
-  configured `opencode_worker` MCP server, pinned
-  `github:CheekyCodexConjurer/sub-agents-mcp#v0.13.1`, exposed `run_agent`,
-  `start_agent`, `get_agent_status`, `get_agent_result`, and `cancel_agent`,
-  plus durable `JOB_DIR`/heartbeat settings,
-  absolute `AGENTS_DIR`, `AGENT_TYPE=opencode`, model
-  `opencode-go/deepseek-v4-flash`, `AGENT_EFFORT=max`/OpenCode `--variant max`,
-  bounded timeout, Windows `PATH` resolution for `opencode.exe`,
-  `AGENT_PERMISSION=yolo`, `SESSION_ENABLED=false` without a session directory
-  or retention setting, reader definitions' effective `edit: deny`,
-  `bash: deny`, `task: allow`, and `external_directory: allow`, and the
-  writer definition's effective `edit: allow`, `bash: deny`, `task: deny`, and
-  `external_directory: deny`. Run a direct MCP probe from a fresh native relay
-  before delegating required work; prove that the relay preserves the response,
-  that reader and writer requests select the intended OpenCode target, that
-  each request starts a new isolated MCP conversation, and that a writer
-  request carries `WRITER_WORKTREE=<cwd>` and `WRITER_BASELINE=<full-commit>`.
-  For reader responses, prove `RELAY_RESPONSE_FORMAT=markdown` when the MCP
-  payload has a textual `result`, that the result is readable Markdown, and
-  that `RELAY_METADATA_BEGIN` preserves MCP status fields. A payload without a
-  textual result must use the fenced raw-payload `RELAY_RESPONSE_FORMAT=raw-json`
-  fallback, preserving the exact payload even when it is not valid JSON.
-  Before and after any real writer probe, verify the main checkout is unchanged
-  and compare the returned worktree diff against the declared allowed paths;
-  treat any mismatch as a blocked merge. A selected but failed relay/OpenCode route must remain blocked; it
-  must not silently fall back to native, reuse a completed relay, or call the
-  MCP directly from the main chat. The configured
-  `codegraph` MCP may stay enabled when explicitly authorized, but unreviewed
-  external tools must not be inferred safe from the permission profile alone.
-- For long-running work, prove the default `run_agent` call stays open beyond
-  the former 60-second host timeout and returns the final agent response, not
-  an accepted job. The default applies to every target, including `worker`.
-  Prove an explicit `JOB_OPERATION=start` returns `RELAY_STATUS=accepted`, a
-  `job_id`, and `RELAY_TERMINAL=no`; only then use fresh
-  `JOB_OPERATION=status|result` requests with `JOB_ID=<opaque id>`. A status
-  timeout or `freshness=stale` must remain non-terminal evidence, not an
-  automatic failure or relaunch trigger. Do not claim that the current status
-  tools inspect an active synchronous `run_agent` call. Do not poll
-  continuously: status is reserved for a concrete suspicion of MCP, worker, or
-  heartbeat failure. A slow non-terminal job must not be accelerated,
-  shortened, summarized, cancelled, or relaunched. Prove that detached result
-  retrieval waits for `result_available=true` or a terminal state, and that
-  explicit `JOB_OPERATION=cancel` reaches the durable cancellation state.
-- For image-bearing relay requests, prove `RELAY_VISUAL=success` and a
-  `[VISUAL_PACKET v1]` reaches the MCP prompt without an image path, data URL,
-  or raw image bytes. For text-only requests, prove the task remains intact and
-  `RELAY_VISUAL=none`. If attached items produce `RELAY_VISUAL=none` or a
-  missing visual status, the parent treats the sidecar as blocked/unknown; a
-  failed visual extraction must return blocked rather than a path-only request.
-- For nontrivial work shown in the Codex checklist with two or more phases, verify `update_plan` transitions at phase boundaries: at the start, the first phase is `in_progress` and future phases are `pending`; before the first command of the next phase, the previous phase is proven and `completed`, exactly one next phase is `in_progress`, and future phases remain `pending`; after the last phase is proven, every phase is `completed` and none is `in_progress`; scope changes update the checklist before work continues, and routine commands do not trigger updates. One-step or simple work does not need a checklist.
-- For approved temporary or durable instrumentation, validate the exact question it answers, canonical logger path, field allowlist/redaction, volume cap or sampling, sink-enforced retention and access, disable/removal path, and `failure-behavior`: fail-open by default, with fail-closed only under an explicitly approved audit/compliance contract, so a logging failure does not break the primary flow.
-- Do not accept a retention promise written only in source text; identify the real sink, rotation, cleanup, or lifecycle mechanism.
-- Under `tn-enforce`, validate the requested behavior and any structural paydown
-  as separate units; capture the final `quality-delta`.
-- Before splitting a file, establish a baseline check, preserve public
-  API/exports/contracts/order, and rerun the affected behavior after the move.
-- In `DEBUG`, preserve root-cause-first ordering and rerun the full functional
-  path after any bounded paydown.
-- In `DELIVER.AUTO`, phase validation is targeted checking only and must not spawn an independent reviewer; finish all approved implementation phases before review.
-- At `integrated-freeze`, run integrated validation and risk-tiered reviewers in parallel on the same stable diff.
-- Read-only validation/review agents must use their exact custom role. After a transient availability error, make one fresh same-role retry; never fall back to `default`, and keep a required gate blocked if that retry also fails. For a slot-full spawn failure, apply `subA-slot-full`: close only completed/idle integrated agents or wait for an optional one to finish, retry the same exact role once, never close active/waiting/required agents, and report explicit capacity evidence if recovery is impossible.
-- If integrated validation passes and review has no actionable finding, finish without a redundant closure review.
-- After a nonempty deduplicated fix batch changes the diff, revalidate once and run a delta-focused closure review; repeat full review only after a material risk-surface change.
-- Validação Pré-Voo de Símbolos via AST: Antes da aplicação de um patch pelo worker, verificar se todas as novas chamadas de método, funções ou imports existem e correspondem à definição no banco SQLite (.codegraph/codegraph.db) via CodeGraph.
-- Final must include checks run, relevant failures, skipped checks with reason, files touched, and regression risk.
+## Workflow contract
 
-AHK prompt pad:
+Validate that:
+
+- `backend-policy.md` is the canonical source and the mirrors only point to or
+  summarize it;
+- `internal_subagent_backend=opencode`, `internal_subagent_transport=direct_mcp`
+  and `internal_subagent_policy=writer_only` are present;
+- text sidecars use `opencode_worker` directly, with the pinned model/variant,
+  durable `JOB_DIR`, `run_agent`, `start_agent`, `get_agent_status`,
+  `get_agent_result` and `cancel_agent` exposed;
+- native `scout`, `researcher`, `reviewer` and `worker` profiles return
+  `NATIVE_ROUTE_BLOCKED` under the OpenCode backend;
+- readers deny `edit` and `bash`, writers allow only `edit`, deny `bash` and
+  nested `task`, and every writer brief carries claim-map,
+  `WRITER_WORKTREE` and `WRITER_BASELINE`;
+- the writer loop has W1, repair W2, read-only GPT diagnosis and fresh W3, with
+  no GPT-authored patch fallback;
+- `NESTED_REQUIRED` requires `NESTED_DELEGATION=used`, while unavailable
+  nested `task` returns `NESTED_DELEGATION=blocked`;
+- `accepted` is non-terminal, a live heartbeat permits waiting, and stale or
+  unknown status triggers diagnosis rather than blind waiting.
+
+## Runtime smoke
+
+Use a fresh direct MCP request only for validation. For a bounded smoke use
+`run_agent`; for a progress test use `start_agent`, record its `job_id`, call
+`get_agent_status` after a meaningful wait, and call `get_agent_result` only
+when `result_available=true` or the job is terminal. Verify that the main
+checkout is unchanged. Do not use a native reviewer as the test subject.
+
+For a nested-delegation test, send a reader a brief containing two explicit
+fronts and `NESTED_REQUIRED=<front-a,front-b>`. Accept only a result containing
+`NESTED_DELEGATION=used` and evidence from both fronts. A blocked nested tool
+must remain blocked.
+
+For a writer smoke, use a disposable clean isolated worktree and a claim-map;
+compare the returned diff against the baseline and allowed paths before any
+mechanical merge. Do not use the main checkout as the writer worktree.
+
+## Other checks
+
+- `git diff --check` and targeted repository validation must pass.
+- Run `scripts/validate.ps1` and the skill creator quick validator.
+- After source changes, run `scripts/install.ps1 -Profile safe` and validate
+  installed workflow files, OpenCode role definitions and native guards.
+- Run AHK syntax validation only when `AutoHotkey64.exe` is available.
+- If `.codegraph` exists, validate availability and use it for structural
+  checks; if it has no relevant result, fall back to targeted reads.
+
+## AHK prompt pad
 
 ```powershell
 $script = Join-Path $env:USERPROFILE 'Documents\Codex\PromptPad\codex_prompt_pad.ahk'
@@ -85,22 +62,9 @@ $exe = (Get-Command AutoHotkey64.exe -ErrorAction Stop).Source
 & $exe /ErrorStdOut /Validate $script
 ```
 
-Restart AHK:
+Restart only the process running that exact script and verify the new PID.
 
-- Capture old PID for the script.
-- Stop only `AutoHotkey64.exe` running that exact script.
-- Start with the same exe/script.
-- Confirm new PID differs from old PID.
+## Final report
 
-CodeGraph:
-
-- Validate availability with `codegraph --version` or configured MCP exposure.
-- Do not update npm/package during normal repo work.
-- If `.codegraph` exists, `codegraph sync --quiet` before structural exploration.
-- If missing and cg-worthy, run `codegraph init -i` once and leave generated local files uncommitted unless user asks.
-
-Skill validation:
-
-```powershell
-python "$env:CODEX_HOME\skills\.system\skill-creator\scripts\quick_validate.py" "$env:AGENTS_HOME\skills\workflows"
-```
+Report files touched, checks run, relevant failures, skipped checks and why,
+route evidence, regression risk and remaining work.

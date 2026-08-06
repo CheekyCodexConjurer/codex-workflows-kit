@@ -149,8 +149,8 @@ flowchart LR
     ANT --> SKILL
     SKILL --> MM["mode matrix + referencias"]
     MM --> SUB["scout / researcher / reviewer"]
-    SUB --> RELAY["native relay"]
-    RELAY --> WORKER["OpenCode worker em worktree isolada"]
+    SUB --> MCPWORKER["opencode_worker MCP"]
+    MCPWORKER --> WORKER["OpenCode worker em worktree isolada"]
     MM --> EF["evidence-first skill"]
     MM --> RATCHET["quality ratchet + validation"]
     MM --> MCP["mcp-foundation plugin"]
@@ -206,86 +206,31 @@ auditoria local com TTL de 24 horas. O Codex exige revisao unica do hook em
 
 ## Roteamento interno dos sub-agents
 
-O backend interno padrão é `internal_subagent_backend=opencode` com transporte
-`internal_subagent_transport=native_relay`, definido em
-`skills/workflows/references/backend-policy.md`. Você não precisa incluir
-uma flag no prompt. Quando o modo precisar de um sidecar, o chat principal abre
-um perfil nativo `relay` novo; ele chama o MCP `opencode_worker`, apresenta o
-campo `result` em Markdown e repassa metadados estruturados como resposta de
-sub-agent nativo. JSON bruto só aparece quando não há resultado textual
-extraível. Todo alvo, inclusive o
-writer OpenCode, usa `run_agent` síncrono por padrão: a chamada MCP permanece
-aberta até a resposta final. `start_agent` é uma exceção explícita para job
-destacado. Seu `job_id` aceito não é resposta final, e o relay o marca como
-`RELAY_STATUS=accepted` e `RELAY_TERMINAL=no`.
-Não há polling contínuo nem prazo: o status só é consultado sob suspeita
-concreta de falha do MCP, worker ou heartbeat para um `job_id` destacado.
-Lentidão nunca autoriza acelerar, encurtar, resumir, cancelar ou relançar o
-job. O MCP atual não expõe status de uma chamada `run_agent` síncrona em curso;
-não se inventa `job_id` nem se usa o status de outro job como prova. Para jobs
-destacados, `get_agent_result` só é lido quando `result_available=true` ou o
-job está terminal. `cancel_agent` só é usado quando o cancelamento é explícito.
-O relay continua separado do chat principal e não edita o próprio contexto.
-Cada chamada usa uma conversa MCP isolada; jobs destacados permanecem
-consultáveis no armazenamento durável até terminar.
+O contrato canônico está em
+`skills/workflows/references/backend-policy.md`. O backend padrão é
+`internal_subagent_backend=opencode` com `internal_subagent_transport=direct_mcp`.
+O GPT orquestrador planeja, diagnostica, testa e aprova; nunca escreve patches.
+Toda implementação passa pelo writer OpenCode em worktree isolada, com
+claim-map, `WRITER_WORKTREE` e `WRITER_BASELINE`.
 
-Quando o host suporta anexos multimodais, o spawn nativo carrega os anexos reais como
-itens estruturados (`type=image` ou `type=local_image`); os caminhos não entram
-no texto de `task`. O relay faz a
-leitura visual nativa e acrescenta somente um `[VISUAL_PACKET v1]` textual ao
-prompt do MCP, com fatos observáveis, confiança e incertezas. Imagens, bytes,
-data URLs e paths não atravessam a fronteira até o DeepSeek; falha na leitura
-visual bloqueia a solicitação em vez de degradar para um prompt com path. Se os
-itens foram anexados, mas o relay retorna `RELAY_VISUAL=none` ou omite o status,
-o pai trata o sidecar como bloqueado/desconhecido e não usa o resultado em
-tarefas que dependem da imagem.
+O loop é `W1 -> VERIFY -> W2 repair -> VERIFY -> diagnóstico read-only -> W3`.
+O writer recebe erro, diff anterior e hipótese alterada. Se W3 falhar ou não
+houver hipótese nova, o fluxo bloqueia/replaneja; não há fallback nativo, CLI ou
+patch do GPT.
 
-Após integrar a resposta final de um relay, feche o relay concluído para liberar
-o slot. Se um novo spawn falhar porque os slots do host estão cheios, aplique
-`subA-slot-full`: recupere apenas agentes concluídos/ociosos já integrados ou
-aguarde um agente opcional terminar; depois repita o mesmo papel. Nunca feche
-agentes ativos, aguardando ou obrigatórios; sem recuperação segura, reporte
-bloqueio explícito.
+Reader com duas ou mais frentes independentes recebe
+`NESTED_REQUIRED=<frentes>` e deve usar um nested read-only por frente. Se
+`task` não estiver disponível, retorna `NESTED_DELEGATION=blocked`.
 
-Todos os readers OpenCode configurados podem, opcionalmente, chamar outros
-sub-agents quando houver duas ou mais frentes independentes e descobertas, e
-ler diretórios externos. A escrita continua bloqueada por `edit: deny` e
-`bash: deny` nesses perfis. O `worker` OpenCode é o writer padrão: recebe
-claim-map, worktree isolada e limites no prompt, usa somente `edit` com
-`external_directory: deny`, e mantém `bash`/delegação aninhada bloqueados. O
-GPT principal verifica o `cwd` e o baseline antes do spawn, revisa o diff e
-executa o guard de caminhos antes de integrar; ele escreve diretamente apenas
-como fallback final, quando não há progresso ou em integração crítica
-compartilhada. O perfil nativo `worker` fica apenas como override explícito de
-manutenção.
+Para jobs longos, use `start_agent`, guarde o `job_id` e consulte
+`get_agent_status` no primeiro ponto de espera prolongada ou decisão. Heartbeat
+live em job running permite aguardar; estado terminal ou `result_available=true`
+permite ler o resultado. Heartbeat stale, processo ausente ou estado desconhecido
+exige diagnóstico, reparo, replanejamento ou bloqueio — nunca espera cega.
 
-### Política de delegação (`internal_subagent_policy`)
-
-`internal_subagent_policy=aggressive` é o padrão (delegate-first): o writer
-OpenCode fica habilitado por padrão para implementação autorizada, sem limite
-numérico artificial — a quantidade segue as frentes independentes do claim-map.
-O GPT principal permanece dono da arquitetura, integração, testes e aprovação
-final. `internal_subagent_policy=conservative` mantém o comportamento
-proporcional atual: tarefas simples locais e writer somente para slices
-isoladas com claim-map.
-
-O brief do writer permanece compacto (objetivo, arquivos permitidos, no-touch,
-comportamento esperado, condição de pronto, validação e saída), nunca o
-histórico completo. Se um writer falhar ou não progredir, o religamento usa
-handoff de reparo: erro observado + diff anterior + hipótese alterada. O
-contexto do handoff é local à sessão; não há persistência de métricas de
-runtime. Quando solicitado, o resumo interno da sessão traz readers/writers,
-frentes paralelas, reparos, falhas/bloqueios de validação, trabalho deduplicado,
-diff fora de escopo, fallback GPT, tempo e resultado — sem métrica de tokens do
-GPT principal. Um pedido explícito de `no-edit` impede o spawn de writers;
-permissões não sobem silenciosamente. A política não adiciona MCP nem tools, e
-todos os gates de segurança (claim-map, worktree isolada, baseline, revisão do
-diff, merge gate) permanecem.
-
-Para voltar ao backend nativo, peça explicitamente a um agente para alterar a
-política para `internal_subagent_backend=native`. Se o OpenCode estiver
-selecionado mas indisponível, o workflow reporta bloqueio; não há fallback
-silencioso.
+O native `scout`, `researcher`, `reviewer` e `worker` retorna
+`NATIVE_ROUTE_BLOCKED` enquanto o OpenCode estiver ativo. O native relay só faz
+pré-leitura visual e produz `[VISUAL_PACKET v1]` textual.
 
 O diretório canônico das definições OpenCode neste projeto é
 `agents/opencode`. O instalador mantém uma cópia em
@@ -329,8 +274,8 @@ começou em `0.11.0`, e esta integração usa a tag `v0.13.1` do fork
 jobs duráveis. O backend encaminha o modelo para `--model` e o esforço para
 `--variant`.
 Com `SESSION_ENABLED=false`, o MCP não persiste o histórico de conversa entre
-chamadas e cada relay inicia uma conversa nova. Os jobs não dependem dessa
-sessão: seus estados/resultados ficam em `JOB_DIR`.
+chamadas. Os jobs não dependem dessa sessão: seus estados/resultados ficam em
+`JOB_DIR` e são consultados pelo `job_id`.
 No Windows, o `PATH` inclui o diretório que contém `opencode.exe`, porque o
 backend inicia o CLI com `spawn("opencode")`; sem esse diretório, o shell pode
 encontrar `opencode.cmd`, mas o processo filho ainda falha com `ENOENT`.
@@ -456,9 +401,9 @@ Alt+NUM6     /learn
   só edita dentro do claim-map, em worktree isolada, sem bash e sem acesso a
   diretórios externos. O nível `AGENT_PERMISSION=yolo` do MCP não é sandbox de
   sistema.
-- A política de delegação (`internal_subagent_policy`, padrão `aggressive`) não
-  relaxa permissões: `no-edit` impede o spawn de writer, e nenhum MCP/tool novo
-  é adicionado.
+- O contrato `internal_subagent_policy=writer_only` não relaxa permissões:
+  `no-edit` impede o spawn de writer, native analytical profiles retornam
+  `NATIVE_ROUTE_BLOCKED`, e nenhum fallback silencioso é aceito.
 - Modelo de ameaças completo em `docs/security.md`.
 
 ## Suporte e limitações

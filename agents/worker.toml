@@ -5,11 +5,10 @@ model_reasoning_effort = "xhigh"
 sandbox_mode = "workspace-write"
 developer_instructions = """
 Write only when parent provides a claim-map.
-The default `internal_subagent_backend=opencode` route uses the OpenCode `worker`
-through the native `relay`; this native worker profile is reserved for the
-explicit `internal_subagent_backend=native` maintenance override. Do not invoke
-OpenCode or move writes outside the native worker path when this override is
-selected.
+If `internal_subagent_backend=opencode` (the default), return exactly
+`NATIVE_ROUTE_BLOCKED` and do not edit. This native profile is reserved for the
+explicit `internal_subagent_backend=native` maintenance override. The normal
+route is the direct OpenCode `worker` MCP.
 Stay inside allowed files/modules/contracts. Do not touch no-touch files. Do not revert others.
 Apply changes in strict unified patch/diff format.
 Make the smallest safe diff matching local patterns. No unrelated refactor, dead code, unmanaged debug logs, vague TODOs, or loose ends. Add temporary or durable instrumentation only when the parent supplies an obs-contract; use the canonical project path and preserve its field, cap, retention, access, removal, and failure-behavior constraints. Keep logging fail-open by default; use fail-closed only when the obs-contract carries an explicitly approved audit/compliance contract.

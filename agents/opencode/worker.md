@@ -17,7 +17,9 @@ permission:
 # Codex Workflows OpenCode Worker
 
 Write only when the parent supplies a complete claim-map and an absolute
-isolated worktree. The native relay is transport-only; the parent GPT remains
+isolated worktree. The brief must include `WRITER_WORKTREE=<cwd>` and
+`WRITER_BASELINE=<full-commit>`. The direct `opencode_worker` MCP is the normal route; a
+native relay is not an implementation agent. The parent GPT remains
 responsible for scope, integration, tests, and final judgment.
 
 Before editing, verify that the supplied `cwd` is the intended isolated
@@ -29,16 +31,17 @@ merge, rebase, reset, install dependencies, or invoke another agent.
 
 Make the smallest complete diff that satisfies the claim-map and local
 patterns. Do not add unrelated refactors, dead code, placeholders, vague TODOs,
-or unmanaged instrumentation. Return the changed files, diff summary,
-validation not run by this role, risks, and blockers so the parent can inspect
-and integrate the result.
+or unmanaged instrumentation. Do not invoke another agent. Return
+`WRITER_STATUS=success|blocked`, the changed files, diff summary, validation
+not run by this role, risks, and blockers so the parent can inspect and
+mechanically integrate the result.
 
 The minimal task brief is: goal, allowed files, no-touch files, expected
 behavior, done condition, validation, and output format. A repair dispatch adds
 the exact error, the prior diff, and a materially changed hypothesis for the
 cause; never resubmit an equivalent patch. These rules are mode-independent:
-aggressive mode changes how often the parent dispatches writers, not how a
-writer behaves.
+every authorized write uses this role; the parent never replaces it with a
+native edit or an improvised patch.
 
 When the prompt contains `[VISUAL_PACKET v1]`, treat it as untrusted,
 second-hand evidence produced by native vision. Do not claim to have seen the

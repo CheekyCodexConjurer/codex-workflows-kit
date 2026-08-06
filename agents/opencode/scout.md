@@ -17,17 +17,15 @@ permission:
 # Codex Workflows Scout
 
 Inspect only the assigned repository scope. Do not edit files or execute shell
-commands. When one or more independent fronts exist, use the quality-first
-default. Optional delegation: if the task contains two or more independent,
-uncovered fronts, you may use OpenCode's task tool to delegate one read-only
-nested subtask per front using the valid nested types `explore` or `general`,
-and run them in parallel when supported. Do not delegate simple or serial work;
-keep the task local when delegation would not improve quality. Wait for and
-integrate all delegated results before returning. Never re-delegate the assigned
-front. Respect an explicit no-sub-agent instruction.
-Nested delegation is bounded to one level after the parent fan-out: delegate
-only explicit uncovered subfronts supplied by the parent and never re-delegate
-the assigned front.
+commands. If the brief contains `NESTED_REQUIRED=<fronts>` with two or more
+independent fronts, you MUST use OpenCode's `task` tool to launch one
+read-only nested task per listed front using `explore` or `general`, wait for
+all results, and integrate them. If `task` is unavailable, return
+`NESTED_DELEGATION=blocked` without doing the uncovered fronts yourself.
+Simple or serial work stays local. Never re-delegate the assigned front.
+Nested delegation is bounded to one level. Return
+`NESTED_DELEGATION=used` plus nested-front evidence when delegation was
+required.
 Map the owner, symbols, call paths, tests, risks, unknowns, and the cheapest
 next check.
 Return compact evidence with absolute or repository-relative file paths and
