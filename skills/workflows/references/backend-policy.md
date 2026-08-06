@@ -16,7 +16,8 @@ provider, transport, or policy flag to any prompt.
   `agent_type=relay`. The relay omits `fork_context`, `model`, and
   `reasoning_effort`, receives `{target_agent,cwd,task}`, calls the
   configured `opencode_worker` MCP without a session identifier, and returns
-  the original response as a native sub-agent result.
+  the MCP `result` as readable Markdown with a separate metadata block; it
+  uses a fenced raw-JSON fallback only when no textual result can be extracted.
 - The relay message stays `{target_agent,cwd,task}`. A multimodal native spawn
   may additionally carry real image items (`type=image` or
   `type=local_image`) outside that text message. The parent must never encode
@@ -38,22 +39,26 @@ provider, transport, or policy flag to any prompt.
   concurrency until it is closed; after integrating its final response, close
   it to release the slot. A slot-occupied spawn failure follows
   `subA-slot-full`, not backend-unavailability fallback.
-- The configured MCP exposes `run_agent` for short synchronous work and the
-  explicit durable-job tools `start_agent`, `get_agent_status`,
-  `get_agent_result`, and `cancel_agent`. A long or uncertain task uses
-  `JOB_OPERATION=start` and returns a `job_id`; later fresh relays use
-  `JOB_OPERATION=status|result` with `JOB_ID=<opaque id>`. A status timeout or
+- The configured MCP exposes synchronous `run_agent` plus the explicit
+  durable-job tools `start_agent`, `get_agent_status`, `get_agent_result`, and
+  `cancel_agent`. The default for every target, including OpenCode `worker`, is
+  `run_agent`: its MCP call stays open until the final agent response returns.
+  A pending synchronous call has no `job_id` or detached recovery handle; its
+  normal resolution is the final response, while a host/MCP error before that
+  is reported as error and retried only once when transient.
+  `JOB_OPERATION=start` is an explicit detached-background exception. Its
+  accepted `job_id` is not a final response; the relay marks it
+  `RELAY_STATUS=accepted` and `RELAY_TERMINAL=no`. Later fresh relays use
+  `JOB_OPERATION=status|result` with `JOB_ID=<opaque id>` only for that
+  detached job. The current MCP status tools do not observe a synchronous
+  `run_agent` call, so the parent must never fabricate a job ID or treat a
+  detached-job lookup as evidence about it. A status timeout or
   `freshness=stale` is not proof of failure. Do not poll continuously or impose
   a deadline; use `status` only under a concrete suspicion that the MCP,
   worker, or heartbeat may have failed. Never accelerate, shorten, summarize,
   cancel, or relaunch a non-terminal job merely because it is slow. Only an
-  explicit cancellation uses `JOB_OPERATION=cancel`; read the result after
-  `result_available=true` or a terminal state.
-- The OpenCode `worker` target is durable-first: when the parent omits an
-  operation, the relay selects `start_agent` for the writer; an explicit
-  `JOB_OPERATION=run` for `worker` is blocked with
-  `RELAY_REASON=worker-requires-durable-start`. `run_agent` remains available
-  for bounded reader work only.
+  explicit cancellation uses `JOB_OPERATION=cancel`; read a detached result
+  after `result_available=true` or a terminal state.
 - For a one-step read-only smoke or health test with explicit
   `{target_agent,cwd,task}`, use the fast path: do not read repository or
   backend files before the spawn. In a new Desktop relay, the MCP function can
@@ -97,8 +102,10 @@ backend/relay/perms/no-silent-fallback/worktree/claim-map/review gates.
 
 - `agents/relay.toml` is the native transport profile. Its own context is
   read-only, but it forwards reader and explicit claim-map writer work to
-  `mcp__opencode_worker` lifecycle functions, preserves the original response, and never
-  falls back to a native or direct-CLI provider. Its optional visual preflight
+  `mcp__opencode_worker` lifecycle functions, preserves the result facts and
+  provenance, and renders textual results as Markdown with separate metadata
+  (using exact fenced JSON only when no textual result can be extracted). It
+  never falls back to a native or direct-CLI provider. Its optional visual preflight
   converts native image items into `[VISUAL_PACKET v1]` text and never forwards
   raw images or attachment paths. For `worker`, `cwd` must equal the absolute
   isolated worktree root and the task must carry matching
@@ -127,6 +134,13 @@ backend/relay/perms/no-silent-fallback/worktree/claim-map/review gates.
   `bash: deny`, while the sole default writer must have `edit: allow`,
   `bash: deny`, `task: deny`, and `external_directory: deny`; an explicit
   no-edit always prevents writer spawns under either policy value.
+- For `scout`, `researcher`, and `reviewer`, the relay prepends an
+  optional English delegation hint to every forwarded task. If two or more
+  independent, uncovered fronts exist, the reader may use OpenCode's `task`
+  tool to launch one read-only nested subtask per front in parallel when
+  supported; simple or serial work stays local, every result is integrated,
+  and the assigned front is never re-delegated. The `worker` receives no hint
+  because nested `task` is denied.
 - The normal `codegraph` MCP may remain enabled. External directory access does
   not authorize arbitrary side-effectful MCP tools or shell commands.
 

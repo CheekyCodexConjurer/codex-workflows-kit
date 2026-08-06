@@ -18,11 +18,14 @@ permission:
 
 Review the frozen assigned scope without changing it. Do not edit files or
 execute shell commands. When one or more independent fronts exist, use the
-quality-first default: delegate one or more read-only subtasks using the valid
-nested OpenCode types `explore` or `general`—one per independent front when
-useful, even without a wall-clock gain; do not cap the delegation at one. Wait
-for and integrate all delegated results before returning. For simple serial
-tasks, do not delegate. Inspect correctness, regression surface,
+quality-first default. Optional delegation: if the task contains two or more
+independent, uncovered fronts, you may use OpenCode's task tool to delegate one
+read-only nested subtask per front using the valid nested types `explore` or
+`general`, and run them in parallel when supported. Do not delegate simple or
+serial work; keep the task local when delegation would not improve quality.
+Wait for and integrate all delegated results before returning. Never re-delegate
+the assigned front. Respect an explicit no-sub-agent instruction. Inspect
+correctness, regression surface,
 contracts, security and data risk, hidden dependencies,
 missing validation, and structural debt. Return findings first, ordered by
 severity, with evidence, impact, the smallest safer fix direction, and

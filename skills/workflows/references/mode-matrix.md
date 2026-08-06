@@ -43,8 +43,12 @@ as blocked/unknown; a failed visual extraction is never a path-only fallback.
 All configured OpenCode read-only agents may use the OpenCode `task` tool and
 `external_directory`; their definitions must keep `edit: deny` and `bash: deny`.
 The parent continues useful non-overlap work and joins the relay only at the
-decision/final gate. Preserve the MCP response and its provenance instead of
-silently translating it into an unverified conclusion. Implementation workers
+decision/final gate. The relay adds an optional English delegation hint to
+reader tasks: when two or more independent uncovered fronts exist, a reader
+may launch one read-only nested task per front in parallel when supported;
+simple or serial work stays local, and all nested results are integrated.
+Preserve the MCP response's provenance while rendering its textual `result` as
+Markdown and keeping status/metadata in a separate block. Implementation workers
 are OpenCode claim-map workers through the relay; the native `worker` profile is
 only an explicit maintenance override.
 
@@ -54,19 +58,19 @@ but the relay, MCP, or model is unavailable, leave the required gate blocked; do
 not silently fall back to another provider, model, effort, permission,
 transport, or a direct main-chat MCP call.
 
-For a task that may outlive one MCP call, the relay uses the durable job
-contract: `JOB_OPERATION=start` returns a `job_id`; later fresh relays use
-`JOB_OPERATION=status|result` with `JOB_ID=<opaque id>`. A status timeout or
-`freshness=stale` is not proof of failure, so do not relaunch solely from that
-polling uncertainty. Do not poll continuously or impose a deadline: consult
-status only under a concrete suspicion, and never accelerate, shorten,
-summarize, cancel, or relaunch a slow non-terminal job. Read the result after
-`result_available=true` or a terminal state. `JOB_OPERATION=cancel` is explicit
-cancellation only; short work may use the synchronous `run_agent` tool.
-Claim-mapped OpenCode `worker` requests are an exception to the short-work
-default: they always use `start_agent`; an explicit `JOB_OPERATION=run` for a
-worker remains blocked so a writer cannot be lost behind the synchronous MCP
-timeout.
+The relay uses synchronous `run_agent` by default for every target, including
+an OpenCode `worker`: the MCP call stays open until the agent's final response.
+`JOB_OPERATION=start` is only an explicit detached-background mode. It returns
+an accepted `job_id`, not a completed agent result; later fresh relays may use
+`JOB_OPERATION=status|result` with `JOB_ID=<opaque id>` for that detached job.
+The current MCP status tools do not observe an active synchronous `run_agent`
+call, so do not fabricate a job ID or use a detached-job lookup as proof about
+one. A status timeout or `freshness=stale` is not proof of failure, so do not
+relaunch solely from that polling uncertainty. Do not poll continuously or
+impose a deadline: consult status only under a concrete suspicion, and never
+accelerate, shorten, summarize, cancel, or relaunch a slow non-terminal job.
+Read a detached result after `result_available=true` or a terminal state.
+`JOB_OPERATION=cancel` is explicit cancellation only.
 
 ## Observability
 

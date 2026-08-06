@@ -37,7 +37,7 @@ Lifecycle:
 - `subA-retry`: on a transient launch, stream, or account-availability error, continue useful local work and make one fresh retry with the same exact role and the same valid custom-spawn shape; route a slot-occupied failure through `subA-slot-full` first; omit `fork_context`, `model`, and `reasoning_effort`, do not retry in a tight loop, and never fall back to `default`.
 - `subA-retry-block`: if the same-role retry fails, optional scouting may be skipped with evidence; any required read-only gate remains blocked and must be reported rather than bypassed.
 - `subA-isolation`: allocate one native relay and one MCP conversation per sidecar request; do not reuse completed relays or persist continuation state; close each completed relay after integrating its final response.
-- `nested-opencode`: when one or more independent fronts exist, a configured OpenCode reader delegates one or more read-only tasks under `quality-first-subA` using nested types `explore` or `general`; choose the count by the independent fronts, do not cap it at one, delegate only explicit uncovered subfronts supplied by the parent, never re-delegate the assigned front, and allow at most one nested level after the main fan-out. Wait for and integrate all results, and keep simple serial work local.
+- `nested-opencode`: when one or more independent fronts exist, a configured OpenCode reader may delegate one or more read-only tasks under `quality-first-subA` using nested types `explore` or `general`; the relay adds this optional English hint to every reader task. Choose the count by the independent fronts, do not cap it at one, delegate only explicit uncovered subfronts supplied by the parent, never re-delegate the assigned front, and allow at most one nested level after the main fan-out. Wait for and integrate all results, and keep simple serial work local. The writer remains `task: deny`.
 
 Modes:
 
@@ -105,24 +105,28 @@ Roles:
   `AGENT_TYPE=opencode`, `AGENT_MODEL=opencode-go/deepseek-v4-flash`,
   `AGENT_EFFORT=max`, `AGENT_PERMISSION=yolo` coarse launch profile, and
   explicit `run_agent`, `start_agent`, `get_agent_status`,
-  `get_agent_result`, and `cancel_agent` tools. Short work may use
-  `run_agent`; uncertain or long work uses `JOB_OPERATION=start` and stores
-  the returned `job_id`. The OpenCode `worker` is always durable-first:
-  omitted operation selects `start_agent`, while `JOB_OPERATION=run` is
-  blocked for that target. New relays use `JOB_OPERATION=status|result` with
-  `JOB_ID=<opaque id>`; a status timeout or `freshness=stale` is not proof of
-  failure. Do not poll continuously or impose a deadline: use `status` only
-  under a concrete suspicion that the MCP, worker, or heartbeat may have
+  `get_agent_result`, and `cancel_agent` tools. Every target, including
+  `worker`, uses synchronous `run_agent` by default and keeps the MCP call open
+  until the final response. `JOB_OPERATION=start` is an explicit
+  detached-background exception and returns an accepted, non-terminal `job_id`.
+  New relays use `JOB_OPERATION=status|result` with `JOB_ID=<opaque id>` only
+  for that detached job; current status tools do not inspect an active
+  synchronous `run_agent` call. A status timeout or `freshness=stale` is not
+  proof of failure. Do not poll continuously or impose a deadline: use status
+  only under a concrete suspicion that the MCP, worker, or heartbeat may have
   failed. Never accelerate, shorten, summarize, cancel, or relaunch a
-  non-terminal job merely because it is slow. Read the result after
+  non-terminal job merely because it is slow. Read a detached result after
   `result_available=true` or a terminal state. `JOB_OPERATION=cancel` is
-  reserved for explicit cancellation. The MCP has a bounded request timeout,
+  reserved for explicit cancellation. The MCP has a long host request timeout,
   while detached jobs use
   `JOB_EXECUTION_TIMEOUT_MS=0` and a Windows
   `PATH` entry for the directory containing `opencode.exe`.
 - `AGENT_EFFORT` is forwarded to OpenCode as the provider-specific
   `--variant`. Validate that `max` is accepted by the selected model before
   treating the route as ready; do not degrade silently to another variant.
+- The relay presents a textual MCP `result` as Markdown and keeps standard
+  MCP status fields in a separate metadata block. If no textual result can be
+  extracted, it uses a fenced raw-JSON fallback so the payload remains visible.
 - Use this route for any configured OpenCode reader or claim-map writer
   sidecar. Read-only agents may use `task` and `external_directory`; their
   definitions must deny `edit` and `bash`, while `question`, `skill`,

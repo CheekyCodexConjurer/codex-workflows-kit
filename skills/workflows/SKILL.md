@@ -95,7 +95,9 @@ internal default is `internal_subagent_backend=opencode` with
 fresh native relay with `multi_agent_v1__spawn_agent` and
 `agent_type=relay`; it receives `{target_agent,cwd,task}`, calls the
 configured `opencode_worker` MCP without a session identifier, and returns
-the original response through the native sub-agent conversation. Completed
+the MCP `result` as readable Markdown plus a separate metadata block through
+the native sub-agent conversation. If the payload has no textual `result`, the
+relay uses a fenced raw-JSON fallback. Completed
 relays are not reused for later prompts, so each prompt gets an isolated MCP
 conversation.
 For image-bearing requests, when the host supports it, the native spawn may carry
@@ -117,20 +119,30 @@ need to add a provider or transport flag.
 Custom-role spawn calls still omit `fork_context`, `model`, and
 `reasoning_effort`.
 
-For a sidecar that may outlive one MCP call, use the durable job surface through
-the relay: send `JOB_OPERATION=start`, retain the returned `job_id`, and use a
-fresh relay with `JOB_OPERATION=status|result` plus `JOB_ID=<opaque id>`. An
-OpenCode `worker` is always durable-first: omitted operation selects
-`start_agent` for that target, while `JOB_OPERATION=run` is blocked instead of
-exposing the writer to the synchronous MCP timeout. A
-status-call timeout or `freshness=stale` is polling uncertainty, not proof of
-failure and not a reason to relaunch. Do not poll continuously or impose a
-deadline: consult `status` only under a concrete suspicion that the MCP,
-worker, or heartbeat may have failed. Never accelerate, shorten, summarize,
-cancel, or relaunch a non-terminal job merely because it is slow. Read the
-result only after `result_available=true` or a terminal state. Use
-`JOB_OPERATION=cancel` only after an explicit cancellation decision; short
-work may continue using `run_agent`.
+Every sidecar uses the synchronous `run_agent` route by default, including an
+OpenCode `worker`: the relay keeps its MCP tool call open until the final
+response arrives. `JOB_OPERATION=start` is an explicit detached-background
+exception only. Its `job_id` is non-terminal, so its relay result must be
+`RELAY_STATUS=accepted` and never be integrated as the worker's final answer.
+Fresh status/result relays use `JOB_OPERATION=status|result` plus
+`JOB_ID=<opaque id>` only for such detached jobs. The current MCP does not
+expose status for an active synchronous `run_agent` call; never invent a job ID
+or claim that a detached-job status proves one is alive. A status-call timeout
+or `freshness=stale` is polling uncertainty, not proof of failure and not a
+reason to relaunch. Do not poll continuously or impose a deadline: consult
+status only under a concrete suspicion that the MCP, worker, or heartbeat may
+have failed. Never accelerate, shorten, summarize, cancel, or relaunch a
+non-terminal job merely because it is slow. Read a detached result only after
+`result_available=true` or a terminal state. Use `JOB_OPERATION=cancel` only
+after an explicit cancellation decision.
+
+For reader targets (`scout`, `researcher`, and `reviewer`), the relay adds an
+English optional-delegation hint to every forwarded task: when two or more
+independent uncovered fronts exist, the reader may use OpenCode's `task` tool
+to launch one read-only nested subtask per front in parallel when supported.
+Simple or serial work stays local, nested results must be integrated, and the
+assigned front is never re-delegated. The `worker` target receives no hint and
+keeps nested `task` denied.
 
 If the internal policy is explicitly changed to
 `internal_subagent_backend=native`, use the native custom-role profiles for all

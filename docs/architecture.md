@@ -62,7 +62,7 @@ em variantes de esforco (`low`, `high`, `xhigh`, `max`):
 
 | Perfil | Sandbox | Papel |
 |---|---|---|
-| `relay` | read-only | transporte nativo do sidecar; chama o MCP `opencode_worker` e repassa a resposta |
+| `relay` | read-only | transporte nativo do sidecar; chama o MCP `opencode_worker`, renderiza `result` em Markdown e repassa metadados |
 | `scout` | read-only | exploracao rapida de codigo |
 | `researcher` | read-only | pesquisa profunda com rigor de fontes |
 | `reviewer` | read-only | revisao independente |
@@ -74,7 +74,8 @@ Definicoes em `agents/opencode/`, sincronizadas pelo instalador para
 `~/.codex/opencode-agents`:
 
 - readers (`scout`, `researcher`, `reviewer`): `edit: deny`, `bash: deny`,
-  `task: allow`, `external_directory: allow`;
+  `task: allow`, `external_directory: allow`; delegacao nested e opcional
+  quando ha frentes independentes, com no maximo um nivel;
 - writer (`worker`): `edit: allow`, `bash: deny`, `task: deny`,
   `external_directory: deny`, `webfetch: deny`, `websearch: deny` — usado
   apenas com claim-map em worktree isolada.
@@ -120,7 +121,8 @@ O instalador faz backup do arquivo existente antes de sobrescrever.
    `{target_agent, cwd, task}`; quando o host suporta anexos multimodais, os anexos reais seguem
    como itens nativos fora do texto. O relay le esses itens, cria um
    `[VISUAL_PACKET v1]` textual sem paths/bytes e chama o MCP `opencode_worker`
-   apenas com texto, modelo/variante configurados, repassando a resposta.
+   apenas com texto, modelo/variante configurados, renderizando o `result` em
+   Markdown e mantendo metadados do MCP em bloco separado.
 5. Readers preservam no-edit efetivo; writers usam o OpenCode `worker` com
    claim-map, worktree isolada e baseline registrado — habilitado por padrao
    sob `internal_subagent_policy=aggressive`, sem limite numerico artificial.
@@ -195,10 +197,11 @@ contrato de validacao.
   manutencao, solicitado pelo usuario.
 - Indisponibilidade do relay/OpenCode preserva o gate como bloqueado; nunca
   ha fallback silencioso de provedor, modelo, esforco ou permissao.
-- O alvo OpenCode `worker` usa sempre o job duravel `start_agent`; `run_agent`
-  fica reservado para readers rapidos. Um `JOB_OPERATION=run` para writer deve
-  permanecer bloqueado, com motivo explicito, para nao confundir timeout
-  sincrono com falha do worker.
+- Todo alvo OpenCode, inclusive `worker`, usa `run_agent` sincrono por padrao:
+  a chamada MCP permanece aberta ate a resposta final. `JOB_OPERATION=start` e
+  excecao explicita para job destacado; seu `job_id` aceito nao e resposta final.
+  Os status tools atuais consultam somente jobs destacados e nao devem ser
+  apresentados como status de uma chamada `run_agent` sincrona ativa.
 - Quando o host suporta anexos multimodais, imagens seguem somente como itens
   nativos ate o relay. O MCP recebe um `[VISUAL_PACKET v1]` textual, sem path,
   data URL, base64 ou bytes de imagem; falha na leitura visual permanece

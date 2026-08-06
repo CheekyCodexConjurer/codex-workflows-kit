@@ -88,9 +88,15 @@ foreach ($instruction in 'Every read-only spawn must select the exact custom rol
     }
 }
 
-foreach ($instruction in 'Long-running jobs have no urgency','do not poll continuously','concrete suspicion','Never accelerate','wait for its complete result','`cancel` requires explicit cancellation') {
+foreach ($instruction in 'Long-running work has no urgency','synchronous `run_agent` by default','complete result returns','explicit detached-background exception','do not poll continuously','concrete suspicion','never invent a job ID','pending synchronous call has no `job_id` or detached recovery handle','host/MCP error before that is reported as error and retried only once when transient','Never accelerate','`cancel` requires explicit cancellation') {
     if ($agentsMdText -notmatch [regex]::Escape($instruction)) {
         throw "AGENTS.md is missing long-running patience guidance: $instruction"
+    }
+}
+
+foreach ($instruction in 'Reader tasks receive this optional English delegation hint:','Keep the task local when delegation would not improve quality, or when the task explicitly forbids it.','The relay renders a textual MCP `result` as Markdown and keeps status/metadata separate') {
+    if ($agentsMdText -notmatch [regex]::Escape($instruction)) {
+        throw "AGENTS.md is missing reader delegation/presentation guidance: $instruction"
     }
 }
 
@@ -205,7 +211,7 @@ foreach ($file in $opencodeReaderAgentFiles) {
             throw "OpenCode agent $file is missing nested-read-only guardrail: $fragment"
         }
     }
-    foreach ($fragment in 'quality-first default', 'even without a wall-clock gain', 'For simple serial tasks, do not delegate', 'Nested delegation is bounded to one level', 'only explicit uncovered subfronts', 'never re-delegate the assigned front') {
+    foreach ($fragment in 'quality-first default', 'Optional delegation', 'two or more independent', 'task tool', 'run them in parallel when supported', 'Do not delegate simple or serial work', 'Wait for and', 'Never re-delegate the assigned front', 'Respect an explicit no-sub-agent instruction', 'Nested delegation is bounded to one level', 'only explicit uncovered subfronts') {
         if ($textNormalized -notmatch [regex]::Escape($fragment)) {
             throw "OpenCode agent $file is missing quality-first delegation guidance: $fragment"
         }
@@ -315,7 +321,7 @@ $scout = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'agents\scout.toml')
 $researcher = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'agents\researcher.toml')
 $relay = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'agents\relay.toml')
 $relayNormalized = $relay -replace '\s+', ' '
-$relayTransportInstructions = @('mcp__opencode_worker','run_agent','start_agent','get_agent_status','get_agent_result','cancel_agent','JOB_OPERATION=run|start|status|result|cancel','JOB_ID=<opaque id>','status timeout','freshness=stale','poll continuously','concrete suspicion','prompt shortening','early-result requests','result_available=true','only for an explicit cancellation decision','RELAY_STATUS=success|blocked|error','RELAY_ROUTE=read-only|writer','RELAY_VISUAL=none|success|blocked','RELAY_REASON=<bounded reason when blocked or error; omit on success>','RELAY_RESPONSE_BEGIN','[VISUAL_PACKET v1]','source ids','approximate regions','type=image','type=local_image','image paths','path-only request','raw image','absolute local filesystem paths','base64-looking strings','even when visible','target_agent','worker','durable-first','`start_agent` for `worker`','`JOB_OPERATION=run` is reader-','RELAY_REASON=worker-requires-durable-start','`cwd` must be the absolute','WRITER_WORKTREE=<cwd>','WRITER_BASELINE=<full-commit>','route pairing is fixed','claim-map','isolated worktree','never fall back silently','built-in `tool_search` query','known functions','This is deterministic activation, not route discovery','Do not list tools or agents')
+$relayTransportInstructions = @('mcp__opencode_worker','run_agent','start_agent','get_agent_status','get_agent_result','cancel_agent','JOB_OPERATION=run|start|status|result|cancel','JOB_ID=<opaque id>','status timeout','freshness=stale','poll continuously','concrete suspicion','prompt shortening','early-result requests','result_available=true','only for an explicit cancellation decision','RELAY_STATUS=success|accepted|blocked|error','RELAY_TERMINAL=yes|no|unknown','RELAY_ROUTE=read-only|writer','RELAY_VISUAL=none|success|blocked','RELAY_RESPONSE_FORMAT=markdown|raw-json','RELAY_REASON=<bounded reason when blocked or error; omit on success or accepted>','RELAY_RESPONSE_BEGIN','RELAY_METADATA_BEGIN','RELAY_METADATA_END','render that field as the main','readable key/value','exact original payload','`text` block','Optional delegation','two or more independent, uncovered fronts','task tool','run them in parallel when supported','Do not delegate simple or serial work','Wait for and integrate every nested result','worker`, whose nested `task` permission is denied','[VISUAL_PACKET v1]','source ids','approximate regions','type=image','type=local_image','image paths','path-only request','raw image','absolute local filesystem paths','base64-looking strings','even when visible','target_agent','worker','Synchronous `run` is','`run_agent` for every allowed target, including `worker`','pending synchronous call has no `job_id` or detached recovery handle','host or MCP call itself returns an error before that','RELAY_STATUS=error','single fresh retry when the error is transient','`JOB_OPERATION=start` is an explicit detached-background request only','never fabricate a job ID','RELAY_STATUS=accepted','RELAY_TERMINAL=no','`cwd` must be the absolute','WRITER_WORKTREE=<cwd>','WRITER_BASELINE=<full-commit>','route pairing is fixed','claim-map','isolated worktree','never fall back silently','built-in `tool_search` query','known functions','This is deterministic activation, not route discovery','Do not list tools or agents')
 $worker = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'agents/worker.toml')
 $reviewer = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'agents/reviewer.toml')
 $opencodeWorker = Get-Content -Raw -Encoding UTF8 (Join-Path $opencodeAgentsRoot 'worker.md')
@@ -590,19 +596,19 @@ foreach ($surface in @(
     }
 }
 
-foreach ($instruction in 'internal_subagent_backend=opencode','internal_subagent_backend=native','internal_subagent_transport=native_relay','opencode_worker','opencode-go/deepseek-v4-flash','AGENT_PERMISSION=yolo','task','external_directory','read-only','writer','claim-map','isolated worktree','WRITER_WORKTREE','WRITER_BASELINE','durable-first','JOB_OPERATION=run` is','blocked','native','do not silently fall back') {
+foreach ($instruction in 'internal_subagent_backend=opencode','internal_subagent_backend=native','internal_subagent_transport=native_relay','opencode_worker','opencode-go/deepseek-v4-flash','AGENT_PERMISSION=yolo','task','external_directory','read-only','writer','claim-map','isolated worktree','WRITER_WORKTREE','WRITER_BASELINE','synchronous `run_agent` by default','detached-background exception','current status tools do not inspect an active','blocked','native','do not silently fall back') {
     if ($subagents -notmatch [regex]::Escape($instruction)) {
         throw "Subagents reference is missing internal-backend contract: $instruction"
     }
 }
 
-foreach ($instruction in 'internal_subagent_backend=opencode','internal_subagent_backend=native','internal_subagent_transport=native_relay','native `relay`','opencode_worker','opencode-go/deepseek-v4-flash','variant=max','OpenCode','worker','claim-map','cwd','external_directory','always use `start_agent`','JOB_OPERATION=run` for a','do not silently fall back') {
+foreach ($instruction in 'internal_subagent_backend=opencode','internal_subagent_backend=native','internal_subagent_transport=native_relay','native `relay`','opencode_worker','opencode-go/deepseek-v4-flash','variant=max','OpenCode','worker','claim-map','cwd','external_directory','synchronous `run_agent` by default','detached-background mode','current MCP status tools do not observe','do not silently fall back') {
     if ($modeMatrixNormalized -notmatch [regex]::Escape($instruction)) {
         throw "Mode matrix is missing internal-backend contract: $instruction"
     }
 }
 
-foreach ($instruction in 'internal_subagent_backend=opencode','internal_subagent_backend=native','internal_subagent_transport=native_relay','agents/relay.toml','not part of the user-facing compact syntax','OpenCode `worker`','`worker` profile is only an explicit','AGENT_PERMISSION=yolo','task','external_directory','edit','bash','isolated worktree','WRITER_WORKTREE=<cwd>','WRITER_BASELINE=<full-commit>','durable-first','RELAY_REASON=worker-requires-durable-start','preserve the required gate as blocked','sub-agent=opencode') {
+foreach ($instruction in 'internal_subagent_backend=opencode','internal_subagent_backend=native','internal_subagent_transport=native_relay','agents/relay.toml','not part of the user-facing compact syntax','OpenCode `worker`','`worker` profile is only an explicit','AGENT_PERMISSION=yolo','task','external_directory','edit','bash','isolated worktree','WRITER_WORKTREE=<cwd>','WRITER_BASELINE=<full-commit>','`run_agent`: its MCP call stays open','RELAY_STATUS=accepted','RELAY_TERMINAL=no','preserve the required gate as blocked','sub-agent=opencode') {
     if ($backendPolicy -notmatch [regex]::Escape($instruction)) {
         throw "Backend policy is missing internal-route contract: $instruction"
     }
@@ -679,7 +685,7 @@ $tomlCodexHome = $codexHome.Replace('\', '\\')
 $expectedWorkerCommand = 'command = "' + $tomlCodexHome + '\\bin\\opencode-worker.cmd"'
 $expectedAgentsDir = 'AGENTS_DIR = "' + $tomlCodexHome + '\\opencode-agents"'
 $expectedJobsDir = 'JOB_DIR = "' + $tomlCodexHome + '\\opencode-jobs"'
-foreach ($instruction in 'opencode_worker','native','relay','AGENT_TYPE = "opencode"','AGENT_MODEL = "opencode-go/deepseek-v4-flash"','AGENT_EFFORT = "max"','AGENT_PERMISSION = "yolo"','SESSION_ENABLED = "false"','github:CheekyCodexConjurer/sub-agents-mcp#v0.13.1','start_agent','get_agent_status','get_agent_result','cancel_agent','JOB_EXECUTION_TIMEOUT_MS = "0"','opencode-jobs','writers OpenCode usam sempre `start_agent`','JOB_OPERATION=run` para `worker` fica bloqueado','AGENTS_DIR = "%CODEX_HOME%\\opencode-agents"','PATH = "<gerado pelo instalador a partir do PATH do Windows>"','opencode run --model opencode-go/deepseek-v4-flash --variant max "Responda somente OK"') {
+foreach ($instruction in 'opencode_worker','native','relay','AGENT_TYPE = "opencode"','AGENT_MODEL = "opencode-go/deepseek-v4-flash"','AGENT_EFFORT = "max"','AGENT_PERMISSION = "yolo"','SESSION_ENABLED = "false"','github:CheekyCodexConjurer/sub-agents-mcp#v0.13.1','run_agent','start_agent','get_agent_status','get_agent_result','cancel_agent','tool_timeout_sec = 86400','EXECUTION_TIMEOUT_MS = "0"','JOB_EXECUTION_TIMEOUT_MS = "0"','opencode-jobs','usa `run_agent` síncrono por padrão','RELAY_STATUS=accepted','RELAY_TERMINAL=no','AGENTS_DIR = "%CODEX_HOME%\\opencode-agents"','PATH = "<gerado pelo instalador a partir do PATH do Windows>"','opencode run --model opencode-go/deepseek-v4-flash --variant max "Responda somente OK"') {
     if ($readmeText -notmatch [regex]::Escape($instruction)) {
         throw "README is missing OpenCode activation evidence: $instruction"
     }
@@ -703,7 +709,7 @@ if (Test-Path -LiteralPath $codexConfigPath) {
     }
 
     $workerConfigText = $workerConfigMatch.Groups['body'].Value
-    foreach ($instruction in $expectedWorkerCommand, 'args = ["-y", "github:CheekyCodexConjurer/sub-agents-mcp#v0.13.1"]', 'startup_timeout_sec = 30', 'tool_timeout_sec = 60', 'enabled_tools = ["run_agent", "start_agent", "get_agent_status", "get_agent_result", "cancel_agent"]') {
+    foreach ($instruction in $expectedWorkerCommand, 'args = ["-y", "github:CheekyCodexConjurer/sub-agents-mcp#v0.13.1"]', 'startup_timeout_sec = 30', 'tool_timeout_sec = 86400', 'enabled_tools = ["run_agent", "start_agent", "get_agent_status", "get_agent_result", "cancel_agent"]') {
         if ($workerConfigText -notmatch [regex]::Escape($instruction)) {
             throw "Configured opencode_worker is missing runtime wiring: $instruction"
         }
@@ -719,13 +725,16 @@ if (Test-Path -LiteralPath $codexConfigPath) {
     }
 
     $workerEnvText = $workerEnvMatch.Groups['body'].Value
-    foreach ($instruction in 'SESSION_ENABLED = "false"', $expectedJobsDir, 'JOB_EXECUTION_TIMEOUT_MS = "0"', 'JOB_HEARTBEAT_INTERVAL_MS = "5000"', 'JOB_STALE_AFTER_MS = "30000"') {
+    foreach ($instruction in 'SESSION_ENABLED = "false"', 'EXECUTION_TIMEOUT_MS = "0"', $expectedJobsDir, 'JOB_EXECUTION_TIMEOUT_MS = "0"', 'JOB_HEARTBEAT_INTERVAL_MS = "5000"', 'JOB_STALE_AFTER_MS = "30000"') {
         if ($workerEnvText -notmatch [regex]::Escape($instruction)) {
             throw "Configured opencode_worker must disable session persistence: $instruction"
         }
     }
     if ($workerEnvText -match '(?m)^SESSION_(DIR|RETENTION_DAYS)\s*=') {
         throw 'Configured opencode_worker must not define a session directory or retention setting.'
+    }
+    if ($workerEnvText -match '(?im)^Chrome\s*=') {
+        throw 'Configured opencode_worker.env must not contain Chrome; Chrome belongs outside this environment table.'
     }
 
     if ($codexConfigText -cmatch '(?m)^\[mcp_servers\.opencode_hybrid_worker(?:\.|\])') {
@@ -816,7 +825,7 @@ if (Test-Path -LiteralPath $installedNativeAgentsRoot -PathType Container) {
             throw "Installed native relay profile is missing transport contract: $instruction"
         }
     }
-    foreach ($instruction in 'AGENT_MODEL = "opencode-go/deepseek-v4-flash"', 'AGENT_EFFORT = "max"', 'enabled_tools = ["run_agent", "start_agent", "get_agent_status", "get_agent_result", "cancel_agent"]', 'JOB_EXECUTION_TIMEOUT_MS = "0"') {
+    foreach ($instruction in 'AGENT_MODEL = "opencode-go/deepseek-v4-flash"', 'AGENT_EFFORT = "max"', 'tool_timeout_sec = 86400', 'enabled_tools = ["run_agent", "start_agent", "get_agent_status", "get_agent_result", "cancel_agent"]', 'EXECUTION_TIMEOUT_MS = "0"', 'JOB_EXECUTION_TIMEOUT_MS = "0"') {
         if ($installedRelay -notmatch [regex]::Escape($instruction)) {
             throw "Installed native relay profile is missing MCP wiring: $instruction"
         }
@@ -846,12 +855,13 @@ foreach ($instruction in $relayTransportInstructions) {
         throw "Native relay profile is missing transport contract: $instruction"
     }
 }
-if ($relayNormalized -match [regex]::Escape('Without that line, use `run_agent` for backward compatibility.')) {
-    throw 'Native relay profile still defaults every target to synchronous run_agent.'
+if ($relayNormalized -match [regex]::Escape('Without that line, use `start_agent` for `worker`')) {
+    throw 'Native relay profile still defaults a worker to detached start_agent.'
 }
-$workerDurableDispatch = [regex]::Match($relayNormalized, 'Without that line, use `start_agent` for `worker`.*?`JOB_OPERATION=run` is reader-\s*only: when the target is `worker`, return.*?`RELAY_REASON=worker-requires-durable-start`')
-if (!$workerDurableDispatch.Success) {
-    throw 'Native relay profile is missing the worker durable-first dispatch gate.'
+foreach ($instruction in 'Without that line, use `run_agent` for every allowed target, including `worker`.','`JOB_OPERATION=start` is an explicit detached-background request only','current MCP status/result tools inspect detached jobs only','For a completed synchronous `run`, return `RELAY_STATUS=success` and','`RELAY_STATUS=accepted` and `RELAY_TERMINAL=no`','Never label an accepted job as success.') {
+    if ($relayNormalized -notmatch [regex]::Escape($instruction)) {
+        throw "Native relay profile is missing the synchronous lifecycle contract: $instruction"
+    }
 }
 foreach ($instruction in 'the MCP function can be deferred','relay''s one exact','`tool_search`','a missing result remains blocked') {
     if (($backendPolicy -replace '\s+', ' ') -notmatch [regex]::Escape($instruction)) {

@@ -46,6 +46,18 @@ remains the owner of review, tests, and integration.
 The route pairing is fixed: `worker` returns `RELAY_ROUTE=writer`; every other
 allowed target returns `RELAY_ROUTE=read-only`.
 
+For `scout`, `researcher`, and `reviewer`, prepend this optional English hint to
+the forwarded task without changing the user's task:
+
+"Optional delegation: if this task contains two or more independent, uncovered
+fronts, you may use OpenCode's task tool to delegate one read-only nested
+subtask per front and run them in parallel when supported. Do not delegate
+simple or serial work. Wait for and integrate every nested result before
+answering. Never re-delegate the assigned front. Keep the task local when
+delegation would not improve quality, or when the task explicitly forbids it."
+
+Do not prepend this hint for `worker`, whose nested `task` permission is denied.
+
 Desktop can defer MCP tools from a new relay. As the first operation, issue
 exactly one built-in `tool_search` query for the known functions
 `run_agent start_agent get_agent_status get_agent_result cancel_agent`, then
@@ -57,47 +69,82 @@ the exposure error; do not substitute a different connector.
 
 The parent may prefix the bounded task with one control line:
 `JOB_OPERATION=run|start|status|result|cancel`. Without that line, use
-`start_agent` for `worker` and `run_agent` for the other targets. A `worker`
-request is durable-first because a writer may outlive the synchronous MCP
-call; return its accepted `job_id` unchanged. `JOB_OPERATION=run` is reader-
-only: when the target is `worker`, return
-`RELAY_STATUS=blocked` with
-`RELAY_REASON=worker-requires-durable-start` and do not call `run_agent`.
-For `run` on a non-worker target, call `run_agent` with
-`agent=<target_agent>`, `cwd=<cwd>`, `prompt=<forwarded_task>`, and omit
-`session_id`. For `start`, call `start_agent` with the same `agent`, `cwd`, and
-prompt, optionally passing a parent-provided `idempotency_key`; return the
-accepted `job_id` unchanged. For `status`, `result`, or `cancel`, require a
-parent-provided `JOB_ID=<opaque id>` and call only the matching
-`get_agent_status`, `get_agent_result`, or `cancel_agent` function with
-`job_id=<opaque id>`. A status timeout or `freshness=stale` is not proof of
-failure; preserve the returned state. Patience contract: after `start`, do not
-poll continuously and do not impose a deadline. Call `get_agent_status` only
-when the parent has a concrete suspicion of an MCP, worker, or heartbeat
-problem. A status call is diagnostic only; it never authorizes acceleration,
-prompt shortening, early-result requests, cancellation, or relaunch. While
-the job is non-terminal, wait for the complete result. Call `get_agent_result`
-only after `result_available=true` or a terminal state, and call
-`cancel_agent` only for an explicit cancellation decision. Forward only the
-task text to the MCP; control lines may be removed from the prompt, and native
-image items and their paths must never cross this boundary.
+`run_agent` for every allowed target, including `worker`. Synchronous `run` is
+the default: keep the MCP tool call open until OpenCode has returned its final
+response. Do not treat elapsed time as failure and never request early output.
+`JOB_OPERATION=start` is an explicit detached-background request only; it
+returns an accepted `job_id`, never a final answer. For `run` on any allowed
+target, call `run_agent` with `agent=<target_agent>`, `cwd=<cwd>`,
+`prompt=<forwarded_task>`, and omit `session_id`. For `start`, call
+`start_agent` with the same `agent`, `cwd`, and prompt, optionally passing a
+parent-provided `idempotency_key`; return the accepted `job_id` unchanged. For
+`status`, `result`, or `cancel`, require a parent-provided
+`JOB_ID=<opaque id>` and call only the matching `get_agent_status`,
+`get_agent_result`, or `cancel_agent` function with `job_id=<opaque id>`. The
+current MCP status/result tools inspect detached jobs only; never fabricate a
+job ID or claim that they observe an active synchronous `run_agent` call. A
+status timeout or `freshness=stale` is not proof of failure; preserve the
+returned state. Patience contract: after `start`, do not poll continuously and
+do not impose a deadline. Call `get_agent_status` only when the parent has a
+concrete suspicion of an MCP, worker, or heartbeat problem. A status call is
+diagnostic only; it never authorizes acceleration, prompt shortening,
+early-result requests, cancellation, or relaunch. While the job is
+non-terminal, wait for the complete result. Call `get_agent_result` only after
+`result_available=true` or a terminal state, and call `cancel_agent` only for
+an explicit cancellation decision. For reader targets, forward the original
+task with the optional delegation hint prepended. For `worker`, forward the
+original task unchanged. Control lines may be removed from the prompt, and
+native image items and their paths must never cross this boundary.
+
+A pending synchronous call has no `job_id` or detached recovery handle. Its
+normal resolution is the final response; if the host or MCP call itself returns
+an error before that, report `RELAY_STATUS=error` and allow only the single
+fresh retry when the error is transient. Do not convert a slow synchronous call
+into a status/cancel lookup or relaunch merely because it is still pending.
+
+For a completed synchronous `run`, return `RELAY_STATUS=success` and
+`RELAY_TERMINAL=yes` only after the final MCP response arrives. For `start`,
+return `RELAY_STATUS=accepted` and `RELAY_TERMINAL=no`. For `status` or
+`result`, use `RELAY_TERMINAL=yes` only when the MCP payload explicitly reports
+a terminal job state; use `no` for a confirmed non-terminal state and `unknown`
+for an error or unparseable state. Never label an accepted job as success.
 Use the selected MCP route only. Do not replace it with a native agent, a
 direct OpenCode CLI call, or an invented answer; the selected route never falls
 back to a native or direct-CLI provider. Never fall back silently. A single
 fresh retry is allowed only for a transient MCP launch/stream error.
 
-Preserve the MCP response rather than paraphrasing away findings, evidence,
-paths, status, model, variant, or errors. Return this compact envelope:
+Preserve the MCP response's facts, provenance, status, errors, and result
+content, but add a presentation layer for the parent. When the MCP response is
+valid JSON with a string `result` field, render that field as the main
+human-readable Markdown response without wrapping it in JSON or adding a code
+fence. Preserve Markdown already present in `result`; do not summarize, invent,
+or omit content. Render standard MCP metadata separately as readable key/value
+lines: `agent`, `status`, `exit_code`, `execution_time`, `request_id`, and any
+`job_id` or `result_available` field that is present. Put other fields in a
+small `Additional MCP fields` section instead of dropping them.
 
-RELAY_STATUS=success|blocked|error
+If the response cannot be parsed or has no string `result` field, set
+`RELAY_RESPONSE_FORMAT=raw-json` and put the exact original payload in a fenced
+`text` block. Otherwise set `RELAY_RESPONSE_FORMAT=markdown`. This is the only
+normal raw-JSON fallback; do not display a one-line JSON object when a textual
+result is available.
+
+Return this compact envelope:
+
+RELAY_STATUS=success|accepted|blocked|error
+RELAY_TERMINAL=yes|no|unknown
 RELAY_TARGET=<agent>
 RELAY_BACKEND=opencode
 RELAY_ROUTE=read-only|writer
 RELAY_VISUAL=none|success|blocked
-RELAY_REASON=<bounded reason when blocked or error; omit on success>
+RELAY_RESPONSE_FORMAT=markdown|raw-json
+RELAY_REASON=<bounded reason when blocked or error; omit on success or accepted>
 RELAY_RESPONSE_BEGIN
-<original MCP response or exact error>
+<rendered result Markdown or exact fenced raw-payload fallback>
 RELAY_RESPONSE_END
+RELAY_METADATA_BEGIN
+<readable MCP metadata and any additional fields>
+RELAY_METADATA_END
 
 The parent owns synthesis and final quality. Do not spawn another native relay
 from inside this transport.
@@ -107,7 +154,7 @@ from inside this transport.
 command = "__OPENCODE_WORKER_COMMAND__"
 args = ["-y", "github:CheekyCodexConjurer/sub-agents-mcp#v0.13.1"]
 startup_timeout_sec = 30
-tool_timeout_sec = 60
+tool_timeout_sec = 86400
 enabled = true
 enabled_tools = ["run_agent", "start_agent", "get_agent_status", "get_agent_result", "cancel_agent"]
 
@@ -117,7 +164,7 @@ AGENT_TYPE = "opencode"
 AGENT_MODEL = "opencode-go/deepseek-v4-flash"
 AGENT_EFFORT = "max"
 AGENT_PERMISSION = "yolo"
-EXECUTION_TIMEOUT_MS = "600000"
+EXECUTION_TIMEOUT_MS = "0"
 JOB_DIR = "__OPENCODE_JOBS_DIR__"
 JOB_EXECUTION_TIMEOUT_MS = "0"
 JOB_HEARTBEAT_INTERVAL_MS = "5000"

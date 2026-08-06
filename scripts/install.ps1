@@ -372,7 +372,7 @@ $begin
 command = $(ConvertTo-TomlString (Join-Path $CodexHome 'bin\opencode-worker.cmd'))
 args = ["-y", "github:CheekyCodexConjurer/sub-agents-mcp#v0.13.1"]
 startup_timeout_sec = 30
-tool_timeout_sec = 60
+tool_timeout_sec = 86400
 enabled = true
 enabled_tools = ["run_agent", "start_agent", "get_agent_status", "get_agent_result", "cancel_agent"]
 
@@ -382,7 +382,7 @@ AGENT_TYPE = "opencode"
 AGENT_MODEL = "opencode-go/deepseek-v4-flash"
 AGENT_EFFORT = "max"
 AGENT_PERMISSION = "yolo"
-EXECUTION_TIMEOUT_MS = "600000"
+EXECUTION_TIMEOUT_MS = "0"
 JOB_DIR = $(ConvertTo-TomlString $opencodeJobsDest)
 JOB_EXECUTION_TIMEOUT_MS = "0"
 JOB_HEARTBEAT_INTERVAL_MS = "5000"

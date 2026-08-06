@@ -210,20 +210,24 @@ O backend interno padrão é `internal_subagent_backend=opencode` com transporte
 `internal_subagent_transport=native_relay`, definido em
 `skills/workflows/references/backend-policy.md`. Você não precisa incluir
 uma flag no prompt. Quando o modo precisar de um sidecar, o chat principal abre
-um perfil nativo `relay` novo; ele chama o MCP `opencode_worker`, preserva a
-resposta e a repassa como resposta de sub-agent nativo. Para readers e tarefas
-rápidas, usa `run_agent`; writers OpenCode usam sempre `start_agent` e mantêm o
-`job_id` para consultar `get_agent_status`/`get_agent_result` em novos relays.
-Um pedido `JOB_OPERATION=run` para `worker` fica bloqueado, em vez de expor o
-writer ao timeout síncrono.
+um perfil nativo `relay` novo; ele chama o MCP `opencode_worker`, apresenta o
+campo `result` em Markdown e repassa metadados estruturados como resposta de
+sub-agent nativo. JSON bruto só aparece quando não há resultado textual
+extraível. Todo alvo, inclusive o
+writer OpenCode, usa `run_agent` síncrono por padrão: a chamada MCP permanece
+aberta até a resposta final. `start_agent` é uma exceção explícita para job
+destacado. Seu `job_id` aceito não é resposta final, e o relay o marca como
+`RELAY_STATUS=accepted` e `RELAY_TERMINAL=no`.
 Não há polling contínuo nem prazo: o status só é consultado sob suspeita
-concreta de falha do MCP, worker ou heartbeat. Lentidão nunca autoriza
-acelerar, encurtar, resumir, cancelar ou relançar o job. O resultado final deve
-ser aguardado; `get_agent_result` só é lido quando `result_available=true` ou o
+concreta de falha do MCP, worker ou heartbeat para um `job_id` destacado.
+Lentidão nunca autoriza acelerar, encurtar, resumir, cancelar ou relançar o
+job. O MCP atual não expõe status de uma chamada `run_agent` síncrona em curso;
+não se inventa `job_id` nem se usa o status de outro job como prova. Para jobs
+destacados, `get_agent_result` só é lido quando `result_available=true` ou o
 job está terminal. `cancel_agent` só é usado quando o cancelamento é explícito.
 O relay continua separado do chat principal e não edita o próprio contexto.
-Cada chamada usa uma conversa MCP isolada; o job, porém, permanece consultável
-no armazenamento durável até terminar.
+Cada chamada usa uma conversa MCP isolada; jobs destacados permanecem
+consultáveis no armazenamento durável até terminar.
 
 Quando o host suporta anexos multimodais, o spawn nativo carrega os anexos reais como
 itens estruturados (`type=image` ou `type=local_image`); os caminhos não entram
@@ -243,8 +247,9 @@ aguarde um agente opcional terminar; depois repita o mesmo papel. Nunca feche
 agentes ativos, aguardando ou obrigatórios; sem recuperação segura, reporte
 bloqueio explícito.
 
-Todos os readers OpenCode configurados podem chamar outros sub-agents e ler
-diretórios externos. A escrita continua bloqueada por `edit: deny` e
+Todos os readers OpenCode configurados podem, opcionalmente, chamar outros
+sub-agents quando houver duas ou mais frentes independentes e descobertas, e
+ler diretórios externos. A escrita continua bloqueada por `edit: deny` e
 `bash: deny` nesses perfis. O `worker` OpenCode é o writer padrão: recebe
 claim-map, worktree isolada e limites no prompt, usa somente `edit` com
 `external_directory: deny`, e mantém `bash`/delegação aninhada bloqueados. O
@@ -292,7 +297,7 @@ O diretório canônico das definições OpenCode neste projeto é
 command = "%CODEX_HOME%\\bin\\opencode-worker.cmd"
 args = ["-y", "github:CheekyCodexConjurer/sub-agents-mcp#v0.13.1"]
 startup_timeout_sec = 30
-tool_timeout_sec = 60
+tool_timeout_sec = 86400
 enabled = true
 enabled_tools = ["run_agent", "start_agent", "get_agent_status", "get_agent_result", "cancel_agent"]
 
@@ -302,7 +307,7 @@ AGENT_TYPE = "opencode"
 AGENT_MODEL = "opencode-go/deepseek-v4-flash"
 AGENT_EFFORT = "max"
 AGENT_PERMISSION = "yolo"
-EXECUTION_TIMEOUT_MS = "600000"
+EXECUTION_TIMEOUT_MS = "0"
 JOB_DIR = "%CODEX_HOME%\\opencode-jobs"
 JOB_EXECUTION_TIMEOUT_MS = "0"
 JOB_HEARTBEAT_INTERVAL_MS = "5000"
@@ -313,7 +318,9 @@ PATH = "<gerado pelo instalador a partir do PATH do Windows>"
 
 O trecho TOML usa `%CODEX_HOME%` apenas como marcador documental; o instalador
 gera caminhos absolutos para o computador atual. Não cole o marcador literalmente
-em um `config.toml`.
+em um `config.toml`. Toda entrada dentro de `[mcp_servers.opencode_worker.env]`
+precisa ser string TOML entre aspas; por exemplo, `Chrome = true` só é válido
+fora desse bloco, como uma configuração booleana do próprio Codex.
 
 O pin `sub-agents-mcp@0.8.0` é incompatível com OpenCode; o suporte oficial
 começou em `0.11.0`, e esta integração usa a tag `v0.13.1` do fork

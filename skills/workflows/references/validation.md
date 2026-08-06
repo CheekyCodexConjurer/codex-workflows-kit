@@ -28,6 +28,11 @@ Check strategy:
   that reader and writer requests select the intended OpenCode target, that
   each request starts a new isolated MCP conversation, and that a writer
   request carries `WRITER_WORKTREE=<cwd>` and `WRITER_BASELINE=<full-commit>`.
+  For reader responses, prove `RELAY_RESPONSE_FORMAT=markdown` when the MCP
+  payload has a textual `result`, that the result is readable Markdown, and
+  that `RELAY_METADATA_BEGIN` preserves MCP status fields. A payload without a
+  textual result must use the fenced raw-payload `RELAY_RESPONSE_FORMAT=raw-json`
+  fallback, preserving the exact payload even when it is not valid JSON.
   Before and after any real writer probe, verify the main checkout is unchanged
   and compare the returned worktree diff against the declared allowed paths;
   treat any mismatch as a blocked merge. A selected but failed relay/OpenCode route must remain blocked; it
@@ -35,15 +40,20 @@ Check strategy:
   MCP directly from the main chat. The configured
   `codegraph` MCP may stay enabled when explicitly authorized, but unreviewed
   external tools must not be inferred safe from the permission profile alone.
-- For long-running jobs, prove `JOB_OPERATION=start` returns a `job_id` quickly,
-  then use fresh `JOB_OPERATION=status|result` requests with
-  `JOB_ID=<opaque id>`. A status timeout or `freshness=stale` must remain
-  non-terminal evidence, not an automatic failure or relaunch trigger. Do not
-  poll continuously: status is reserved for a concrete suspicion of MCP,
-  worker, or heartbeat failure. A slow non-terminal job must not be
-  accelerated, shortened, summarized, cancelled, or relaunched. Prove that
-  result retrieval waits for `result_available=true` or a terminal state, and
-  that explicit `JOB_OPERATION=cancel` reaches the durable cancellation state.
+- For long-running work, prove the default `run_agent` call stays open beyond
+  the former 60-second host timeout and returns the final agent response, not
+  an accepted job. The default applies to every target, including `worker`.
+  Prove an explicit `JOB_OPERATION=start` returns `RELAY_STATUS=accepted`, a
+  `job_id`, and `RELAY_TERMINAL=no`; only then use fresh
+  `JOB_OPERATION=status|result` requests with `JOB_ID=<opaque id>`. A status
+  timeout or `freshness=stale` must remain non-terminal evidence, not an
+  automatic failure or relaunch trigger. Do not claim that the current status
+  tools inspect an active synchronous `run_agent` call. Do not poll
+  continuously: status is reserved for a concrete suspicion of MCP, worker, or
+  heartbeat failure. A slow non-terminal job must not be accelerated,
+  shortened, summarized, cancelled, or relaunched. Prove that detached result
+  retrieval waits for `result_available=true` or a terminal state, and that
+  explicit `JOB_OPERATION=cancel` reaches the durable cancellation state.
 - For image-bearing relay requests, prove `RELAY_VISUAL=success` and a
   `[VISUAL_PACKET v1]` reaches the MCP prompt without an image path, data URL,
   or raw image bytes. For text-only requests, prove the task remains intact and
