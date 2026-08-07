@@ -5,6 +5,8 @@ param(
     [switch]$SkipInstalled
 )
 
+. (Join-Path $PSScriptRoot 'native-profile-contract.ps1')
+
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
@@ -38,28 +40,86 @@ function Assert-Contains {
     }
 }
 
-function Assert-Profile {
+function Assert-CompletionPolicy {
+    param(
+        [Parameter(Mandatory)][string]$Label,
+        [Parameter(Mandatory)][string]$Text
+    )
+
+    $normalized = [regex]::Replace($Text, '\s+', ' ').Trim()
+    $policyDeclaration = 'completion_policy = { required = "final_response", running = "no_interrupt_or_replace", missing = "gate_open_blocked", fallback = "forbidden" }'
+    $policyDeclarations = @([regex]::Matches($normalized, 'completion_policy\s*=\s*\{'))
+    if ($policyDeclarations.Count -ne 1 -or $normalized.IndexOf($policyDeclaration, [StringComparison]::Ordinal) -lt 0) {
+        throw "$Label is missing the unique normative completion policy declaration"
+    }
+
+    $requiredPatterns = @(
+        '(?i)for every required sidecar,? the parent must wait for a `?final response`? before `?synthesis or advancement`?',
+        '(?i)while a sidecar is `?running`?,? do not send an `?interruptive follow-up`? or `?replace`? it',
+        '(?i)`?interrupted`?,? `?errored`?,? `?timed out`?,? or `?missing final response`? means unavailable: keep `?sidecar-gate`? `?open/BLOCKED`?; do not use a `?silent fallback`?'
+    )
+
+    foreach ($pattern in $requiredPatterns) {
+        if (-not [regex]::IsMatch($normalized, $pattern)) {
+            throw "$Label has an incomplete or incorrectly ordered completion policy: $pattern"
+        }
+    }
+
+    $forbiddenPatterns = @(
+        '(?i)\b(?:may|can|should|must|authorized to|authorised to|has permission to|is permitted to|is allowed to|is free to)\b\s+(?!not\b|never\b)[^.;]*\b(?:interrupt|cancel|terminate|stop)\w*\b',
+        '(?i)\b(?:may|can|should|must|authorized to|authorised to|has permission to|is permitted to|is allowed to|is free to)\b\s+(?!not\b|never\b)[^.;]*\b(?:replace|substitute|switch|delegate|assign)\b',
+        '(?i)\b(?:may|can|should|must|authorized to|authorised to|has permission to|is permitted to|is allowed to|is free to)\b\s+(?!not\b|never\b)[^.;]*\b(?:use|allow|permit|select|choose|switch to|fall back|fallback|backup|alternate worker|backup worker|another worker|another agent)\b',
+        '(?i)(?:synthesis|advancement|synthesize|advance|proceed|continue)[^.;]*(?:before|prior to|without|in the absence of)[^.;]*(?:final response|response|reply|answer|return)'
+    )
+    foreach ($pattern in $forbiddenPatterns) {
+        if ([regex]::IsMatch($normalized, $pattern)) {
+            throw "$Label contains a forbidden completion-policy exception: $pattern"
+        }
+    }
+}
+
+function Assert-ManagedAgentDefaults {
     param([Parameter(Mandatory)][string]$Path)
 
     $text = Read-RequiredText $Path
-    Assert-Contains -Label $Path -Text $text -Needles @(
-        'model = "gpt-5.6-luna"',
-        'model_reasoning_effort = "max"',
-        'sandbox_mode = "read-only"'
-    )
+    $allAgentsHeaders = @([regex]::Matches($text, '(?im)^[ \t]*\[\[?[ \t]*(?:agents|"agents"|''agents'')[ \t]*\]\]?[ \t]*(?:#.*)?$'))
+    if ($allAgentsHeaders.Count -ne 1) {
+        throw "Configuration has a duplicated or missing [agents] table: $Path"
+    }
+
+    $blockPattern = '(?ms)^# BEGIN CODEX-WORKFLOWS-KIT: agents\r?\n(?<block>.*?)^# END CODEX-WORKFLOWS-KIT: agents\r?$'
+    $blocks = @([regex]::Matches($text, $blockPattern))
+    if ($blocks.Count -ne 1) {
+        throw "Managed agents configuration block is missing or duplicated: $Path"
+    }
+
+    $block = $blocks[0].Groups['block'].Value
+    $headers = @([regex]::Matches($block, '(?m)^[ \t]*\[\[?[^\r\n\]]+\]\]?[ \t]*(?:#.*)?$'))
+    if ($headers.Count -ne 1 -or $headers[0].Value.Trim() -notmatch '^\[agents\][ \t]*(?:#.*)?$') {
+        throw "Managed agents configuration has an invalid or non-unique [agents] section: $Path"
+    }
 
     $requiredSettings = [ordered]@{
-        model = 'gpt-5.6-luna'
-        model_reasoning_effort = 'max'
-        sandbox_mode = 'read-only'
+        default_subagent_model = 'gpt-5.6-luna'
+        default_subagent_reasoning_effort = 'high'
     }
     foreach ($setting in $requiredSettings.GetEnumerator()) {
         $pattern = '(?m)^\s*' + [regex]::Escape([string]$setting.Key) + '\s*=\s*"([^\"]+)"\s*$'
-        $matches = @([regex]::Matches($text, $pattern))
+        $matches = @([regex]::Matches($block, $pattern))
         if ($matches.Count -ne 1 -or $matches[0].Groups[1].Value -cne [string]$setting.Value) {
-            throw "Native profile has an invalid $($setting.Key) setting: $Path"
+            throw "Managed agents configuration has an invalid $($setting.Key): $Path"
         }
     }
+
+    if ($block -match '(?m)^\s*default_subagent_reasoning_effort\s*=\s*"max"\s*$') {
+        throw "Managed agents configuration retains max reasoning: $Path"
+    }
+}
+
+function Assert-Profile {
+    param([Parameter(Mandatory)][string]$Path)
+
+    Assert-NativeProfileContract -Path $Path
 }
 
 function Assert-SameFile {
@@ -176,6 +236,9 @@ $agentsMd = Join-Path $repo 'codex\AGENTS.md'
 $skill = Read-RequiredText (Join-Path $workflowSource 'SKILL.md')
 $agentsText = Read-RequiredText $agentsMd
 $matrix = Read-RequiredText (Join-Path $workflowSource 'references\mode-matrix.md')
+$subagents = Read-RequiredText (Join-Path $workflowSource 'references\subagents.md')
+$backendPolicy = Read-RequiredText (Join-Path $workflowSource 'references\backend-policy.md')
+$installer = Read-RequiredText (Join-Path $repo 'scripts\install.ps1')
 $promptPad = Read-RequiredText (Join-Path $repo 'ahk\codex_prompt_pad.ahk')
 
 $allModes = @(
@@ -192,13 +255,49 @@ Assert-Contains -Label 'workflow skill' -Text $skill -Needles @(
     'name: workflows',
     'AGENTS.md',
     'gpt-5.6-luna',
-    'read-only'
+    'high',
+    'read-only',
+    'final response',
+    'interrupted',
+    'errored',
+    'timed out'
 )
 Assert-Contains -Label 'codex AGENTS.md' -Text $agentsText -Needles @(
     'gpt-5.6-luna',
+    'high',
     'read-only',
+    'sidecar-gate',
+    'final response',
+    'interrupted',
+    'errored',
+    'timed out'
+)
+Assert-Contains -Label 'sub-agent reference' -Text $subagents -Needles @(
+    'gpt-5.6-luna',
+    'high',
+    'final response',
+    'interrupted',
+    'errored',
+    'timed out',
     'sidecar-gate'
 )
+Assert-Contains -Label 'backend policy' -Text $backendPolicy -Needles @(
+    'gpt-5.6-luna',
+    'model_reasoning_effort = "high"',
+    'final response',
+    'interrupted',
+    'errored',
+    'timed out',
+    'sidecar-gate'
+)
+Assert-Contains -Label 'installer' -Text $installer -Needles @(
+    'default_subagent_model = "gpt-5.6-luna"',
+    'default_subagent_reasoning_effort = "high"'
+)
+Assert-CompletionPolicy -Label 'workflow skill' -Text $skill
+Assert-CompletionPolicy -Label 'codex AGENTS.md' -Text $agentsText
+Assert-CompletionPolicy -Label 'sub-agent reference' -Text $subagents
+Assert-CompletionPolicy -Label 'backend policy' -Text $backendPolicy
 
 $expectedProfiles = @('scout.toml', 'researcher.toml', 'reviewer.toml')
 $actualProfiles = @(Get-ChildItem -LiteralPath $agentsSource -Recurse -File | ForEach-Object {
@@ -259,6 +358,8 @@ if (-not $SkipInstalled) {
     Assert-MirrorTree -Source $evidenceSource -Installed $evidenceDest -Label 'evidence skill'
 
     if ([string]$state.profile -eq 'safe') {
+        Assert-ManagedAgentDefaults -Path (Join-Path $codexHome 'config.toml')
+
         foreach ($profileName in $expectedProfiles) {
             Assert-SameFile -Source (Join-Path $agentsSource $profileName) -Installed (Join-Path $codexHome (Join-Path 'agents' $profileName)) -Label "native profile $profileName"
         }

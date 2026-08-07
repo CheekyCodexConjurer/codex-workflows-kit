@@ -5,6 +5,8 @@ param(
     [switch]$Detailed
 )
 
+. (Join-Path $PSScriptRoot 'native-profile-contract.ps1')
+
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
@@ -107,6 +109,57 @@ function Test-FullyQualifiedPath {
     return $Path -match '^[A-Za-z]:\\' -or $Path -match '^\\\\[^\\]+\\[^\\]+\\'
 }
 
+function Test-ManagedAgentDefaults {
+    param([Parameter(Mandatory)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return $false
+    }
+
+    try {
+        $text = Get-Content -LiteralPath $Path -Raw -Encoding UTF8
+        $allAgentsHeaders = @([regex]::Matches($text, '(?im)^[ \t]*\[\[?[ \t]*(?:agents|"agents"|''agents'')[ \t]*\]\]?[ \t]*(?:#.*)?$'))
+        if ($allAgentsHeaders.Count -ne 1) {
+            return $false
+        }
+
+        $blockPattern = '(?ms)^# BEGIN CODEX-WORKFLOWS-KIT: agents\r?\n(?<block>.*?)^# END CODEX-WORKFLOWS-KIT: agents\r?$'
+        $blocks = @([regex]::Matches($text, $blockPattern))
+        if ($blocks.Count -ne 1) {
+            return $false
+        }
+
+        $block = $blocks[0].Groups['block'].Value
+        $headers = @([regex]::Matches($block, '(?m)^[ \t]*\[\[?[^\r\n\]]+\]\]?[ \t]*(?:#.*)?$'))
+        if ($headers.Count -ne 1 -or $headers[0].Value.Trim() -notmatch '^\[agents\][ \t]*(?:#.*)?$') {
+            return $false
+        }
+
+        $requiredSettings = [ordered]@{
+            default_subagent_model = 'gpt-5.6-luna'
+            default_subagent_reasoning_effort = 'high'
+        }
+        foreach ($setting in $requiredSettings.GetEnumerator()) {
+            $pattern = '(?m)^\s*' + [regex]::Escape([string]$setting.Key) + '\s*=\s*"([^\"]+)"\s*$'
+            $matches = @([regex]::Matches($block, $pattern))
+            if ($matches.Count -ne 1 -or $matches[0].Groups[1].Value -cne [string]$setting.Value) {
+                return $false
+            }
+        }
+
+        return $block -notmatch '(?m)^\s*default_subagent_reasoning_effort\s*=\s*"max"\s*$'
+    }
+    catch {
+        return $false
+    }
+}
+
+function Test-NativeProfile {
+    param([Parameter(Mandatory)][string]$Path)
+
+    return Test-NativeProfileContract -Path $Path
+}
+
 $defaultCodexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE '.codex' }
 $defaultAgentsHome = if ($env:AGENTS_HOME) { $env:AGENTS_HOME } else { Join-Path $env:USERPROFILE '.agents' }
 $CodexHome = Resolve-HomePath -Requested $CodexHome -Fallback $defaultCodexHome
@@ -160,16 +213,16 @@ foreach ($path in $coreFiles) {
 }
 
 if ($installedProfile -eq 'safe') {
+    $configPath = Join-Path $CodexHome 'config.toml'
+    Write-Check -Name 'Sub-agent defaults' -Passed (Test-ManagedAgentDefaults -Path $configPath) -Detail $configPath
+
     foreach ($profileName in @('scout.toml', 'researcher.toml', 'reviewer.toml')) {
         $path = Join-Path $CodexHome (Join-Path 'agents' $profileName)
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
             continue
         }
 
-        $profile = Get-Content -LiteralPath $path -Raw -Encoding UTF8
-        $valid = $profile.Contains('model = "gpt-5.6-luna"') -and
-            $profile.Contains('model_reasoning_effort = "max"') -and
-            $profile.Contains('sandbox_mode = "read-only"')
+        $valid = Test-NativeProfile -Path $path
         Write-Check -Name 'Native profile' -Passed $valid -Detail $path
     }
 }

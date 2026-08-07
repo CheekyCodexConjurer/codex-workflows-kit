@@ -28,9 +28,13 @@ flowchart TD
     FREEZE --> REVIEW["Revisão nativa quando exigida"]
 ~~~
 
-Os três perfis nativos são fixados em gpt-5.6-luna, com esforço max e
+Os três perfis nativos são fixados em gpt-5.6-luna, com esforço high e
 read-only. Eles coletam evidência, pesquisam fontes ou revisam um resultado
 congelado. Não alteram arquivos nem iniciam novos agentes.
+
+O pai aguarda a resposta final de cada sidecar obrigatório antes de sintetizar
+ou avançar. Sidecar interrompido, com erro, timeout ou sem resposta deixa o
+sidecar-gate aberto, sem fallback silencioso.
 
 ## Fonte da verdade
 

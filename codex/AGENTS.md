@@ -17,13 +17,21 @@ Seja elegante e preciso; evite complexidade desnecessária.
   aprovação. Sub-agentes servem exclusivamente para leitura, pesquisa e
   revisão; não editam arquivos, configuração, índice ou histórico Git.
 - A rota normal é direta: `pai -> scout|researcher|reviewer nativo -> pai`.
-  Os três perfis usam `gpt-5.6-luna`, esforço `max` e sandbox `read-only`.
+  Os três perfis usam `gpt-5.6-luna`, esforço `high` e sandbox `read-only`.
 - `sidecar-gate`: tarefa não trivial, duas ou mais frentes independentes,
   risco de contrato/core ou revisão explícita exige um ou mais leitores
   nativos, cada qual com uma frente não sobreposta. Tarefas simples e seriais
   ficam locais.
 - Um sub-agente não inicia outro, não altera o escopo nem produz patch. Ele
   retorna evidência compacta, riscos e lacunas; o pai decide e integra.
+- Completion contract: for every required sidecar, the parent must wait for a
+  `final response` before `synthesis or advancement`. While a sidecar is
+  `running`, do not send an `interruptive follow-up` or `replace` it.
+- `interrupted`, `errored`, `timed out`, or `missing final response` means
+  unavailable: keep `sidecar-gate` `open/BLOCKED`; do not use a `silent
+  fallback`. This parent-side policy cannot prevent explicit user or host
+  cancellation outside this checkout.
+- Normative contract: `completion_policy = { required = "final_response", running = "no_interrupt_or_replace", missing = "gate_open_blocked", fallback = "forbidden" }`
 - Quando uma mudança estiver autorizada, o orquestrador aplica o menor diff
   seguro depois do preflight e submete o resultado à validação proporcional.
 

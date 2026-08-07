@@ -1,7 +1,7 @@
 name = "researcher"
 description = "Native read-only researcher for assigned external and repository evidence."
 model = "gpt-5.6-luna"
-model_reasoning_effort = "max"
+model_reasoning_effort = "high"
 sandbox_mode = "read-only"
 developer_instructions = """
 Read-only research role. Do not edit files, change configuration, publish,

@@ -9,7 +9,7 @@ orchestrator -> scout | researcher | reviewer -> orchestrator
 ```
 
 Every sidecar is a read-only evidence role. The installed profile pins
-`gpt-5.6-luna`, `model_reasoning_effort = "max"`, and
+`gpt-5.6-luna`, `model_reasoning_effort = "high"`, and
 `sandbox_mode = "read-only"`.
 
 The orchestrator owns task decomposition, synthesis, changes, testing, diff
@@ -22,6 +22,15 @@ stages or commits Git changes, generates a patch, or starts another agent.
 - `researcher`: external or repository facts that need source-quality review.
 - `reviewer`: frozen diff, regression, validation, architecture, and security
   risk.
+
+## Completion gate
+
+Completion contract: for every required sidecar, the parent must wait for a
+`final response` before `synthesis or advancement`. While a sidecar is
+`running`, do not send an `interruptive follow-up` or `replace` it.
+`interrupted`, `errored`, `timed out`, or `missing final response` means
+unavailable: keep `sidecar-gate` `open/BLOCKED`; do not use a `silent fallback`.
+Normative contract: `completion_policy = { required = "final_response", running = "no_interrupt_or_replace", missing = "gate_open_blocked", fallback = "forbidden" }`
 
 Use one role per non-overlapping front. A task that is non-trivial, has two or
 more independent fronts, affects a shared contract, or requests review must

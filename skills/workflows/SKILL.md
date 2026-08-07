@@ -25,7 +25,7 @@ Use this skill when a prompt invokes `$workflows` with `mode=<MODE>`.
 ## Native sub-agents
 
 - Native `scout`, `researcher`, and `reviewer` are the only workflow
-  sub-agents. Each is pinned to `gpt-5.6-luna` with `max` reasoning and a
+  sub-agents. Each is pinned to `gpt-5.6-luna` with `high` reasoning and a
   `read-only` sandbox.
 - Use them for independent evidence, research, and review fronts. Give each
   one bounded ownership and join the results before making a decision.
@@ -33,6 +33,18 @@ Use this skill when a prompt invokes `$workflows` with `mode=<MODE>`.
   The parent owns synthesis, changes, validation, and integration.
 - Apply `sidecar-gate` to non-trivial, multi-front, core/contract, or
   explicitly reviewed work. Keep truly simple serial work local.
+
+## Sidecar completion
+
+- Completion contract: for every required sidecar, the parent must wait for a
+  `final response` before `synthesis or advancement`. While a sidecar is
+  `running`, do not send an `interruptive follow-up` or `replace` it.
+- `interrupted`, `errored`, `timed out`, or `missing final response` means
+  unavailable: keep `sidecar-gate` `open/BLOCKED`; do not use a `silent
+  fallback`.
+- This parent-side policy cannot prevent an explicit user or host cancellation
+  outside this repository.
+- Normative contract: `completion_policy = { required = "final_response", running = "no_interrupt_or_replace", missing = "gate_open_blocked", fallback = "forbidden" }`
 
 ## Delivery
 

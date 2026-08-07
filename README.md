@@ -21,7 +21,7 @@ Documentação: [Arquitetura](docs/architecture.md) ·
 |---|---|---|
 | skill workflows | ~/.agents/skills/workflows | única interface para os modos $workflows |
 | skill evidence-first | ~/.agents/skills/evidence-first | verificação de claims materiais |
-| scout, researcher, reviewer | ~/.codex/agents | leitura nativa em gpt-5.6-luna com esforço max |
+| scout, researcher, reviewer | ~/.codex/agents | leitura nativa em gpt-5.6-luna com esforço high |
 | codex/AGENTS.md | ~/.codex/AGENTS.md | regras globais e matriz compacta de modos |
 | prompt pad opcional | caminho escolhido pelo usuário | atalhos NUM para $workflows |
 | scripts locais | checkout | instalação, validação, diagnóstico e remoção |
@@ -29,6 +29,10 @@ Documentação: [Arquitetura](docs/architecture.md) ·
 Todos os sub-agentes são read-only: coletam evidência, fazem pesquisa ou
 revisam um diff congelado. O orquestrador continua responsável por síntese,
 alterações autorizadas, validação e integração.
+
+Para sidecars obrigatórios, o orquestrador aguarda uma resposta final antes de
+sintetizar ou avançar. Interrupção, erro, timeout ou ausência de resposta mantém
+o gate aberto, sem fallback silencioso.
 
 ## Requisitos
 

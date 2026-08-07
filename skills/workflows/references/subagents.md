@@ -6,9 +6,9 @@ The workflow uses only these native profiles:
 
 | Profile | Purpose | Model | Effort | Access |
 |---|---|---|---|---|
-| `scout` | local evidence and ownership | `gpt-5.6-luna` | `max` | read-only |
-| `researcher` | source-grounded research | `gpt-5.6-luna` | `max` | read-only |
-| `reviewer` | frozen-diff risk review | `gpt-5.6-luna` | `max` | read-only |
+| `scout` | local evidence and ownership | `gpt-5.6-luna` | `high` | read-only |
+| `researcher` | source-grounded research | `gpt-5.6-luna` | `high` | read-only |
+| `reviewer` | frozen-diff risk review | `gpt-5.6-luna` | `high` | read-only |
 
 ## Handoff
 
@@ -19,6 +19,15 @@ deduplicates evidence, and records remaining uncertainty before deciding.
 Sidecars must not edit, write patches, stage, commit, alter configuration, or
 delegate again. They report observations, inferences, risks, and the cheapest
 next check. The parent is responsible for all changes and validation.
+
+## Completion gate
+
+Completion contract: for every required sidecar, the parent must wait for a
+`final response` before `synthesis or advancement`. While a sidecar is
+`running`, do not send an `interruptive follow-up` or `replace` it.
+`interrupted`, `errored`, `timed out`, or `missing final response` means
+unavailable: keep `sidecar-gate` `open/BLOCKED`; do not use a `silent fallback`.
+Normative contract: `completion_policy = { required = "final_response", running = "no_interrupt_or_replace", missing = "gate_open_blocked", fallback = "forbidden" }`
 
 ## Cadence
 

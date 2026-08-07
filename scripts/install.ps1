@@ -11,6 +11,8 @@ param(
     [switch]$Force
 )
 
+. (Join-Path $PSScriptRoot 'native-profile-contract.ps1')
+
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $nl = [Environment]::NewLine
@@ -343,6 +345,12 @@ function Remove-KitBlocks {
     return [regex]::Replace($result, '(?m)^# (?:BEGIN|END) CODEX-WORKFLOWS-KIT:.*(?:\r?\n|$)', '').Trim()
 }
 
+function Test-AgentsTableHeader {
+    param([AllowEmptyString()][string]$Text)
+
+    return $Text -match '(?im)^[ \t]*\[\[?[ \t]*(?:agents|"agents"|''agents'')[ \t]*\]\]?[ \t]*(?:#.*)?$'
+}
+
 function Install-AgentDefaults {
     $existing = if (Test-Path -LiteralPath $configPath -PathType Leaf) {
         Get-Content -LiteralPath $configPath -Raw -Encoding UTF8
@@ -352,17 +360,19 @@ function Install-AgentDefaults {
     }
 
     $content = Remove-KitBlocks -Text $existing
-    if ($content -notmatch '(?m)^\[agents\]\s*$') {
-        $block = @'
+    if (Test-AgentsTableHeader -Text $content) {
+        throw "An unmanaged [agents] section already exists; refusing to install managed defaults: $configPath"
+    }
+
+    $block = @'
 # BEGIN CODEX-WORKFLOWS-KIT: agents
 [agents]
 max_concurrent_threads_per_session = 5
 default_subagent_model = "gpt-5.6-luna"
-default_subagent_reasoning_effort = "max"
+default_subagent_reasoning_effort = "high"
 # END CODEX-WORKFLOWS-KIT: agents
 '@
-        $content = if ([string]::IsNullOrWhiteSpace($content)) { $block } else { $content.TrimEnd() + $nl + $nl + $block }
-    }
+    $content = if ([string]::IsNullOrWhiteSpace($content)) { $block } else { $content.TrimEnd() + $nl + $nl + $block }
 
     Install-ManagedContent -Destination $configPath -Content ($content.TrimEnd() + $nl)
 }
@@ -566,6 +576,15 @@ function Assert-InstallPreflight {
         $source = Join-Path $agentsSource $profileName
         if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
             throw "Native profile is missing: $source"
+        }
+        Assert-NativeProfileContract -Path $source
+    }
+
+    if (Test-Path -LiteralPath $configPath -PathType Leaf) {
+        $existingConfig = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8
+        $configWithoutManagedBlock = Remove-KitBlocks -Text $existingConfig
+        if (Test-AgentsTableHeader -Text $configWithoutManagedBlock) {
+            throw "An unmanaged [agents] section already exists; refusing to install managed defaults: $configPath"
         }
     }
 
