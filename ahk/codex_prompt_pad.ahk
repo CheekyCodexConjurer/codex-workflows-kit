@@ -54,17 +54,4 @@ Numpad8::PastePrompt("$workflows mode=REWORK")
 
 Numpad9::PastePrompt("$workflows mode=RESEARCH.DEEP")
 
-; --- Antigravity Slash Commands (Alt + Numpad) ---
-!Numpad1::PastePrompt("/goal")
-
-!Numpad2::PastePrompt("/grill-me")
-
-!Numpad3::PastePrompt("/browser")
-
-!Numpad4::PastePrompt("/schedule")
-
-!Numpad5::PastePrompt("/teamwork-preview")
-
-!Numpad6::PastePrompt("/learn")
-
 #HotIf

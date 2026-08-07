@@ -1,40 +1,35 @@
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
 param(
-    [ValidateSet('minimal', 'safe', 'full')]
+    [ValidateSet('minimal', 'safe')]
     [string]$Profile = 'safe',
 
     [string]$CodexHome,
-
     [string]$AgentsHome,
-
-    [string]$AntigravityHome,
-
     [string]$AhkDestination,
 
     [switch]$InstallAhk,
-
-    [switch]$InstallAntigravity,
-
-    [switch]$ConfigureMcp,
-
-    [switch]$InstallScheduledTask,
-
     [switch]$Force
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-
-function Confirm-InstallAction {
-    param([Parameter(Mandatory)][string]$Target, [Parameter(Mandatory)][string]$Action)
-    if ($WhatIfPreference) {
-        Write-Host ("What if: Performing the operation '{0}' on target '{1}'." -f $Action, $Target)
-        return $false
-    }
-    return $true
-}
+$nl = [Environment]::NewLine
 
 $repo = [IO.Path]::GetFullPath((Split-Path -Parent (Split-Path -Parent $PSCommandPath)))
+
+function Confirm-InstallAction {
+    param(
+        [Parameter(Mandatory)][string]$Target,
+        [Parameter(Mandatory)][string]$Action
+    )
+
+    if ($WhatIfPreference) {
+        Write-Host ("What if: Performing '{0}' on '{1}'." -f $Action, $Target)
+        return $false
+    }
+
+    return $true
+}
 
 function Resolve-HomePath {
     param(
@@ -62,62 +57,20 @@ function Assert-SafeDestination {
     return $fullPath
 }
 
-$defaultCodexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE '.codex' }
-$defaultAgentsHome = if ($env:AGENTS_HOME) { $env:AGENTS_HOME } else { Join-Path $env:USERPROFILE '.agents' }
-$defaultAntigravityHome = Join-Path $env:USERPROFILE '.gemini'
-$CodexHome = Assert-SafeDestination (Resolve-HomePath -Requested $CodexHome -Fallback $defaultCodexHome)
-$AgentsHome = Assert-SafeDestination (Resolve-HomePath -Requested $AgentsHome -Fallback $defaultAgentsHome)
-$AntigravityHome = Assert-SafeDestination (Resolve-HomePath -Requested $AntigravityHome -Fallback $defaultAntigravityHome)
-if ($CodexHome -ne [IO.Path]::GetFullPath($defaultCodexHome) -and $env:CODEX_HOME -ne $CodexHome) {
-    Write-Warning 'A custom CodexHome was selected without matching CODEX_HOME; set CODEX_HOME for the SessionStart MCP hook to audit this same home.'
+function Assert-ChildPath {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Parent
+    )
+
+    $fullPath = [IO.Path]::GetFullPath($Path)
+    $fullParent = [IO.Path]::GetFullPath($Parent).TrimEnd('\')
+    if (-not $fullPath.StartsWith($fullParent + '\', [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to manage a path outside its declared destination: $fullPath"
+    }
+
+    return $fullPath
 }
-
-if ([string]::IsNullOrWhiteSpace($AhkDestination)) {
-    $AhkDestination = Join-Path $env:USERPROFILE 'Documents\Codex\PromptPad\codex_prompt_pad.ahk'
-}
-$AhkDestination = Assert-SafeDestination $AhkDestination
-
-if ($Profile -eq 'minimal' -and ($ConfigureMcp -or $InstallScheduledTask)) {
-    throw 'The minimal profile cannot configure MCP maintenance. Use -Profile full.'
-}
-
-$includeAllSkills = $Profile -ne 'minimal'
-$includeAgents = $Profile -ne 'minimal'
-$includeOpenCode = $Profile -eq 'full' -or $ConfigureMcp
-$includeMaintenance = $Profile -eq 'full' -or $ConfigureMcp
-$installAntigravity = $InstallAntigravity -or $Profile -eq 'full'
-
-$skillsSource = Join-Path $repo 'skills'
-$workflowSource = Join-Path $skillsSource 'workflows'
-$agentsSource = Join-Path $repo 'agents'
-$opencodeAgentsSource = Join-Path $agentsSource 'opencode'
-$agentsMdSource = Join-Path $repo 'codex\AGENTS.md'
-$ahkSource = Join-Path $repo 'ahk\codex_prompt_pad.ahk'
-$maintenanceSource = Join-Path $repo 'plugins\mcp-foundation\scripts\maintain-mcps.ps1'
-$workerWrapperSource = Join-Path $repo 'bin\opencode-worker.cmd'
-
-$skillsDest = Join-Path $AgentsHome 'skills'
-$antigravitySkillsDest1 = Join-Path $AntigravityHome 'antigravity\skills'
-$antigravitySkillsDest2 = Join-Path $AntigravityHome 'config\skills'
-$agentsDest = Join-Path $CodexHome 'agents'
-$opencodeAgentsDest = Join-Path $CodexHome 'opencode-agents'
-$opencodeJobsDest = Join-Path $CodexHome 'opencode-jobs'
-$agentsMdDest = Join-Path $CodexHome 'AGENTS.md'
-$maintenanceDest = Join-Path $CodexHome 'maintenance\maintain-mcps.ps1'
-$workerWrapperDest = Join-Path $CodexHome 'bin\opencode-worker.cmd'
-$statePath = Join-Path $CodexHome 'codex-workflows-kit\install-state.json'
-$openCodeProviderEnv = $env:CODEX_WORKFLOWS_OPENCODE_PROVIDER
-$openCodeProvider = if ([string]::IsNullOrWhiteSpace($openCodeProviderEnv)) { 'go' } else { $openCodeProviderEnv }
-$openCodeModels = @{ go = 'opencode-go/deepseek-v4-flash'; zen = 'zenmux/deepseek/deepseek-v4-flash' }
-if (-not $openCodeModels.ContainsKey($openCodeProvider)) {
-    throw "Invalid CODEX_WORKFLOWS_OPENCODE_PROVIDER '$openCodeProvider': allowed values are go and zen."
-}
-$openCodeAgentModel = $openCodeModels[$openCodeProvider]
-$agentEfforts = @('low', 'high', 'xhigh', 'max')
-$script:BackupRoot = Join-Path $CodexHome ('backups\codex-workflows-kit\{0}' -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
-$script:BackedUp = @{}
-$script:ManagedFiles = @{}
-$script:DryRunConflicts = New-Object System.Collections.Generic.List[string]
 
 function Write-Utf8NoBom {
     param(
@@ -139,8 +92,152 @@ function Ensure-Directory {
         return
     }
 
-    if (Confirm-InstallAction -Target $Path -Action 'Create installation directory') {
+    if (Confirm-InstallAction -Target $Path -Action 'create installation directory') {
         New-Item -ItemType Directory -Force -Path $Path | Out-Null
+    }
+}
+
+$defaultCodexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE '.codex' }
+$defaultAgentsHome = if ($env:AGENTS_HOME) { $env:AGENTS_HOME } else { Join-Path $env:USERPROFILE '.agents' }
+
+$CodexHome = Assert-SafeDestination (Resolve-HomePath -Requested $CodexHome -Fallback $defaultCodexHome)
+$AgentsHome = Assert-SafeDestination (Resolve-HomePath -Requested $AgentsHome -Fallback $defaultAgentsHome)
+
+if ([string]::IsNullOrWhiteSpace($AhkDestination)) {
+    $AhkDestination = Join-Path $env:USERPROFILE 'Documents\Codex\PromptPad\codex_prompt_pad.ahk'
+}
+$AhkDestination = Assert-SafeDestination $AhkDestination
+
+$skillsSource = Join-Path $repo 'skills'
+$workflowSource = Join-Path $skillsSource 'workflows'
+$evidenceSource = Join-Path $skillsSource 'evidence-first'
+$agentsSource = Join-Path $repo 'agents'
+$agentsMdSource = Join-Path $repo 'codex\AGENTS.md'
+$ahkSource = Join-Path $repo 'ahk\codex_prompt_pad.ahk'
+
+$skillsDest = Join-Path $AgentsHome 'skills'
+$agentsDest = Join-Path $CodexHome 'agents'
+$agentsMdDest = Join-Path $CodexHome 'AGENTS.md'
+$configPath = Join-Path $CodexHome 'config.toml'
+$statePath = Join-Path $CodexHome 'codex-workflows-kit\install-state.json'
+
+$script:BackupRoot = Join-Path $CodexHome ('backups\codex-workflows-kit\{0}' -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+$script:BackedUp = @{}
+$script:ManagedFiles = @{}
+$script:PriorHashes = @{}
+$script:PriorPaths = New-Object System.Collections.Generic.List[string]
+$script:PendingFiles = @{}
+$script:RemovedParents = New-Object System.Collections.Generic.List[string]
+
+function Assert-InstallState {
+    param([Parameter(Mandatory)][object]$State)
+
+    $required = @('schemaVersion', 'product', 'files')
+    foreach ($property in $required) {
+        if (-not ($State.PSObject.Properties.Name -contains $property)) {
+            throw "Install state is missing required property: $property"
+        }
+    }
+
+    $schemaText = [string]$State.schemaVersion
+    if ($schemaText -notin @('1', '2', '3')) {
+        throw "Install state has an unsupported schema: $schemaText"
+    }
+    $schema = [int]$schemaText
+    if ([string]$State.product -ne 'codex-workflows-kit') {
+        throw 'Install state belongs to a different product.'
+    }
+    if ($null -eq $State.files -or -not ($State.files -is [System.Array])) {
+        throw 'Install state files must be an array.'
+    }
+
+    $entries = @($State.files)
+    if ($schema -eq 3) {
+        if (-not ($State.PSObject.Properties.Name -contains 'pendingFiles') -or $null -eq $State.pendingFiles -or -not ($State.pendingFiles -is [System.Array])) {
+            throw 'Schema 3 install state is missing pendingFiles.'
+        }
+        $entries += @($State.pendingFiles)
+    }
+    elseif ($State.PSObject.Properties.Name -contains 'pendingFiles') {
+        throw 'Only schema 3 install state may contain pendingFiles.'
+    }
+
+    $seenPaths = @{}
+    foreach ($entry in $entries) {
+        if ($null -eq $entry -or -not ($entry.PSObject.Properties.Name -contains 'path') -or -not ($entry.PSObject.Properties.Name -contains 'sha256')) {
+            throw 'Install state contains an invalid file entry.'
+        }
+        if ([string]::IsNullOrWhiteSpace([string]$entry.path) -or -not (Test-FullyQualifiedPath -Path ([string]$entry.path)) -or [string]$entry.sha256 -notmatch '^[A-Fa-f0-9]{64}$') {
+            throw 'Install state contains an invalid file path or hash.'
+        }
+        $fullPath = [IO.Path]::GetFullPath([string]$entry.path)
+        if ($seenPaths.ContainsKey($fullPath)) {
+            throw "Install state contains a duplicate file entry: $fullPath"
+        }
+        $seenPaths[$fullPath] = $true
+    }
+
+    if ($schema -eq 3) {
+        foreach ($entry in @($State.pendingFiles)) {
+            if (-not ($entry.PSObject.Properties.Name -contains 'reason') -or [string]$entry.reason -notin @('modified', 'outside-destinations', 'unverified')) {
+                throw 'Schema 3 install state contains a pending file without a reason.'
+            }
+        }
+    }
+
+    return $schema
+}
+
+function Test-FullyQualifiedPath {
+    param([Parameter(Mandatory)][string]$Path)
+
+    return $Path -match '^[A-Za-z]:\\' -or $Path -match '^\\\\[^\\]+\\[^\\]+\\'
+}
+
+function Initialize-PriorState {
+    if (-not (Test-Path -LiteralPath $statePath -PathType Leaf)) {
+        return
+    }
+
+    try {
+        $state = Get-Content -LiteralPath $statePath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $schema = Assert-InstallState -State $state
+        $priorEntries = @($state.files)
+        if ($schema -eq 3) {
+            $priorEntries += @($state.pendingFiles)
+        }
+        foreach ($file in $priorEntries) {
+            $path = [IO.Path]::GetFullPath([string]$file.path)
+            if (-not $script:PriorHashes.ContainsKey($path)) {
+                $script:PriorPaths.Add($path)
+            }
+            $script:PriorHashes[$path] = [string]$file.sha256
+        }
+    }
+    catch {
+        throw "Previous install state is invalid: $($_.Exception.Message)"
+    }
+}
+
+function Add-PendingFile {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Reason,
+        [string]$ExpectedHash
+    )
+
+    $fullPath = [IO.Path]::GetFullPath($Path)
+    if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf)) {
+        return
+    }
+
+    if ([string]::IsNullOrWhiteSpace($ExpectedHash)) {
+        $ExpectedHash = (Get-FileHash -LiteralPath $fullPath -Algorithm SHA256).Hash
+    }
+    $script:PendingFiles[$fullPath] = [ordered]@{
+        path = $fullPath
+        sha256 = $ExpectedHash
+        reason = $Reason
     }
 }
 
@@ -158,7 +255,7 @@ function Backup-ExistingFile {
 
     $safeName = [regex]::Replace($fullDestination, '[^A-Za-z0-9._-]', '_')
     $backupPath = Join-Path $script:BackupRoot $safeName
-    if (Confirm-InstallAction -Target $Destination -Action "Back up existing file to $backupPath") {
+    if (Confirm-InstallAction -Target $Destination -Action "back up existing file to $backupPath") {
         Ensure-Directory -Path $script:BackupRoot
         Copy-Item -LiteralPath $Destination -Destination $backupPath -Force
         $script:BackedUp[$fullDestination] = $backupPath
@@ -172,357 +269,353 @@ function Install-ManagedContent {
     )
 
     $fullDestination = [IO.Path]::GetFullPath($Destination)
-    $parent = Split-Path -Parent $fullDestination
-    Ensure-Directory -Path $parent
+    Ensure-Directory -Path (Split-Path -Parent $fullDestination)
 
     $changed = $true
     if (Test-Path -LiteralPath $fullDestination -PathType Leaf) {
-        $existing = Get-Content -LiteralPath $fullDestination -Raw -Encoding UTF8
-        $changed = $existing -cne $Content
+        $changed = (Get-Content -LiteralPath $fullDestination -Raw -Encoding UTF8) -cne $Content
     }
 
     if ($changed) {
-        if ($fullDestination -ne $statePath) {
-            Backup-ExistingFile -Destination $fullDestination
-        }
-        if (Confirm-InstallAction -Target $fullDestination -Action 'Install managed content') {
+        Backup-ExistingFile -Destination $fullDestination
+        if (Confirm-InstallAction -Target $fullDestination -Action 'install managed content') {
             Write-Utf8NoBom -Path $fullDestination -Content $Content
         }
     }
 
-    if (Test-Path -LiteralPath $fullDestination -PathType Leaf) {
-        $script:ManagedFiles[$fullDestination] = (Get-FileHash -LiteralPath $fullDestination -Algorithm SHA256).Hash
-    }
+    $script:ManagedFiles[$fullDestination] = $null
 }
 
 function Copy-ManagedTree {
     param(
         [Parameter(Mandatory)][string]$Source,
-        [Parameter(Mandatory)][string]$Destination,
-        [scriptblock]$Transform
+        [Parameter(Mandatory)][string]$Destination
     )
 
     if (-not (Test-Path -LiteralPath $Source -PathType Container)) {
-        throw "Managed source directory is missing: $Source"
+        throw "Source directory is missing: $Source"
     }
 
-    Get-ChildItem -LiteralPath $Source -Recurse -File | ForEach-Object {
+    Get-ChildItem -LiteralPath $Source -Recurse -File | Sort-Object FullName | ForEach-Object {
         $relative = $_.FullName.Substring($Source.Length).TrimStart('\')
         $target = Join-Path $Destination $relative
         $content = Get-Content -LiteralPath $_.FullName -Raw -Encoding UTF8
-        if ($Transform) {
-            $content = & $Transform $relative $content
-        }
         Install-ManagedContent -Destination $target -Content $content
     }
-}
-
-function Install-WorkflowSkill {
-    param(
-        [Parameter(Mandatory)][string]$TargetBase,
-        [Parameter(Mandatory)][string]$Alias,
-        [Parameter(Mandatory)][string]$Source
-    )
-
-    $target = Join-Path $TargetBase $Alias
-    $transform = {
-        param($relative, $content)
-        if ($Alias -ne 'workflows') {
-            if ($relative -eq 'SKILL.md') {
-                $content = $content.Replace('name: workflows', "name: $Alias")
-            }
-            if ($relative -eq 'agents\openai.yaml') {
-                $content = $content.Replace('$workflows mode=PLAN.AUTO', "`$$Alias mode=PLAN.AUTO")
-            }
-        }
-        return $content
-    }.GetNewClosure()
-
-    Copy-ManagedTree -Source $Source -Destination $target -Transform $transform
-}
-
-function ConvertTo-TomlString {
-    param([Parameter(Mandatory)][string]$Value)
-
-    return '"' + $Value.Replace('\', '\\').Replace('"', '\"') + '"'
-}
-
-function Get-OpenCodePathValue {
-    $parts = New-Object System.Collections.Generic.List[string]
-    foreach ($candidate in @(
-        (Join-Path $env:APPDATA 'npm\node_modules\opencode-ai\bin'),
-        (Join-Path $env:ProgramFiles 'nodejs'),
-        (Join-Path $env:APPDATA 'npm'),
-        (Join-Path $env:ProgramFiles 'Git\cmd'),
-        $env:PATH
-    )) {
-        if ([string]::IsNullOrWhiteSpace($candidate)) {
-            continue
-        }
-        foreach ($item in $candidate -split ';') {
-            if (-not [string]::IsNullOrWhiteSpace($item) -and -not $parts.Contains($item)) {
-                $parts.Add($item)
-            }
-        }
-    }
-    return ($parts -join ';')
-}
-
-function Render-AgentProfile {
-    param([Parameter(Mandatory)][string]$Content)
-
-    $workerCommand = ConvertTo-TomlString (Join-Path $CodexHome 'bin\opencode-worker.cmd')
-    $opencodeAgents = ConvertTo-TomlString $opencodeAgentsDest
-    $opencodeJobs = ConvertTo-TomlString $opencodeJobsDest
-    $openCodePath = ConvertTo-TomlString (Get-OpenCodePathValue)
-    return $Content.Replace('__OPENCODE_WORKER_COMMAND__', $workerCommand.Trim('"')).Replace('__OPENCODE_AGENTS_DIR__', $opencodeAgents.Trim('"')).Replace('__OPENCODE_JOBS_DIR__', $opencodeJobs.Trim('"')).Replace('__OPENCODE_PATH__', $openCodePath.Trim('"')).Replace('__OPENCODE_AGENT_MODEL__', $openCodeAgentModel)
-}
-
-function Install-AgentProfile {
-    param([Parameter(Mandatory)][string]$Source)
-
-    $profile = Get-Content -LiteralPath $Source -Raw -Encoding UTF8
-    if ((Split-Path -Leaf $Source) -in @('relay.toml', 'watcher.toml')) {
-        $profile = Render-AgentProfile -Content $profile
-    }
-
-    $nameMatch = [regex]::Match($profile, '(?m)^name\s*=\s*"(?<name>[^"]+)"\s*$')
-    if (-not $nameMatch.Success) {
-        throw "Agent profile has no name: $Source"
-    }
-
-    $name = $nameMatch.Groups['name'].Value
-    $destination = Join-Path $agentsDest "$name.toml"
-    Install-ManagedContent -Destination $destination -Content $profile
-
-    foreach ($effort in $agentEfforts) {
-        $variantName = "$name-$effort"
-        $variant = [regex]::Replace($profile, '(?m)^name\s*=\s*"[^"]+"\s*$', "name = `"$variantName`"")
-        $variant = [regex]::Replace($variant, '(?m)^model_reasoning_effort\s*=\s*"[^"]+"\s*$', "model_reasoning_effort = `"$effort`"")
-        Install-ManagedContent -Destination (Join-Path $agentsDest "$variantName.toml") -Content $variant
-    }
-}
-
-function Install-ManagedBlock {
-    param(
-        [Parameter(Mandatory)][string]$Destination,
-        [Parameter(Mandatory)][string]$Begin,
-        [Parameter(Mandatory)][string]$End,
-        [Parameter(Mandatory)][string]$Block
-    )
-
-    $existing = if (Test-Path -LiteralPath $Destination -PathType Leaf) { Get-Content -LiteralPath $Destination -Raw -Encoding UTF8 } else { '' }
-    $content = $existing
-    $start = $existing.IndexOf($Begin, [StringComparison]::Ordinal)
-    if ($start -ge 0) {
-        $endStart = $existing.IndexOf($End, $start, [StringComparison]::Ordinal)
-        if ($endStart -lt 0) {
-            throw "Managed block is incomplete in $Destination"
-        }
-        $content = $existing.Substring(0, $start) + $Block + $existing.Substring($endStart + $End.Length)
-    }
-    elseif ($existing -match '(?m)^\[mcp_servers\.opencode_worker(?:\]|\.)') {
-        if (-not $Force) {
-            $message = "An unmanaged opencode_worker configuration already exists in $Destination. Use -Force after reviewing its backup."
-            if ($WhatIfPreference) {
-                $script:DryRunConflicts.Add($message)
-                Write-Warning "$message A execução real falharia sem -Force; o bloco foi apenas ignorado no dry-run."
-                return
-            }
-            throw $message
-        }
-        $pattern = '(?ms)^\[mcp_servers\.opencode_worker(?:\.[^\]]+)?\].*?(?=^\[(?!mcp_servers\.opencode_worker(?:\]|\.))|\z)'
-        $content = [regex]::Replace($existing, $pattern, $Block)
-    }
-    elseif ([string]::IsNullOrWhiteSpace($existing)) {
-        $content = $Block
-    }
-    else {
-        $content = $existing.TrimEnd() + "`r`n`r`n" + $Block
-    }
-
-    Install-ManagedContent -Destination $Destination -Content $content
 }
 
 function Install-GlobalAgentsFile {
     $raw = Get-Content -LiteralPath $agentsMdSource -Raw -Encoding UTF8
     $begin = '# BEGIN CODEX-WORKFLOWS-KIT'
     $end = '# END CODEX-WORKFLOWS-KIT'
-    $managed = "$begin`r`n$raw`r`n$end"
-    $existing = if (Test-Path -LiteralPath $agentsMdDest -PathType Leaf) { Get-Content -LiteralPath $agentsMdDest -Raw -Encoding UTF8 } else { '' }
-
-    if (-not [string]::IsNullOrWhiteSpace($existing) -and $existing.IndexOf($begin, [StringComparison]::Ordinal) -lt 0 -and $existing -cne $raw -and -not $Force) {
-        $message = "An unmanaged Codex AGENTS.md already exists. Use -Force after reviewing its backup: $agentsMdDest"
-        if ($WhatIfPreference) {
-            $script:DryRunConflicts.Add($message)
-            Write-Warning "$message A execução real falharia sem -Force; o bloco foi apenas ignorado no dry-run."
-            return
-        }
-        throw $message
+    $managed = $begin + $nl + $raw + $nl + $end + $nl
+    $existing = if (Test-Path -LiteralPath $agentsMdDest -PathType Leaf) {
+        Get-Content -LiteralPath $agentsMdDest -Raw -Encoding UTF8
+    }
+    else {
+        ''
     }
 
     if ($existing.IndexOf($begin, [StringComparison]::Ordinal) -ge 0) {
-        Install-ManagedBlock -Destination $agentsMdDest -Begin $begin -End $end -Block $managed
+        $start = $existing.IndexOf($begin, [StringComparison]::Ordinal)
+        $endStart = $existing.IndexOf($end, $start, [StringComparison]::Ordinal)
+        if ($endStart -lt 0) {
+            throw "Managed AGENTS.md block is incomplete: $agentsMdDest"
+        }
+        $tail = $existing.Substring($endStart + $end.Length).TrimStart([char[]]@([char]13, [char]10))
+        $content = $existing.Substring(0, $start) + $managed + $tail
+    }
+    elseif (-not [string]::IsNullOrWhiteSpace($existing) -and -not $Force) {
+        throw "An unmanaged AGENTS.md already exists. Review it and use -Force to replace it: $agentsMdDest"
     }
     else {
-        Install-ManagedContent -Destination $agentsMdDest -Content $managed
+        $content = $managed
+    }
+
+    Install-ManagedContent -Destination $agentsMdDest -Content $content
+}
+
+function Remove-KitBlocks {
+    param([AllowEmptyString()][string]$Text)
+
+    $range = '(?ms)^# BEGIN CODEX-WORKFLOWS-KIT:.*?^# END CODEX-WORKFLOWS-KIT:.*?(?:\r?\n|$)'
+    $result = [regex]::Replace($Text, $range, '')
+    return [regex]::Replace($result, '(?m)^# (?:BEGIN|END) CODEX-WORKFLOWS-KIT:.*(?:\r?\n|$)', '').Trim()
+}
+
+function Install-AgentDefaults {
+    $existing = if (Test-Path -LiteralPath $configPath -PathType Leaf) {
+        Get-Content -LiteralPath $configPath -Raw -Encoding UTF8
+    }
+    else {
+        ''
+    }
+
+    $content = Remove-KitBlocks -Text $existing
+    if ($content -notmatch '(?m)^\[agents\]\s*$') {
+        $block = @'
+# BEGIN CODEX-WORKFLOWS-KIT: agents
+[agents]
+max_concurrent_threads_per_session = 5
+default_subagent_model = "gpt-5.6-luna"
+default_subagent_reasoning_effort = "max"
+# END CODEX-WORKFLOWS-KIT: agents
+'@
+        $content = if ([string]::IsNullOrWhiteSpace($content)) { $block } else { $content.TrimEnd() + $nl + $nl + $block }
+    }
+
+    Install-ManagedContent -Destination $configPath -Content ($content.TrimEnd() + $nl)
+}
+
+function Test-CanRemoveManagedFile {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Action
+    )
+
+    if ($Force) {
+        return $true
+    }
+
+    $fullPath = [IO.Path]::GetFullPath($Path)
+    if (-not $script:PriorHashes.ContainsKey($fullPath)) {
+        Write-Warning "Preserving $Action without a recorded hash: $fullPath"
+        Add-PendingFile -Path $fullPath -Reason 'unverified'
+        return $false
+    }
+
+    $actualHash = (Get-FileHash -LiteralPath $fullPath -Algorithm SHA256).Hash
+    $expectedHash = $script:PriorHashes[$fullPath]
+    if ($actualHash -ne $expectedHash) {
+        Write-Warning "Preserving modified ${Action}: $fullPath"
+        Add-PendingFile -Path $fullPath -Reason 'modified' -ExpectedHash $expectedHash
+        return $false
+    }
+
+    return $true
+}
+
+function Remove-AgentDefaults {
+    if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) {
+        return
+    }
+
+    $existing = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8
+    $content = Remove-KitBlocks -Text $existing
+    if ($content -cne $existing.Trim()) {
+        if (-not (Test-CanRemoveManagedFile -Path $configPath -Action 'managed configuration')) {
+            return
+        }
+        Backup-ExistingFile -Destination $configPath
+        if (Confirm-InstallAction -Target $configPath -Action 'remove managed configuration block') {
+            Write-Utf8NoBom -Path $configPath -Content ($content + $nl)
+        }
     }
 }
 
-function Install-OpenCodeConfig {
-    $configPath = Join-Path $CodexHome 'config.toml'
-    $begin = '# BEGIN CODEX-WORKFLOWS-KIT: opencode_worker'
-    $end = '# END CODEX-WORKFLOWS-KIT: opencode_worker'
-    $block = @"
-$begin
-# Status-only exposure for the GPT parent: the run_agent/start_agent handoff
-# lives in the installed native watcher profile (agents/watcher.toml).
-[mcp_servers.opencode_worker]
-command = $(ConvertTo-TomlString (Join-Path $CodexHome 'bin\opencode-worker.cmd'))
-args = ["-y", "github:CheekyCodexConjurer/sub-agents-mcp#v0.13.1"]
-startup_timeout_sec = 30
-tool_timeout_sec = 86400
-enabled = true
-enabled_tools = ["get_agent_status", "get_agent_result", "cancel_agent"]
+function Remove-ManagedAgentsBlock {
+    if (-not (Test-Path -LiteralPath $agentsMdDest -PathType Leaf)) {
+        return
+    }
 
-[mcp_servers.opencode_worker.env]
-AGENTS_DIR = $(ConvertTo-TomlString $opencodeAgentsDest)
-AGENT_TYPE = "opencode"
-AGENT_MODEL = "$openCodeAgentModel"
-AGENT_EFFORT = "max"
-AGENT_PERMISSION = "yolo"
-EXECUTION_TIMEOUT_MS = "0"
-JOB_DIR = $(ConvertTo-TomlString $opencodeJobsDest)
-JOB_EXECUTION_TIMEOUT_MS = "0"
-JOB_HEARTBEAT_INTERVAL_MS = "5000"
-JOB_STALE_AFTER_MS = "30000"
-SESSION_ENABLED = "false"
-PATH = $(ConvertTo-TomlString (Get-OpenCodePathValue))
-$end
-"@
-    Install-ManagedBlock -Destination $configPath -Begin $begin -End $end -Block $block.TrimEnd()
+    $begin = '# BEGIN CODEX-WORKFLOWS-KIT'
+    $end = '# END CODEX-WORKFLOWS-KIT'
+    $content = Get-Content -LiteralPath $agentsMdDest -Raw -Encoding UTF8
+    $start = $content.IndexOf($begin, [StringComparison]::Ordinal)
+    if ($start -lt 0) {
+        return
+    }
 
-    $agentsBegin = '# BEGIN CODEX-WORKFLOWS-KIT: agents'
-    $agentsEnd = '# END CODEX-WORKFLOWS-KIT: agents'
-    $agentsBlock = "$agentsBegin`r`n[agents]`r`nmax_concurrent_threads_per_session = 5`r`n$agentsEnd"
-    $existingConfig = if (Test-Path -LiteralPath $configPath -PathType Leaf) { Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 } else { '' }
-    $kitAgentsPattern = '(?ms)# BEGIN CODEX-WORKFLOWS-KIT: agents.*?# END CODEX-WORKFLOWS-KIT: agents'
-    $withoutKit = [regex]::Replace($existingConfig, $kitAgentsPattern, '').TrimEnd()
-    if ($withoutKit -match '(?m)^\[agents\]') {
-        Write-Warning 'An existing [agents] section already owns Codex agent settings; the kit cap max_concurrent_threads_per_session = 5 was not added.'
-        if ($withoutKit -cne $existingConfig) {
-            Install-ManagedContent -Destination $configPath -Content $withoutKit
+    $endStart = $content.IndexOf($end, $start, [StringComparison]::Ordinal)
+    if ($endStart -lt 0) {
+        throw "Managed AGENTS.md block is incomplete: $agentsMdDest"
+    }
+
+    if (-not (Test-CanRemoveManagedFile -Path $agentsMdDest -Action 'managed AGENTS.md block')) {
+        return
+    }
+
+    $result = ($content.Substring(0, $start) + $content.Substring($endStart + $end.Length)).Trim()
+    if (Confirm-InstallAction -Target $agentsMdDest -Action 'remove managed AGENTS.md block') {
+        Backup-ExistingFile -Destination $agentsMdDest
+        if ([string]::IsNullOrWhiteSpace($result)) {
+            Remove-Item -LiteralPath $agentsMdDest -Force
+            $script:RemovedParents.Add((Split-Path -Parent $agentsMdDest))
+        }
+        else {
+            Write-Utf8NoBom -Path $agentsMdDest -Content ($result + $nl)
         }
     }
-    else {
-        $updated = if ([string]::IsNullOrWhiteSpace($withoutKit)) { $agentsBlock } else { $withoutKit + "`r`n`r`n" + $agentsBlock }
-        Install-ManagedContent -Destination $configPath -Content $updated
+}
+
+function Remove-ObsoleteManagedFiles {
+    foreach ($priorPath in $script:PriorPaths) {
+        if ($priorPath -eq $statePath -or $priorPath -eq $configPath -or $priorPath -eq $agentsMdDest) {
+            continue
+        }
+        if ($script:ManagedFiles.ContainsKey($priorPath)) {
+            continue
+        }
+        if (-not (Test-Path -LiteralPath $priorPath -PathType Leaf)) {
+            continue
+        }
+
+        $expectedHash = $script:PriorHashes[$priorPath]
+        $actualHash = (Get-FileHash -LiteralPath $priorPath -Algorithm SHA256).Hash
+        if ($actualHash -ne $expectedHash) {
+            Write-Warning "Preserving modified file no longer managed by this profile: $priorPath"
+            Add-PendingFile -Path $priorPath -Reason 'modified' -ExpectedHash $expectedHash
+            continue
+        }
+
+        $isCodexPath = $priorPath.StartsWith($CodexHome.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)
+        $isAgentsPath = $priorPath.StartsWith($AgentsHome.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)
+        if (-not ($isCodexPath -or $isAgentsPath)) {
+            Write-Warning "Preserving obsolete managed file outside the selected destinations: $priorPath"
+            Add-PendingFile -Path $priorPath -Reason 'outside-destinations' -ExpectedHash $expectedHash
+            continue
+        }
+
+        $parent = if ($isCodexPath) { $CodexHome } else { $AgentsHome }
+        Assert-ChildPath -Path $priorPath -Parent $parent | Out-Null
+        if (Confirm-InstallAction -Target $priorPath -Action 'remove obsolete managed file') {
+            Remove-Item -LiteralPath $priorPath -Force
+            $script:RemovedParents.Add((Split-Path -Parent $priorPath))
+        }
+    }
+
+    foreach ($parent in ($script:RemovedParents | Sort-Object -Unique)) {
+        $current = $parent
+        while (-not [string]::IsNullOrWhiteSpace($current)) {
+            $isCodexRoot = $current.TrimEnd('\') -eq $CodexHome.TrimEnd('\')
+            $isAgentsRoot = $current.TrimEnd('\') -eq $AgentsHome.TrimEnd('\')
+            if ($isCodexRoot -or $isAgentsRoot -or -not (Test-Path -LiteralPath $current -PathType Container)) {
+                break
+            }
+
+            $children = @(Get-ChildItem -LiteralPath $current -Force)
+            if ($children.Count -ne 0) {
+                break
+            }
+
+            $isCodexPath = $current.StartsWith($CodexHome.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)
+            $parentRoot = if ($isCodexPath) { $CodexHome } else { $AgentsHome }
+            Assert-ChildPath -Path $current -Parent $parentRoot | Out-Null
+            if (Confirm-InstallAction -Target $current -Action 'remove empty managed directory') {
+                Remove-Item -LiteralPath $current -Force
+            }
+            $current = Split-Path -Parent $current
+        }
     }
 }
 
 function Save-InstallState {
-    foreach ($path in @($script:ManagedFiles.Keys)) {
-        if (Test-Path -LiteralPath $path -PathType Leaf) {
-            $script:ManagedFiles[$path] = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+    $managedEntries = @{}
+    foreach ($path in ($script:ManagedFiles.Keys | Sort-Object)) {
+        if ($path -eq $statePath -or -not (Test-Path -LiteralPath $path -PathType Leaf)) {
+            continue
+        }
+        $managedEntries[$path] = [ordered]@{
+            path = $path
+            sha256 = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
         }
     }
 
+    $entries = @(
+        foreach ($path in ($managedEntries.Keys | Sort-Object)) {
+            $managedEntries[$path]
+        }
+    )
+    $pendingEntries = @(
+        foreach ($path in ($script:PendingFiles.Keys | Sort-Object)) {
+            if ($managedEntries.ContainsKey($path) -or -not (Test-Path -LiteralPath $path -PathType Leaf)) {
+                continue
+            }
+            $script:PendingFiles[$path]
+        }
+    )
+
     $state = [ordered]@{
-        schemaVersion = 1
+        schemaVersion = 3
         product = 'codex-workflows-kit'
         profile = $Profile
         installedAtUtc = [datetime]::UtcNow.ToString('o')
-        files = @(
-            foreach ($entry in $script:ManagedFiles.GetEnumerator()) {
-                [ordered]@{ path = $entry.Key; sha256 = $entry.Value }
-            }
-        )
+        files = $entries
+        pendingFiles = $pendingEntries
     }
-    $stateText = $state | ConvertTo-Json -Depth 5
-    Install-ManagedContent -Destination $statePath -Content $stateText
+
+    Install-ManagedContent -Destination $statePath -Content (($state | ConvertTo-Json -Depth 5) + $nl)
+}
+
+function Assert-InstallPreflight {
+    if (-not (Test-Path -LiteralPath $workflowSource -PathType Container)) {
+        throw "Canonical workflow skill is missing: $workflowSource"
+    }
+    if (-not (Test-Path -LiteralPath $evidenceSource -PathType Container)) {
+        throw "Evidence skill is missing: $evidenceSource"
+    }
+    if ($InstallAhk -and -not (Test-Path -LiteralPath $ahkSource -PathType Leaf)) {
+        throw "Prompt pad source is missing: $ahkSource"
+    }
+
+    if ($Profile -ne 'safe') {
+        return
+    }
+
+    foreach ($profileName in @('scout.toml', 'researcher.toml', 'reviewer.toml')) {
+        $source = Join-Path $agentsSource $profileName
+        if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
+            throw "Native profile is missing: $source"
+        }
+    }
+
+    if (-not (Test-Path -LiteralPath $agentsMdDest -PathType Leaf)) {
+        return
+    }
+
+    $existing = Get-Content -LiteralPath $agentsMdDest -Raw -Encoding UTF8
+    $begin = '# BEGIN CODEX-WORKFLOWS-KIT'
+    $end = '# END CODEX-WORKFLOWS-KIT'
+    $start = $existing.IndexOf($begin, [StringComparison]::Ordinal)
+    if ($start -ge 0 -and $existing.IndexOf($end, $start, [StringComparison]::Ordinal) -lt 0) {
+        throw "Managed AGENTS.md block is incomplete: $agentsMdDest"
+    }
+    if ($start -lt 0 -and -not [string]::IsNullOrWhiteSpace($existing) -and -not $Force) {
+        throw "An unmanaged AGENTS.md already exists. Review it and use -Force to replace it: $agentsMdDest"
+    }
 }
 
 $installationSucceeded = $false
 try {
-if (-not (Test-Path -LiteralPath $workflowSource -PathType Container)) {
-    throw "Canonical workflows skill is missing: $workflowSource"
-}
+    Assert-InstallPreflight
+    Initialize-PriorState
 
-Ensure-Directory -Path $skillsDest
-$skillDirectories = if ($includeAllSkills) {
-    @(Get-ChildItem -LiteralPath $skillsSource -Directory | Select-Object -ExpandProperty Name)
-} else {
-    @('workflows', 'evidence-first')
-}
+    Ensure-Directory -Path $skillsDest
+    Copy-ManagedTree -Source $workflowSource -Destination (Join-Path $skillsDest 'workflows')
+    Copy-ManagedTree -Source $evidenceSource -Destination (Join-Path $skillsDest 'evidence-first')
 
-foreach ($skillName in $skillDirectories) {
-    $source = Join-Path $skillsSource $skillName
-    if (-not (Test-Path -LiteralPath $source -PathType Container)) {
-        throw "Configured skill source is missing: $source"
-    }
-    Copy-ManagedTree -Source $source -Destination (Join-Path $skillsDest $skillName)
-}
+    if ($Profile -eq 'safe') {
+        Ensure-Directory -Path $agentsDest
+        Install-GlobalAgentsFile
 
-foreach ($alias in @('codex-workflows', 'antigravity-workflows', 'opencode-workflows')) {
-    Install-WorkflowSkill -TargetBase $skillsDest -Alias $alias -Source $workflowSource
-}
-
-if ($installAntigravity) {
-    foreach ($targetBase in @($antigravitySkillsDest1, $antigravitySkillsDest2)) {
-        Ensure-Directory -Path $targetBase
-        foreach ($skillName in $skillDirectories) {
-            Copy-ManagedTree -Source (Join-Path $skillsSource $skillName) -Destination (Join-Path $targetBase $skillName)
+        foreach ($profileName in @('scout.toml', 'researcher.toml', 'reviewer.toml')) {
+            $source = Join-Path $agentsSource $profileName
+            Install-ManagedContent -Destination (Join-Path $agentsDest $profileName) -Content (Get-Content -LiteralPath $source -Raw -Encoding UTF8)
         }
-        foreach ($alias in @('codex-workflows', 'antigravity-workflows', 'opencode-workflows')) {
-            Install-WorkflowSkill -TargetBase $targetBase -Alias $alias -Source $workflowSource
-        }
-    }
-}
 
-if ($includeAgents) {
-    Ensure-Directory -Path $agentsDest
-    Install-GlobalAgentsFile
-    Get-ChildItem -LiteralPath $agentsSource -File -Filter '*.toml' | ForEach-Object {
-        Install-AgentProfile -Source $_.FullName
+        Install-AgentDefaults
     }
-}
-
-if ($includeOpenCode) {
-    Ensure-Directory -Path $opencodeAgentsDest
-    Copy-ManagedTree -Source $opencodeAgentsSource -Destination $opencodeAgentsDest
-    Install-ManagedContent -Destination $workerWrapperDest -Content (Get-Content -LiteralPath $workerWrapperSource -Raw -Encoding UTF8)
-}
-
-if ($includeMaintenance) {
-    Install-ManagedContent -Destination $maintenanceDest -Content (Get-Content -LiteralPath $maintenanceSource -Raw -Encoding UTF8)
-}
-
-if ($InstallAhk) {
-    Install-ManagedContent -Destination $AhkDestination -Content (Get-Content -LiteralPath $ahkSource -Raw -Encoding UTF8)
-}
-
-if ($ConfigureMcp) {
-    Install-OpenCodeConfig
-    $maintenanceParams = @{
-        Mode = 'Repair'
-        RepositoryRoot = $repo
-        CodexHome = $CodexHome
+    else {
+        Remove-AgentDefaults
+        Remove-ManagedAgentsBlock
     }
-    if ($InstallScheduledTask) {
-        $maintenanceParams['InstallScheduledTask'] = $true
-    }
-    if (-not $WhatIfPreference -and -not (Test-Path -LiteralPath $maintenanceDest -PathType Leaf)) {
-        throw "MCP maintenance script was not installed: $maintenanceDest"
-    }
-    if (Confirm-InstallAction -Target $maintenanceDest -Action 'Repair allowlisted MCP foundation') {
-        & $maintenanceDest @maintenanceParams
-    }
-}
-elseif ($InstallScheduledTask) {
-    throw '-InstallScheduledTask requires -ConfigureMcp.'
-}
 
-$installationSucceeded = $true
+    if ($InstallAhk) {
+        Install-ManagedContent -Destination $AhkDestination -Content (Get-Content -LiteralPath $ahkSource -Raw -Encoding UTF8)
+    }
+
+    Remove-ObsoleteManagedFiles
+    $installationSucceeded = $true
 }
 finally {
     if (-not $WhatIfPreference -and $script:ManagedFiles.Count -gt 0) {
@@ -533,7 +626,7 @@ finally {
             if ($installationSucceeded) {
                 throw
             }
-            Write-Warning "Installation failed before its state could be saved: $($_.Exception.Message)"
+            Write-Warning "Installation failed before its partial state could be saved: $($_.Exception.Message)"
         }
     }
 }
@@ -546,12 +639,6 @@ else {
 }
 Write-Host "Codex home: $CodexHome"
 Write-Host "Skills: $skillsDest"
-if ($includeAgents) { Write-Host "Agents: $agentsDest" }
-if ($includeOpenCode) { Write-Host "OpenCode agents: $opencodeAgentsDest" }
-if ($includeOpenCode) { Write-Host "OpenCode provider: $openCodeProvider (model $openCodeAgentModel)" }
+if ($Profile -eq 'safe') { Write-Host "Agents: $agentsDest" }
 if ($InstallAhk) { Write-Host "AHK: $AhkDestination" }
-if ($ConfigureMcp) { Write-Host "MCP: configured in $(Join-Path $CodexHome 'config.toml')" }
 if ($script:BackedUp.Count -gt 0) { Write-Host "Backups: $script:BackupRoot" }
-if ($WhatIfPreference -and $script:DryRunConflicts.Count -gt 0) {
-    Write-Warning ("Dry-run encontrou {0} conflito(s); use -Force depois de revisar os backups para executar a instalação." -f $script:DryRunConflicts.Count)
-}

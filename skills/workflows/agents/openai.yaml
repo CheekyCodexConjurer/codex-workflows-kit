@@ -1,4 +1,4 @@
 interface:
   display_name: "Workflows"
-  short_description: "Universal compact workflow router for Codex, Antigravity, and OpenCode."
+  short_description: "Canonical workflow modes with native read-only sub-agents."
   default_prompt: "$workflows mode=PLAN.AUTO"

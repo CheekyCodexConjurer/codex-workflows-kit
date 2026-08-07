@@ -9,5 +9,3 @@ __pycache__/
 *.py[cod]
 .codegraph/
 plugins/audiobook-codex/
-.agents/plugins/*
-!.agents/plugins/marketplace.json

@@ -4,50 +4,34 @@
 
 | Version | Suporte |
 |---|---|
-| 0.2.x (em desenvolvimento) | correcoes e novas funcionalidades |
-| 0.1.x | correcoes de seguranca enquanto a 0.2 nao for publicada |
-| Versoes anteriores | sem suporte |
+| 0.2.x | correções e novas funcionalidades |
+| anteriores | sem suporte ativo |
 
 ## Escopo
 
-Fazem parte do escopo desta politica:
+Fazem parte do escopo desta política:
 
-- `scripts/` (instalador, validador, doctor e uninstall);
-- `skills/` (workflows e evidence-first, incluindo referencias);
-- `agents/` e `agents/opencode/` (perfis e guardrails de permissao);
-- `plugins/mcp-foundation/` (allowlist, hook de auditoria e mantenedor);
-- `ahk/` e `codex/AGENTS.md`.
+- scripts/;
+- skills/;
+- agents/;
+- ahk/ e codex/AGENTS.md.
 
-Fora do escopo (deficiencias devem ser reportadas aos respectivos
-mantenedores):
-
-- Codex CLI, Google Antigravity e OpenCode CLI;
-- servidores MCP remotos (Context7, OpenAI Developer Docs) e o pacote
-  `sub-agents-mcp`.
+Fora do escopo estão o produto Codex e componentes instalados fora deste
+checkout.
 
 ## Reporting a vulnerability
 
-Nao abra uma issue publica para vulnerabilidades. Reporte de forma privada
-ao mantenedor, incluindo:
+Não abra uma issue pública para vulnerabilidades. Envie ao mantenedor, de
+forma privada:
 
-1. Versao afetada (commit ou release).
-2. Descricao do problema e impacto potencial.
-3. Passos de reproducao, se disponiveis.
-4. Mitigacao sugerida, se houver.
+1. versão ou commit afetado;
+2. descrição e impacto potencial;
+3. passos de reprodução, se disponíveis;
+4. mitigação sugerida, se houver.
 
-Esperado do mantenedor:
+## Práticas do projeto
 
-- reconhecimento do reporte no prazo de alguns dias;
-- avaliacao de impacto e resposta;
-- correcao acompanhada de entrada no `CHANGELOG.md`;
-- divulgacao coordenada apos a correcao estar disponivel.
-
-## Praticas do projeto
-
-- O kit nao registra telemetria e nao coleta dados do usuario.
-- A instalacao e local e nao usa `irm | iex`; rode apenas o checkout revisado.
-- O validador (`scripts/validate.ps1`) verifica contratos de permissao,
-  allowlist de MCP e paridade de destinos instalados.
-- Backups com timestamp sao criados antes de sobrescrever destinos.
-- MCPs remotos exigem autenticacao unica explicita do usuario; o kit nunca
-  instala credenciais por conta propria.
+- O kit não registra telemetria e não coleta dados do usuário.
+- A instalação é local; execute apenas o checkout revisado.
+- Backups com timestamp são criados antes de sobrescrever destinos.
+- Os perfis nativos têm sandbox read-only e não recebem permissão de escrita.
