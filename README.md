@@ -27,7 +27,7 @@ Documentacao: [Arquitetura](docs/architecture.md) · [Seguranca](docs/security.m
 |---|---|---|
 | skill `workflows` + aliases `codex-workflows`, `antigravity-workflows`, `opencode-workflows` | Codex, Antigravity, OpenCode | roteador canonico de modos (`PLAN.AUTO`, `DELIVER.AUTO`, `COMMIT`, ...) |
 | skill `evidence-first` | Codex, Antigravity, OpenCode | verificacao de claims materiais, sem atalho dedicado |
-| agents nativos `relay`, `scout`, `researcher`, `reviewer`, `worker` (com variantes de esforco) | Codex | sub-agents com sandbox read-only ou write escopado |
+| agents nativos `relay`, `watcher`, `scout`, `researcher`, `reviewer`, `worker` (com variantes de esforco) | Codex | watcher de transporte; perfis analíticos continuam bloqueados |
 | agents OpenCode `scout`, `researcher`, `reviewer`, `worker` | OpenCode | readers sem edicao e writer com claim-map + worktree isolada |
 | `codex/AGENTS.md` | Codex | instrucoes globais compactas |
 | plugin `mcp-foundation` | Codex | MCPs allowlisted: CodeGraph, Context7, OpenAI Developer Docs |
@@ -149,7 +149,8 @@ flowchart LR
     ANT --> SKILL
     SKILL --> MM["mode matrix + referencias"]
     MM --> SUB["scout / researcher / reviewer"]
-    SUB --> MCPWORKER["opencode_worker MCP"]
+    SUB --> WATCH["native watcher (transport-only)"]
+    WATCH --> MCPWORKER["opencode_worker MCP"]
     MCPWORKER --> WORKER["OpenCode worker em worktree isolada"]
     MM --> EF["evidence-first skill"]
     MM --> RATCHET["quality ratchet + validation"]
@@ -208,7 +209,7 @@ auditoria local com TTL de 24 horas. O Codex exige revisao unica do hook em
 
 O contrato canônico está em
 `skills/workflows/references/backend-policy.md`. O backend padrão é
-`internal_subagent_backend=opencode` com `internal_subagent_transport=direct_mcp`.
+`internal_subagent_backend=opencode` com `internal_subagent_transport=native_watcher_mcp`.
 O GPT orquestrador planeja, diagnostica, testa e aprova; nunca escreve patches.
 Toda implementação passa pelo writer OpenCode em worktree isolada, com
 claim-map, `WRITER_WORKTREE` e `WRITER_BASELINE`.
@@ -222,15 +223,34 @@ Reader com duas ou mais frentes independentes recebe
 `NESTED_REQUIRED=<frentes>` e deve usar um nested read-only por frente. Se
 `task` não estiver disponível, retorna `NESTED_DELEGATION=blocked`.
 
-Para jobs longos, use `start_agent`, guarde o `job_id` e consulte
-`get_agent_status` no primeiro ponto de espera prolongada ou decisão. Heartbeat
-live em job running permite aguardar; estado terminal ou `result_available=true`
-permite ler o resultado. Heartbeat stale, processo ausente ou estado desconhecido
-exige diagnóstico, reparo, replanejamento ou bloqueio — nunca espera cega.
+Para o handoff normal, o pai sobe o native `watcher` (`agent_type=watcher`,
+`gpt-5.6-luna`, esforço `high`) que mantém uma chamada `run_agent` aberta e
+devolve o resultado ao GPT, deixando o chat principal livre. Cada brief exige o
+token explícito `OPEN_CODE_ROLE` ∈ {scout, researcher, reviewer, worker}; o
+watcher nunca adivinha papel e um token ausente/inválido bloqueia
+(`WATCHER_STATUS=blocked`) antes da chamada MCP. O pai nunca chama
+`run_agent`/`start_agent` diretamente para trabalho normal; sua exposição do
+MCP é apenas `get_agent_status`/`get_agent_result`/`cancel_agent` para
+recuperação declarada, e o handoff completo vive no perfil instalado do
+watcher, renderizado de placeholders portáteis na instalação. Para jobs
+destacados ou recuperação, `start_agent` é exceção explícita depois de a rota
+ser declarada: guarde o `job_id` e consulte `get_agent_status` somente no ponto
+de decisão. Heartbeat stale, processo ausente ou estado desconhecido exige
+diagnóstico, reparo, replanejamento ou bloqueio — nunca espera cega.
+
+O cap operacional é `MAX_ACTIVE_CHILDREN_PER_CHAT=5`: filhos live ou aguardando
+devem ser esperados, respostas devem ser capturadas e fechadas imediatamente,
+e somente crash confirmado ou estado terminal permite fechamento. Nunca envie
+mensagens para acelerar o MCP; com slots cheios, recupere apenas filhos
+terminais já capturados.
 
 O native `scout`, `researcher`, `reviewer` e `worker` retorna
-`NATIVE_ROUTE_BLOCKED` enquanto o OpenCode estiver ativo. O native relay só faz
-pré-leitura visual e produz `[VISUAL_PACKET v1]` textual.
+`NATIVE_ROUTE_BLOCKED` enquanto o OpenCode estiver ativo. O native `watcher` é
+somente transporte MCP e retorna `WATCHER_ROUTE_BLOCKED` se receber trabalho
+analítico ou de edição. O native relay só faz pré-leitura visual e produz
+`[VISUAL_PACKET v1]` textual; o pai anexa apenas esse pacote sanitizado ao
+brief do watcher/papel OpenCode — nunca paths, bytes, base64 ou data URLs, e
+nunca leitura direta de imagem pelo modelo OpenCode (DeepSeek).
 
 O diretório canônico das definições OpenCode neste projeto é
 `agents/opencode`. O instalador mantém uma cópia em
@@ -244,7 +264,7 @@ args = ["-y", "github:CheekyCodexConjurer/sub-agents-mcp#v0.13.1"]
 startup_timeout_sec = 30
 tool_timeout_sec = 86400
 enabled = true
-enabled_tools = ["run_agent", "start_agent", "get_agent_status", "get_agent_result", "cancel_agent"]
+enabled_tools = ["get_agent_status", "get_agent_result", "cancel_agent"]
 
 [mcp_servers.opencode_worker.env]
 AGENTS_DIR = "%CODEX_HOME%\\opencode-agents"
@@ -259,7 +279,21 @@ JOB_HEARTBEAT_INTERVAL_MS = "5000"
 JOB_STALE_AFTER_MS = "30000"
 SESSION_ENABLED = "false"
 PATH = "<gerado pelo instalador a partir do PATH do Windows>"
+
+[agents]
+max_concurrent_threads_per_session = 5
 ```
+
+O bloco acima é a exposição **status-only do GPT pai**: `run_agent` e
+`start_agent` não ficam disponíveis ao pai para trabalho normal. O handoff
+completo (`run_agent`, `start_agent`, status, resultado e cancelamento) pertence
+ao perfil instalado do native `watcher` (`%CODEX_HOME%\\agents\\watcher.toml`),
+renderizado pelo instalador a partir de placeholders portáteis
+(`__OPENCODE_WORKER_COMMAND__`, `__OPENCODE_AGENTS_DIR__`,
+`__OPENCODE_JOBS_DIR__`, `__OPENCODE_PATH__`). O cap
+`max_concurrent_threads_per_session = 5` só é adicionado quando o instalador é
+dono das configurações de agentes, ou seja, quando não há uma seção `[agents]`
+pré-existente do usuário.
 
 O trecho TOML usa `%CODEX_HOME%` apenas como marcador documental; o instalador
 gera caminhos absolutos para o computador atual. Não cole o marcador literalmente
@@ -289,6 +323,29 @@ opencode models
 opencode run --model opencode-go/deepseek-v4-flash --variant max "Responda somente OK"
 ```
 
+### Provedor OpenCode (variante de modelo)
+
+A variante de modelo segue o flag de runtime `CODEX_WORKFLOWS_OPENCODE_PROVIDER`,
+validado contra o enum abaixo (padrão `go`):
+
+| Valor | Modelo |
+|---|---|
+| `go` (padrão) | `opencode-go/deepseek-v4-flash` |
+| `zen` | `zenmux/deepseek/deepseek-v4-flash` |
+
+Defina a variável de ambiente antes de iniciar o runtime: o wrapper
+`bin/opencode-worker.cmd` re-resolve o modelo no momento em que o processo
+filho do MCP começa, sem exigir reinstalação. Na ausência do flag, o wrapper
+preserva o `AGENT_MODEL` herdado/renderizado pelo instalador (no perfil do
+watcher e no bloco MCP do pai) e só usa o padrão `go` quando nenhum modelo foi
+herdado; valores explícitos `go` ou `zen` sobrescrevem o modelo. O flag é
+validado — um valor inválido falha com erro explícito, sem fallback silencioso
+— e nunca altera credenciais: ele troca apenas o ID do modelo. O instalador
+renderiza o modelo selecionado explicitamente no perfil do watcher e no bloco
+MCP do pai;
+`AGENT_EFFORT=max` e a separação status-only do pai / handoff completo do
+watcher permanecem inalterados.
+
 O pacote usa `AGENT_PERMISSION=yolo` porque o nível `read-only` hard-coda a
 negação de `task` e `external_directory`. Isso não transforma o MCP em sandbox:
 readers mantêm `edit: deny`/`bash: deny`, enquanto apenas o writer mantém
@@ -300,6 +357,22 @@ MCP `codegraph`, que fica disponível por decisão explícita desta integração
 qualquer outro MCP/custom tool com efeitos colaterais exige revisão separada.
 Após alterar
 o bloco MCP, reinicie ou reconecte o servidor no Codex.
+
+O wrapper `bin/opencode-worker.cmd` não concede `external_directory` global: o
+`OPENCODE_CONFIG_CONTENT` limita os allows de diretório externo aos caminhos
+instalados confiáveis — `%AGENTS_DIR%` (diretório dos agentes OpenCode
+instalados; sub-agents-mcp o define para o filho, com fallback
+`%CODEX_HOME%\opencode-agents` quando um `CODEX_HOME` custom está definido, e
+então `%USERPROFILE%\.codex\opencode-agents`) e `%AGENTS_HOME%\skills\workflows`
+quando um `AGENTS_HOME` custom está definido, senão
+`%USERPROFILE%\.agents\skills\workflows`
+— com barras invertidas escapadas para JSON. Causa observada: os agentes
+embutidos `general`/`explore` mantêm `external_directory=* ask` e os readers
+aninhados encerravam sem resultado ao não conseguir ler os arquivos de controle
+instalados. Evidência: teste direto de CLI OpenCode e smoke aninhado de duas
+frentes. `scripts/validate.ps1` valida apenas o contrato estático do wrapper;
+não prova o comportamento em runtime — a verificação de runtime é o smoke de
+CLI aninhado.
 
 Referências primárias: [OpenCode CLI](https://dev.opencode.ai/docs/cli/),
 [OpenCode Go](https://dev.opencode.ai/docs/de/go/) e
@@ -316,12 +389,16 @@ inspeção; nunca ordena um split. Refatorações amplas continuam exigindo
 ## Cadência proporcional
 
 O workflow mantém tarefas simples no menor caminho local capaz de responder à
-dúvida ou provar o comportamento pedido. Em tarefas não triviais (multi-arquivo,
-core compartilhado, ownership incerto, alto impacto, risco de contrato ou revisão
-explícita), ele ativa `quality-first-subA`: distribui frentes independentes entre
-read-only scouts/researchers em paralelo quando elas existem, mesmo sem ganho de
+dúvida ou provar o comportamento pedido. O fan-out de readers é obrigatório
+(`sidecar-gate`) para tarefas não triviais (multi-arquivo, core compartilhado,
+ownership incerto, alto impacto, risco de contrato ou revisão explícita),
+tarefas com duas ou mais frentes independentes ou pedido explícito do usuário
+por sub-agentes: ele distribui frentes independentes entre read-only
+scouts/researchers em paralelo quando elas existem, mesmo sem ganho de
 tempo. Quando o usuário não limita latência, tempo é secundário; não se duplicam
-frentes nem se relaxam gates de papel, escopo ou integração. O workflow só amplia
+frentes nem se relaxam gates de papel, escopo ou integração; frentes
+obrigatórias nunca são absorvidas localmente, e apenas tarefas estritamente
+simples, seriais e de uma superfície ficam locais. O workflow só amplia
 profundidade além dessas frentes quando uma evidência existente ou um risco
 material revela incerteza, ou quando há um gate obrigatório ainda aberto. Antes de
 repetir uma ação sem evidência nova, faz um checkpoint e, quando houver uma,
@@ -403,7 +480,8 @@ Alt+NUM6     /learn
   sistema.
 - O contrato `internal_subagent_policy=writer_only` não relaxa permissões:
   `no-edit` impede o spawn de writer, native analytical profiles retornam
-  `NATIVE_ROUTE_BLOCKED`, e nenhum fallback silencioso é aceito.
+  `NATIVE_ROUTE_BLOCKED`, o watcher é somente transporte e nenhum fallback
+  silencioso é aceito.
 - Modelo de ameaças completo em `docs/security.md`.
 
 ## Suporte e limitações

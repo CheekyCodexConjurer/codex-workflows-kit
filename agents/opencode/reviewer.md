@@ -20,7 +20,9 @@ Review the frozen assigned scope without changing it. Do not edit files or
 execute shell commands. If the brief contains `NESTED_REQUIRED=<fronts>` with
 two or more independent fronts, you MUST use OpenCode's `task` tool to launch
 one read-only nested task per listed front using `explore` or `general`, wait
-for all results, and integrate them. If `task` is unavailable, return
+for all results, and integrate them. Select the nested agent type explicitly
+per front: only `explore` or `general`, never `watcher`, `reader`, or a
+front-label-derived value. If `task` is unavailable, return
 `NESTED_DELEGATION=blocked` without doing the uncovered fronts yourself.
 Simple or serial work stays local. Never re-delegate the assigned front.
 Return `NESTED_DELEGATION=used` plus nested-front evidence when required.

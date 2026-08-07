@@ -18,10 +18,25 @@ Seja elegante e preciso; evite complexidade desnecessária.
 
 - O GPT orquestrador é dono de plano, claim-map, diagnóstico, testes,
   inspeção, integração e aprovação. Ele não escreve patches de código.
-- Com `internal_subagent_backend=opencode`, use diretamente o MCP
-  `opencode_worker`. Nunca use um native `scout`, `researcher`, `reviewer` ou
-  `worker` para fazer o trabalho; esses perfis devem retornar
-  `NATIVE_ROUTE_BLOCKED`. O native `relay` só pode transportar um pacote visual.
+- Com `internal_subagent_backend=opencode`, o handoff normal de readers,
+  reviewers e writers usa a ponte do native `watcher` (`agent_type=watcher`):
+  `pai -> watcher -> MCP opencode_worker -> papel OpenCode exato`. O pai nunca
+  chama `run_agent`/`start_agent` diretamente para trabalho normal; sua
+  exposição é só `get_agent_status`/`get_agent_result`/`cancel_agent` para
+  recuperação declarada. `start_agent` destacado é exceção explícita apenas
+  depois de declarar a rota e com evidência. Nunca use um native `scout`,
+  `researcher`, `reviewer` ou `worker` para fazer o trabalho; esses perfis
+  devem retornar `NATIVE_ROUTE_BLOCKED`. O native `relay` só pode transportar
+  um pacote visual.
+- Fan-out de readers é obrigatório (`sidecar-gate`): tarefa não trivial, duas
+  ou mais frentes independentes, pedido explícito de sub-agentes, risco de
+  contrato/core ou obrigação explícita de revisão/teste exige um ou mais
+  readers read-only, mesmo sem ganho de tempo; frentes obrigatórias nunca são
+  absorvidas localmente. Só tarefas estritamente simples e seriais ficam
+  locais.
+- O native `watcher` é a única exceção textual: `gpt-5.6-luna` com esforço
+  `high`, somente para manter uma chamada MCP aberta e devolver o resultado.
+  Ele não analisa, edita, revisa nem sobe outros agentes.
 - Toda escrita autorizada vai para um writer OpenCode em worktree limpa e
   isolada, com `WRITER_WORKTREE`, `WRITER_BASELINE`, claim-map, no-touch e
   merge gate. O pai pode aplicar o diff aprovado mecanicamente, mas não pode
@@ -45,21 +60,29 @@ edição. Modos no-edit, incluindo `BUG.INV`, não iniciam writers.
 
 Reader OpenCode é read-only. Quando o brief declarar
 `NESTED_REQUIRED=<frentes>` para duas ou mais frentes independentes, o reader
-deve iniciar um nested read-only por frente, esperar todos e integrar os
-resultados. Se `task` não estiver disponível, retorna
-`NESTED_DELEGATION=blocked`; não faz tudo sozinho. Tarefas simples ou seriais
-ficam locais; writers não delegam.
+deve iniciar um nested read-only por frente, esperar todos, integrar os
+resultados e retornar `NESTED_DELEGATION=used`. Se `task` não estiver
+disponível, retorna `NESTED_DELEGATION=blocked`; não faz tudo sozinho. Tarefas
+simples ou seriais ficam locais; writers não delegam.
 
 ## Jobs longos
 
-- Use `run_agent` somente em smoke test curto; use `start_agent` para trabalho
-  que possa demorar e guarde o `job_id`.
+- O pai nunca chama `run_agent`/`start_agent` para trabalho normal; o native
+  `watcher` faz a única chamada bloqueante `run_agent` para o handoff normal e
+  o pai não fica consultando nem esperando essa chamada. `start_agent` é
+  reservado a jobs destacados e recuperação declarados, depois de a rota ser
+  definida e a evidência exigir.
 - Em uma espera prolongada ou antes de decidir, consulte
   `get_agent_status`. `running + freshness=live` permite esperar; resultado
   disponível ou estado terminal permite `get_agent_result`.
 - Heartbeat stale, processo ausente, erro MCP ou estado desconhecido exigem
   uma consulta diagnóstica e depois reparo, replanejamento ou bloqueio. Nunca
   espere cegamente, faça polling contínuo ou trate `accepted` como resultado.
+- `MAX_ACTIVE_CHILDREN_PER_CHAT=5` é o cap operacional por chat. Se estiver
+  `running`/live, espere e não envie mensagem, `steer`, interrupt ou retry para
+  acelerar o MCP. Ao retornar, capture o resultado e feche imediatamente. Só
+  feche antes disso com crash confirmado; com slots cheios, recupere apenas
+  filhos terminais já capturados.
 
 ## Entrega
 

@@ -25,10 +25,12 @@ integrações continuam opt-in por flags do instalador.
 flowchart LR
     USER["prompt $workflows mode=..."] --> GPT["GPT orquestrador"]
     GPT --> READ["leitura / diagnóstico"]
-    READ --> MCP["opencode_worker MCP"]
+    READ --> WATCH["native watcher"]
+    WATCH --> MCP["opencode_worker MCP"]
     MCP --> READER["OpenCode reader"]
     GPT --> PREFLIGHT["claim-map + worktree limpa"]
-    PREFLIGHT --> MCPW["opencode_worker MCP"]
+    PREFLIGHT --> WATCH2["native watcher"]
+    WATCH2 --> MCPW["opencode_worker MCP"]
     MCPW --> WRITER["OpenCode worker"]
     WRITER --> VERIFY["teste + revisão do diff"]
     VERIFY -->|passa| MERGE["merge mecânico"]
@@ -67,9 +69,16 @@ worktree isolada: `edit: allow`, `bash: deny`, `task: deny` e
 
 Quando um reader recebe duas ou mais frentes independentes, o prompt contém
 `NESTED_REQUIRED=<frentes>`. Ele deve delegar uma tarefa read-only por frente,
-aguardar e integrar todas as respostas. Se `task` não estiver disponível,
-retorna `NESTED_DELEGATION=blocked`; não absorve silenciosamente todas as
-frentes. Writers nunca delegam.
+aguardar e integrar todas as respostas e retornar `NESTED_DELEGATION=used`. Se
+`task` não estiver disponível, retorna `NESTED_DELEGATION=blocked`; não absorve
+silenciosamente todas as frentes. Writers nunca delegam.
+
+O fan-out de readers é obrigatório (`sidecar-gate`) para qualquer tarefa não
+trivial, tarefa com duas ou mais frentes independentes, pedido explícito de
+sub-agentes, risco de core/contrato ou obrigação explícita de revisão/teste —
+mesmo sem ganho de tempo; frentes obrigatórias nunca são absorvidas
+localmente. Apenas tarefas estritamente simples, seriais e de uma superfície
+ficam locais.
 
 Antes de um writer, o GPT confirma uma worktree absoluta diferente do checkout
 principal, `git status --porcelain` vazio e registra
@@ -78,29 +87,55 @@ principal, `git status --porcelain` vazio e registra
 principal bloqueia a integração.
 
 Os perfis nativos analíticos (`scout`, `researcher`, `reviewer`, `worker`)
-retornam `NATIVE_ROUTE_BLOCKED` enquanto o backend for OpenCode. O `relay`
-nativo não é analista nem writer; sua única exceção é transformar anexos visuais
-em um bloco textual `[VISUAL_PACKET v1]`, sem paths, bytes, base64 ou data URLs.
+retornam `NATIVE_ROUTE_BLOCKED` enquanto o backend for OpenCode. O `watcher`
+nativo é a única exceção textual: `gpt-5.6-luna` com esforço `high`, somente
+para manter uma chamada MCP aberta e devolver seu resultado. Cada brief do
+watcher exige o token explícito `OPEN_CODE_ROLE` em {scout, researcher,
+reviewer, worker}; o watcher nunca adivinha e um token ausente/inválido
+bloqueia antes da chamada MCP. O `relay` nativo
+continua sendo apenas visual, transformando anexos em `[VISUAL_PACKET v1]`, sem
+paths, bytes, base64 ou data URLs; o pai anexa somente esse texto sanitizado ao
+brief do watcher e do papel OpenCode, e o modelo OpenCode (DeepSeek) nunca lê a
+imagem diretamente.
 
 ## Jobs longos
 
-Sidecars textuais usam diretamente o MCP `opencode_worker`. `run_agent` serve
-para smoke bounded; `start_agent` inicia um job longo e devolve um `job_id`.
-Depois de iniciar, o GPT continua trabalho local não sobreposto e consulta
-`get_agent_status(job_id)` no primeiro checkpoint de espera prolongada ou de
-decisão. Heartbeat vivo e `state=running` significam que deve aguardar; só
-`result_available=true` ou estado terminal autoriza `get_agent_result`.
+Sidecars textuais usam a ponte do native `watcher` (`agent_type=watcher`):
+`GPT -> watcher -> MCP opencode_worker -> papel OpenCode`. No handoff normal, o
+`watcher` mantém uma chamada `run_agent` aberta e devolve um envelope curto; o
+chat principal não fica fazendo polling e nunca chama `run_agent`/
+`start_agent` diretamente para trabalho normal — a exposição do pai é apenas
+`get_agent_status`/`get_agent_result`/`cancel_agent` para recuperação
+declarada. Para jobs destacados ou recuperação, `start_agent` é exceção
+explícita depois de a rota ser declarada: devolve um `job_id` e
+`get_agent_status(job_id)` só é consultado no checkpoint de decisão. Heartbeat
+vivo e `state=running` significam que deve aguardar; só `result_available=true`
+ou estado terminal autoriza `get_agent_result`.
 
 Heartbeat stale, processo ausente, erro MCP ou estado desconhecido exigem
 diagnóstico e reparo/replanejamento; não autorizam espera cega, polling
 contínuo, cancelamento ou relançamento sem nova decisão.
 
+O ciclo de filhos usa `MAX_ACTIVE_CHILDREN_PER_CHAT=5`. Um filho live ou
+aguardando é esperado; follow-up, `steer`, `interrupt` e retry não aceleram o
+MCP. Ao retornar, o pai captura o envelope e fecha o filho. Fechamento precoce
+exige crash confirmado por uma consulta diagnóstica; slots cheios só permitem
+reclamar filhos terminais já capturados.
+
 ## Instalação e validação
 
 `install.ps1` copia os assets com backup. `-Profile safe` instala a base;
 `-ConfigureMcp` configura o MCP pinado; `-InstallAhk` instala o prompt pad.
-Após mudanças nas fontes, execute `scripts/install.ps1 -Profile safe` antes de
-validar os espelhos instalados.
+O flag de runtime `CODEX_WORKFLOWS_OPENCODE_PROVIDER` seleciona a variante de
+modelo (`go` padrão -> `opencode-go/deepseek-v4-flash`; `zen` ->
+`zenmux/deepseek/deepseek-v4-flash`): é validado sem fallback silencioso, nunca
+altera credenciais, é resolvido pelo wrapper em runtime sem reinstalação, e o
+instalador renderiza o modelo selecionado explicitamente no perfil do watcher e
+no bloco MCP do pai. Na ausência do flag, o wrapper preserva o `AGENT_MODEL`
+renderizado/herdado e só usa o padrão `go` quando nenhum modelo foi herdado;
+valores explícitos `go`/`zen` sobrescrevem o modelo. Após mudanças nas fontes,
+execute
+`scripts/install.ps1 -Profile safe` antes de validar os espelhos instalados.
 
 `scripts/validate.ps1` verifica frontmatter, permissões, guard de rota,
 exposição do MCP, contratos de nested delegation, ciclo de writers, paridade

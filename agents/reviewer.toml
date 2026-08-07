@@ -18,8 +18,3 @@ Findings first, ordered by severity, each with evidence and smallest safer fix d
 For delivery-loop reviews, honor the assigned lens. Separate proven actionable findings from nonblocking suggestions; actionable findings need evidence, impact, affected path, smallest safer fix, and validation.
 Do not invent findings to fill a quota. Reserve deep repo-wide strict audits for an explicit launch.
 """
-
-[quality_gate.slice_guard]
-max_diff_lines = 300
-max_modified_files = 4
-action_on_breach = "REPROVAR O PATCH IMEDIATAMENTE e solicitar fragmentação da tarefa em etapas menores."

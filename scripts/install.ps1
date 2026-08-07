@@ -106,6 +106,13 @@ $agentsMdDest = Join-Path $CodexHome 'AGENTS.md'
 $maintenanceDest = Join-Path $CodexHome 'maintenance\maintain-mcps.ps1'
 $workerWrapperDest = Join-Path $CodexHome 'bin\opencode-worker.cmd'
 $statePath = Join-Path $CodexHome 'codex-workflows-kit\install-state.json'
+$openCodeProviderEnv = $env:CODEX_WORKFLOWS_OPENCODE_PROVIDER
+$openCodeProvider = if ([string]::IsNullOrWhiteSpace($openCodeProviderEnv)) { 'go' } else { $openCodeProviderEnv }
+$openCodeModels = @{ go = 'opencode-go/deepseek-v4-flash'; zen = 'zenmux/deepseek/deepseek-v4-flash' }
+if (-not $openCodeModels.ContainsKey($openCodeProvider)) {
+    throw "Invalid CODEX_WORKFLOWS_OPENCODE_PROVIDER '$openCodeProvider': allowed values are go and zen."
+}
+$openCodeAgentModel = $openCodeModels[$openCodeProvider]
 $agentEfforts = @('low', 'high', 'xhigh', 'max')
 $script:BackupRoot = Join-Path $CodexHome ('backups\codex-workflows-kit\{0}' -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
 $script:BackedUp = @{}
@@ -268,14 +275,14 @@ function Render-AgentProfile {
     $opencodeAgents = ConvertTo-TomlString $opencodeAgentsDest
     $opencodeJobs = ConvertTo-TomlString $opencodeJobsDest
     $openCodePath = ConvertTo-TomlString (Get-OpenCodePathValue)
-    return $Content.Replace('__OPENCODE_WORKER_COMMAND__', $workerCommand.Trim('"')).Replace('__OPENCODE_AGENTS_DIR__', $opencodeAgents.Trim('"')).Replace('__OPENCODE_JOBS_DIR__', $opencodeJobs.Trim('"')).Replace('__OPENCODE_PATH__', $openCodePath.Trim('"'))
+    return $Content.Replace('__OPENCODE_WORKER_COMMAND__', $workerCommand.Trim('"')).Replace('__OPENCODE_AGENTS_DIR__', $opencodeAgents.Trim('"')).Replace('__OPENCODE_JOBS_DIR__', $opencodeJobs.Trim('"')).Replace('__OPENCODE_PATH__', $openCodePath.Trim('"')).Replace('__OPENCODE_AGENT_MODEL__', $openCodeAgentModel)
 }
 
 function Install-AgentProfile {
     param([Parameter(Mandatory)][string]$Source)
 
     $profile = Get-Content -LiteralPath $Source -Raw -Encoding UTF8
-    if ((Split-Path -Leaf $Source) -eq 'relay.toml') {
+    if ((Split-Path -Leaf $Source) -in @('relay.toml', 'watcher.toml')) {
         $profile = Render-AgentProfile -Content $profile
     }
 
@@ -368,18 +375,20 @@ function Install-OpenCodeConfig {
     $end = '# END CODEX-WORKFLOWS-KIT: opencode_worker'
     $block = @"
 $begin
+# Status-only exposure for the GPT parent: the run_agent/start_agent handoff
+# lives in the installed native watcher profile (agents/watcher.toml).
 [mcp_servers.opencode_worker]
 command = $(ConvertTo-TomlString (Join-Path $CodexHome 'bin\opencode-worker.cmd'))
 args = ["-y", "github:CheekyCodexConjurer/sub-agents-mcp#v0.13.1"]
 startup_timeout_sec = 30
 tool_timeout_sec = 86400
 enabled = true
-enabled_tools = ["run_agent", "start_agent", "get_agent_status", "get_agent_result", "cancel_agent"]
+enabled_tools = ["get_agent_status", "get_agent_result", "cancel_agent"]
 
 [mcp_servers.opencode_worker.env]
 AGENTS_DIR = $(ConvertTo-TomlString $opencodeAgentsDest)
 AGENT_TYPE = "opencode"
-AGENT_MODEL = "opencode-go/deepseek-v4-flash"
+AGENT_MODEL = "$openCodeAgentModel"
 AGENT_EFFORT = "max"
 AGENT_PERMISSION = "yolo"
 EXECUTION_TIMEOUT_MS = "0"
@@ -392,6 +401,23 @@ PATH = $(ConvertTo-TomlString (Get-OpenCodePathValue))
 $end
 "@
     Install-ManagedBlock -Destination $configPath -Begin $begin -End $end -Block $block.TrimEnd()
+
+    $agentsBegin = '# BEGIN CODEX-WORKFLOWS-KIT: agents'
+    $agentsEnd = '# END CODEX-WORKFLOWS-KIT: agents'
+    $agentsBlock = "$agentsBegin`r`n[agents]`r`nmax_concurrent_threads_per_session = 5`r`n$agentsEnd"
+    $existingConfig = if (Test-Path -LiteralPath $configPath -PathType Leaf) { Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 } else { '' }
+    $kitAgentsPattern = '(?ms)# BEGIN CODEX-WORKFLOWS-KIT: agents.*?# END CODEX-WORKFLOWS-KIT: agents'
+    $withoutKit = [regex]::Replace($existingConfig, $kitAgentsPattern, '').TrimEnd()
+    if ($withoutKit -match '(?m)^\[agents\]') {
+        Write-Warning 'An existing [agents] section already owns Codex agent settings; the kit cap max_concurrent_threads_per_session = 5 was not added.'
+        if ($withoutKit -cne $existingConfig) {
+            Install-ManagedContent -Destination $configPath -Content $withoutKit
+        }
+    }
+    else {
+        $updated = if ([string]::IsNullOrWhiteSpace($withoutKit)) { $agentsBlock } else { $withoutKit + "`r`n`r`n" + $agentsBlock }
+        Install-ManagedContent -Destination $configPath -Content $updated
+    }
 }
 
 function Save-InstallState {
@@ -522,6 +548,7 @@ Write-Host "Codex home: $CodexHome"
 Write-Host "Skills: $skillsDest"
 if ($includeAgents) { Write-Host "Agents: $agentsDest" }
 if ($includeOpenCode) { Write-Host "OpenCode agents: $opencodeAgentsDest" }
+if ($includeOpenCode) { Write-Host "OpenCode provider: $openCodeProvider (model $openCodeAgentModel)" }
 if ($InstallAhk) { Write-Host "AHK: $AhkDestination" }
 if ($ConfigureMcp) { Write-Host "MCP: configured in $(Join-Path $CodexHome 'config.toml')" }
 if ($script:BackedUp.Count -gt 0) { Write-Host "Backups: $script:BackupRoot" }
