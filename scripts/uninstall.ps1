@@ -96,7 +96,7 @@ function Assert-InstallState {
     }
 
     $schemaText = [string]$State.schemaVersion
-    if ($schemaText -notin @('1', '2', '3')) {
+    if ($schemaText -notin @('1', '2', '3', '4')) {
         throw "Install state has an unsupported schema: $schemaText"
     }
     $schema = [int]$schemaText
@@ -108,14 +108,36 @@ function Assert-InstallState {
     }
 
     $entries = @($State.files)
-    if ($schema -eq 3) {
+    if ($schema -ge 3) {
         if (-not ($State.PSObject.Properties.Name -contains 'pendingFiles') -or $null -eq $State.pendingFiles -or -not ($State.pendingFiles -is [System.Array])) {
-            throw 'Schema 3 install state is missing pendingFiles.'
+            throw "Schema $schema install state is missing pendingFiles."
         }
         $entries += @($State.pendingFiles)
     }
     elseif ($State.PSObject.Properties.Name -contains 'pendingFiles') {
-        throw 'Only schema 3 install state may contain pendingFiles.'
+        throw 'Only schema 3 and later install state may contain pendingFiles.'
+    }
+
+    if ($schema -eq 4) {
+        if (-not ($State.PSObject.Properties.Name -contains 'codexFeaturesPrior') -or $null -eq $State.codexFeaturesPrior) {
+            throw 'Schema 4 install state is missing codexFeaturesPrior.'
+        }
+        if (-not ($State.codexFeaturesPrior.PSObject.Properties.Name -contains 'multi_agent')) {
+            throw 'Schema 4 install state is missing the multi_agent feature record.'
+        }
+        $featureRecord = $State.codexFeaturesPrior.multi_agent
+        if ($null -eq $featureRecord -or -not ($featureRecord.PSObject.Properties.Name -contains 'present') -or -not ($featureRecord.PSObject.Properties.Name -contains 'value')) {
+            throw 'Schema 4 install state contains an invalid multi_agent feature record.'
+        }
+        if ($featureRecord.present -notin @($true, $false)) {
+            throw 'Schema 4 install state has an invalid multi_agent presence flag.'
+        }
+        if ([bool]$featureRecord.present -and $null -eq $featureRecord.value) {
+            throw 'Schema 4 install state has a present multi_agent record without a value.'
+        }
+        if (-not [bool]$featureRecord.present -and $null -ne $featureRecord.value) {
+            throw 'Schema 4 install state has an absent multi_agent record with a value.'
+        }
     }
 
     $seenPaths = @{}
@@ -133,7 +155,7 @@ function Assert-InstallState {
         $seenPaths[$fullPath] = $true
     }
 
-    if ($schema -eq 3) {
+    if ($schema -ge 3) {
         foreach ($entry in @($State.pendingFiles)) {
             if (-not ($entry.PSObject.Properties.Name -contains 'reason') -or [string]$entry.reason -notin @('modified', 'outside-destinations', 'unverified')) {
                 throw 'Schema 3 install state contains a pending file without a reason.'
@@ -166,6 +188,7 @@ $StartupShortcutPath = Get-StartupShortcutPath
 $script:Skipped = $false
 $script:RemovedParents = New-Object System.Collections.Generic.List[string]
 $script:BackedUp = @{}
+$script:ConfigModified = $false
 $script:BackupRoot = Join-Path $CodexHome ('backups\codex-workflows-kit\uninstall-{0}' -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
 
 if (-not (Test-Path -LiteralPath $statePath -PathType Leaf)) {
@@ -184,7 +207,7 @@ foreach ($file in @($state.files)) {
         reason = ''
     }
 }
-if ($stateSchema -eq 3) {
+if ($stateSchema -ge 3) {
     foreach ($file in @($state.pendingFiles)) {
         $path = [IO.Path]::GetFullPath([string]$file.path)
         $script:StateEntries[$path] = [ordered]@{
@@ -345,7 +368,112 @@ function Remove-ManagedConfigBlocks {
         if (Confirm-UninstallAction -Target $configPath -Action 'remove managed configuration block') {
             Backup-ForcedFile -Path $configPath
             Write-Utf8NoBom -Path $configPath -Content ($result + $nl)
+            $script:ConfigModified = $true
         }
+    }
+}
+
+function Test-TomlTableHeader {
+    param([AllowEmptyString()][string]$Line)
+
+    return ($Line -replace '\r\n?', '') -match '^[ \t]*\[\[?[^\r\n\]]*\]\]?[ \t]*(?:#.*)?$'
+}
+
+function Get-FeaturesTableInfo {
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
+
+    $Text = $Text -replace '\r\n', "`n"
+    $lines = [System.Collections.Generic.List[string]]([regex]::Split($Text, '\r?\n'))
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -notmatch '^[ \t]*\[features\][ \t]*(?:#.*)?$') {
+            continue
+        }
+
+        $end = $lines.Count
+        for ($j = $i + 1; $j -lt $lines.Count; $j++) {
+            if (Test-TomlTableHeader -Line $lines[$j]) {
+                $end = $j
+                break
+            }
+        }
+
+        $multiAgentLine = -1
+        $multiAgentValue = ''
+        for ($j = $i + 1; $j -lt $end; $j++) {
+            $keyMatch = [regex]::Match($lines[$j], '^\s*multi_agent\s*=')
+            if (-not $keyMatch.Success) {
+                continue
+            }
+            $multiAgentLine = $j
+            $valueMatch = [regex]::Match($lines[$j], '^\s*multi_agent\s*=\s*([^\s#]+)')
+            if ($valueMatch.Success) {
+                $multiAgentValue = $valueMatch.Groups[1].Value
+            }
+            break
+        }
+
+        return [pscustomobject]@{
+            Index = $i
+            EndIndex = $end
+            MultiAgentLine = $multiAgentLine
+            MultiAgentValue = $multiAgentValue
+        }
+    }
+
+    return [pscustomobject]@{
+        Index = -1
+        EndIndex = -1
+        MultiAgentLine = -1
+        MultiAgentValue = ''
+    }
+}
+
+function Restore-MultiAgentFeature {
+    param([Parameter(Mandatory)][bool]$AllowWrite)
+
+    if ($stateSchema -lt 4 -or -not ($state.PSObject.Properties.Name -contains 'codexFeaturesPrior') -or -not (Test-Path -LiteralPath $configPath -PathType Leaf)) {
+        return
+    }
+
+    $existing = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8
+    $info = Get-FeaturesTableInfo -Text $existing
+    if ($info.Index -lt 0 -or $info.MultiAgentLine -lt 0) {
+        return
+    }
+
+    $record = $state.codexFeaturesPrior.multi_agent
+    $priorPresent = [bool]$record.present
+    $priorValue = if ($record.PSObject.Properties.Name -contains 'value' -and $null -ne $record.value) { [string]$record.value } else { '' }
+
+    if ($info.MultiAgentValue -cne 'false') {
+        if (-not ($priorPresent -and $priorValue -ceq $info.MultiAgentValue)) {
+            Write-Warning "multi_agent is '$($info.MultiAgentValue)'; leaving it as-is. The safe profile expects false: $configPath"
+        }
+        return
+    }
+    if ($priorPresent -and $priorValue -ceq 'false') {
+        return
+    }
+    if (-not $AllowWrite) {
+        Write-Warning "config.toml was modified; leaving multi_agent as-is: $configPath"
+        return
+    }
+
+    $lines = [System.Collections.Generic.List[string]]([regex]::Split($existing, '\r?\n'))
+    if ($priorPresent) {
+        $line = $lines[$info.MultiAgentLine]
+        $match = [regex]::Match($line, '^(\s*)multi_agent\s*=\s*[^\s#]+')
+        $lines[$info.MultiAgentLine] = $match.Groups[1].Value + 'multi_agent = ' + $priorValue + $line.Substring($match.Index + $match.Length)
+    }
+    else {
+        $lines.RemoveAt($info.MultiAgentLine)
+    }
+
+    if (Confirm-UninstallAction -Target $configPath -Action 'restore prior multi_agent feature value') {
+        if ($Force) {
+            Backup-ForcedFile -Path $configPath
+        }
+        Write-Utf8NoBom -Path $configPath -Content (($lines -join $nl).TrimEnd() + $nl)
     }
 }
 
@@ -358,6 +486,18 @@ foreach ($path in ($script:StateEntries.Keys | Sort-Object)) {
 
 Remove-ManagedConfigBlocks
 Remove-ManagedAgentsBlock
+
+if ($stateSchema -ge 4 -and ($state.PSObject.Properties.Name -contains 'codexFeaturesPrior')) {
+    $fullConfigPath = [IO.Path]::GetFullPath($configPath)
+    $isTracked = $script:StateEntries.ContainsKey($fullConfigPath)
+    if ($isTracked -or $script:ConfigModified) {
+        $allowWrite = $script:ConfigModified -or $Force
+        if (-not $allowWrite) {
+            $allowWrite = (Get-RequiredFileHash -Path $configPath) -eq [string]$script:StateEntries[$fullConfigPath].sha256
+        }
+        Restore-MultiAgentFeature -AllowWrite $allowWrite
+    }
+}
 
 foreach ($parent in ($script:RemovedParents | Sort-Object -Unique)) {
     $current = $parent

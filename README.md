@@ -21,6 +21,7 @@ Documentação: [Segurança](docs/security.md) ·
 | skill workflows | ~/.agents/skills/workflows | única interface para os modos $workflows |
 | skill evidence-first | ~/.agents/skills/evidence-first | verificação de claims materiais |
 | codex/AGENTS.md | ~/.codex/AGENTS.md | regras globais universais |
+| feature multi_agent | config.toml ([features]) | desliga a rota multi-agente embutida no perfil safe; reativável manualmente |
 | prompt pad opcional | caminho escolhido pelo usuário | atalhos NUM para $workflows; atalho no Startup com -InstallAhk |
 | scripts locais | checkout | instalação, validação, diagnóstico e remoção |
 
@@ -34,7 +35,8 @@ validation, commit e quality-ratchet).
 
 - Windows 10 ou 11;
 - PowerShell 5.1+ ou PowerShell 7+;
-- Codex com o runtime de sub-agentes habilitado;
+- Codex (o perfil safe define `multi_agent = false` para orquestração
+  exclusivamente via DeepSeek Sub-Agent MCP);
 - opcionalmente, AutoHotkey v2 para o prompt pad.
 
 Se a política de execução exigir, permita apenas o escopo do usuário depois de
@@ -79,6 +81,18 @@ docs/                     Documentação pública
 
 O instalador é idempotente. Ele registra hashes dos arquivos que gerencia,
 faz backup antes de sobrescrever e preserva arquivos fora do seu estado.
+
+O perfil safe também define `multi_agent = false` na tabela `[features]` do
+config.toml do Codex, preservando as demais chaves e comentários: a
+orquestração passa a ser exclusivamente via DeepSeek Sub-Agent MCP, e a rota
+multi-agente embutida fica desligada. Você pode reativá-la manualmente quando
+quiser; o valor anterior é registrado no estado de instalação e restaurado no
+uninstall — somente se `multi_agent` ainda for `false`. Esse valor registrado
+é o observado antes da primeira instalação do kit: reexecuções não o
+sobrescrevem, para que o uninstall sempre restaure o estado pré-kit. Se você
+o alterou, o kit avisa e preserva sua escolha. Estados de schema 3 existentes
+continuam legíveis; execute `install.ps1 -Profile safe` uma vez para registrar
+o gate.
 
 ### Migração segura
 

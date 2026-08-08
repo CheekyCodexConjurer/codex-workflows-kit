@@ -15,3 +15,6 @@
   voltam à mesma frente.
 - O parent interpreta a imagem e envia `visual_context` conciso ao agente
   (observações diretas, texto visível, interpretação, incerteza).
+- O parent GPT orquestra e detém a visão; todo trabalho material passa pelos
+  tools DeepSeek MCP configurados, cada job aceito vai até o resultado
+  terminal, e o parent falha fechado em vez de outra rota silenciosa.

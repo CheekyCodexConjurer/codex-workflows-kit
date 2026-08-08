@@ -209,6 +209,74 @@ function Assert-ManagedAgentDefaults {
     }
 }
 
+function Test-TomlTableHeader {
+    param([AllowEmptyString()][string]$Line)
+
+    return ($Line -replace '\r\n?', '') -match '^[ \t]*\[\[?[^\r\n\]]*\]\]?[ \t]*(?:#.*)?$'
+}
+
+function Get-FeaturesTableInfo {
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
+
+    $Text = $Text -replace '\r\n', "`n"
+    $lines = [System.Collections.Generic.List[string]]([regex]::Split($Text, '\r?\n'))
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -notmatch '^[ \t]*\[features\][ \t]*(?:#.*)?$') {
+            continue
+        }
+
+        $end = $lines.Count
+        for ($j = $i + 1; $j -lt $lines.Count; $j++) {
+            if (Test-TomlTableHeader -Line $lines[$j]) {
+                $end = $j
+                break
+            }
+        }
+
+        $multiAgentLine = -1
+        $multiAgentValue = ''
+        for ($j = $i + 1; $j -lt $end; $j++) {
+            $keyMatch = [regex]::Match($lines[$j], '^\s*multi_agent\s*=')
+            if (-not $keyMatch.Success) {
+                continue
+            }
+            $multiAgentLine = $j
+            $valueMatch = [regex]::Match($lines[$j], '^\s*multi_agent\s*=\s*([^\s#]+)')
+            if ($valueMatch.Success) {
+                $multiAgentValue = $valueMatch.Groups[1].Value
+            }
+            break
+        }
+
+        return [pscustomobject]@{
+            Index = $i
+            EndIndex = $end
+            MultiAgentLine = $multiAgentLine
+            MultiAgentValue = $multiAgentValue
+        }
+    }
+
+    return [pscustomobject]@{
+        Index = -1
+        EndIndex = -1
+        MultiAgentLine = -1
+        MultiAgentValue = ''
+    }
+}
+
+function Assert-FeaturesMultiAgentDisabled {
+    param([Parameter(Mandatory)][string]$Path)
+
+    $text = Read-RequiredText $Path
+    $info = Get-FeaturesTableInfo -Text $text
+    if ($info.Index -lt 0 -or $info.MultiAgentLine -lt 0) {
+        throw "Safe profile requires multi_agent = false under [features]: $Path"
+    }
+    if ($info.MultiAgentValue -cne 'false') {
+        throw "Safe profile requires multi_agent = false but found '$($info.MultiAgentValue)': $Path"
+    }
+}
+
 function Assert-SameFile {
     param(
         [Parameter(Mandatory)][string]$Source,
@@ -264,7 +332,7 @@ function Assert-InstalledState {
     }
 
     $schemaText = [string]$State.schemaVersion
-    if ($schemaText -notin @('1', '2', '3')) {
+    if ($schemaText -notin @('1', '2', '3', '4')) {
         throw "Installed state has an unsupported schema: $schemaText"
     }
     $schema = [int]$schemaText
@@ -276,14 +344,36 @@ function Assert-InstalledState {
     }
 
     $entries = @($State.files)
-    if ($schema -eq 3) {
+    if ($schema -ge 3) {
         if (-not ($State.PSObject.Properties.Name -contains 'pendingFiles') -or $null -eq $State.pendingFiles -or -not ($State.pendingFiles -is [System.Array])) {
-            throw 'Schema 3 installed state is missing pendingFiles.'
+            throw "Schema $schema installed state is missing pendingFiles."
         }
         $entries += @($State.pendingFiles)
     }
     elseif ($State.PSObject.Properties.Name -contains 'pendingFiles') {
-        throw 'Only schema 3 installed state may contain pendingFiles.'
+        throw 'Only schema 3 and later installed state may contain pendingFiles.'
+    }
+
+    if ($schema -eq 4) {
+        if (-not ($State.PSObject.Properties.Name -contains 'codexFeaturesPrior') -or $null -eq $State.codexFeaturesPrior) {
+            throw 'Schema 4 installed state is missing codexFeaturesPrior.'
+        }
+        if (-not ($State.codexFeaturesPrior.PSObject.Properties.Name -contains 'multi_agent')) {
+            throw 'Schema 4 installed state is missing the multi_agent feature record.'
+        }
+        $featureRecord = $State.codexFeaturesPrior.multi_agent
+        if ($null -eq $featureRecord -or -not ($featureRecord.PSObject.Properties.Name -contains 'present') -or -not ($featureRecord.PSObject.Properties.Name -contains 'value')) {
+            throw 'Schema 4 installed state contains an invalid multi_agent feature record.'
+        }
+        if ($featureRecord.present -notin @($true, $false)) {
+            throw 'Schema 4 installed state has an invalid multi_agent presence flag.'
+        }
+        if ([bool]$featureRecord.present -and $null -eq $featureRecord.value) {
+            throw 'Schema 4 installed state has a present multi_agent record without a value.'
+        }
+        if (-not [bool]$featureRecord.present -and $null -ne $featureRecord.value) {
+            throw 'Schema 4 installed state has an absent multi_agent record with a value.'
+        }
     }
 
     $seenPaths = @{}
@@ -301,7 +391,7 @@ function Assert-InstalledState {
         $seenPaths[$fullPath] = $true
     }
 
-    if ($schema -eq 3) {
+    if ($schema -ge 3) {
         foreach ($entry in @($State.pendingFiles)) {
             if (-not ($entry.PSObject.Properties.Name -contains 'reason') -or [string]$entry.reason -notin @('modified', 'outside-destinations', 'unverified')) {
                 throw 'Schema 3 installed state contains a pending file without a reason.'
@@ -542,6 +632,7 @@ if (-not $SkipInstalled) {
 
     if ([string]$state.profile -eq 'safe') {
         Assert-ManagedAgentDefaults -Path (Join-Path $codexHome 'config.toml')
+        Assert-FeaturesMultiAgentDisabled -Path (Join-Path $codexHome 'config.toml')
 
         $installedAgents = Read-RequiredText (Join-Path $codexHome 'AGENTS.md')
         if ($installedAgents.IndexOf($agentsText.Trim(), [StringComparison]::Ordinal) -lt 0) {
@@ -549,5 +640,7 @@ if (-not $SkipInstalled) {
         }
     }
 }
+
+& (Join-Path $repo 'scripts\test-safe-profile-gate.ps1')
 
 Write-Host 'Validation OK.'

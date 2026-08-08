@@ -7,6 +7,28 @@ O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ### Changed
 
+- scripts/install.ps1 (perfil safe) define `multi_agent = false` na tabela
+  `[features]` do config.toml do Codex de forma idempotente e TOML-aware: sem
+  cabeçalhos `[features]` ou chaves duplicadas, preservando chaves e
+  comentários não gerenciados. O estado de instalação passa a schema 4 e
+  registra o valor/presença anterior em `codexFeaturesPrior` (estados schema 3
+  existentes permanecem legíveis; uma nova execução do instalador registra o
+  gate). O valor registrado é o observado antes da primeira instalação do kit
+  e é mantido intacto em reexecuções: o uninstall restaura esse valor pré-kit
+  somente enquanto `multi_agent` ainda for `false`; se o usuário o alterou,
+  avisa e preserva. O perfil minimal continua sem instalar política global e
+  não altera a feature. scripts/doctor.ps1 falha quando o perfil safe está
+  ativo e `multi_agent` não é `false`; scripts/validate.ps1 reforça o gate no
+  modo completo e executa fixtures de comportamento (tabela ausente, valores
+  true/false existentes, chaves não relacionadas, reexecução idempotente,
+  migração de schema 3, restore no uninstall, override do usuário e arquivo
+  pendente de schema 4 modificado pelo usuário preservado no uninstall).
+- scripts/install.ps1, uninstall.ps1 e doctor.ps1 passam a tratar
+  `pendingFiles` de estados schema 4 com a mesma regra de schema 3 (`>= 3`):
+  o uninstall preserva arquivos pendentes modificados pelo usuário e retém o
+  estado com o motivo para revisão; o instalador contabiliza os pendentes do
+  estado anterior ao decidir o que remover, em vez de descartar a trilha de
+  revisão ao reescrever o estado.
 - codex/AGENTS.md é agora um template global compacto com regras universais
   apenas (skill `$workflows`, preservação de mudanças, Git não destrutivo,
   parent GPT como maestro, DeepSeek Sub-Agent MCP como executor principal,

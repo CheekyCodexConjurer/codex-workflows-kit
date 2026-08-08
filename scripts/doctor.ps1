@@ -69,7 +69,7 @@ function Assert-InstallState {
     }
 
     $schemaText = [string]$State.schemaVersion
-    if ($schemaText -notin @('1', '2', '3')) {
+    if ($schemaText -notin @('1', '2', '3', '4')) {
         throw "Install state has an unsupported schema: $schemaText"
     }
     $schema = [int]$schemaText
@@ -81,14 +81,36 @@ function Assert-InstallState {
     }
 
     $entries = @($State.files)
-    if ($schema -eq 3) {
+    if ($schema -ge 3) {
         if (-not ($State.PSObject.Properties.Name -contains 'pendingFiles') -or $null -eq $State.pendingFiles -or -not ($State.pendingFiles -is [System.Array])) {
-            throw 'Schema 3 install state is missing pendingFiles.'
+            throw "Schema $schema install state is missing pendingFiles."
         }
         $entries += @($State.pendingFiles)
     }
     elseif ($State.PSObject.Properties.Name -contains 'pendingFiles') {
-        throw 'Only schema 3 install state may contain pendingFiles.'
+        throw 'Only schema 3 and later install state may contain pendingFiles.'
+    }
+
+    if ($schema -eq 4) {
+        if (-not ($State.PSObject.Properties.Name -contains 'codexFeaturesPrior') -or $null -eq $State.codexFeaturesPrior) {
+            throw 'Schema 4 install state is missing codexFeaturesPrior.'
+        }
+        if (-not ($State.codexFeaturesPrior.PSObject.Properties.Name -contains 'multi_agent')) {
+            throw 'Schema 4 install state is missing the multi_agent feature record.'
+        }
+        $featureRecord = $State.codexFeaturesPrior.multi_agent
+        if ($null -eq $featureRecord -or -not ($featureRecord.PSObject.Properties.Name -contains 'present') -or -not ($featureRecord.PSObject.Properties.Name -contains 'value')) {
+            throw 'Schema 4 install state contains an invalid multi_agent feature record.'
+        }
+        if ($featureRecord.present -notin @($true, $false)) {
+            throw 'Schema 4 install state has an invalid multi_agent presence flag.'
+        }
+        if ([bool]$featureRecord.present -and $null -eq $featureRecord.value) {
+            throw 'Schema 4 install state has a present multi_agent record without a value.'
+        }
+        if (-not [bool]$featureRecord.present -and $null -ne $featureRecord.value) {
+            throw 'Schema 4 install state has an absent multi_agent record with a value.'
+        }
     }
 
     $seenPaths = @{}
@@ -106,7 +128,7 @@ function Assert-InstallState {
         $seenPaths[$fullPath] = $true
     }
 
-    if ($schema -eq 3) {
+    if ($schema -ge 3) {
         foreach ($entry in @($State.pendingFiles)) {
             if (-not ($entry.PSObject.Properties.Name -contains 'reason') -or [string]$entry.reason -notin @('modified', 'outside-destinations', 'unverified')) {
                 throw 'Schema 3 install state contains a pending file without a reason.'
@@ -166,6 +188,73 @@ function Test-ManagedAgentDefaults {
     catch {
         return $false
     }
+}
+
+function Test-TomlTableHeader {
+    param([AllowEmptyString()][string]$Line)
+
+    return ($Line -replace '\r\n?', '') -match '^[ \t]*\[\[?[^\r\n\]]*\]\]?[ \t]*(?:#.*)?$'
+}
+
+function Get-FeaturesTableInfo {
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
+
+    $Text = $Text -replace '\r\n', "`n"
+    $lines = [System.Collections.Generic.List[string]]([regex]::Split($Text, '\r?\n'))
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -notmatch '^[ \t]*\[features\][ \t]*(?:#.*)?$') {
+            continue
+        }
+
+        $end = $lines.Count
+        for ($j = $i + 1; $j -lt $lines.Count; $j++) {
+            if (Test-TomlTableHeader -Line $lines[$j]) {
+                $end = $j
+                break
+            }
+        }
+
+        $multiAgentLine = -1
+        $multiAgentValue = ''
+        for ($j = $i + 1; $j -lt $end; $j++) {
+            $keyMatch = [regex]::Match($lines[$j], '^\s*multi_agent\s*=')
+            if (-not $keyMatch.Success) {
+                continue
+            }
+            $multiAgentLine = $j
+            $valueMatch = [regex]::Match($lines[$j], '^\s*multi_agent\s*=\s*([^\s#]+)')
+            if ($valueMatch.Success) {
+                $multiAgentValue = $valueMatch.Groups[1].Value
+            }
+            break
+        }
+
+        return [pscustomobject]@{
+            Index = $i
+            EndIndex = $end
+            MultiAgentLine = $multiAgentLine
+            MultiAgentValue = $multiAgentValue
+        }
+    }
+
+    return [pscustomobject]@{
+        Index = -1
+        EndIndex = -1
+        MultiAgentLine = -1
+        MultiAgentValue = ''
+    }
+}
+
+function Test-FeaturesMultiAgentDisabled {
+    param([Parameter(Mandatory)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return $false
+    }
+
+    $text = Get-Content -LiteralPath $Path -Raw -Encoding UTF8
+    $info = Get-FeaturesTableInfo -Text $text
+    return ($info.Index -ge 0 -and $info.MultiAgentLine -ge 0 -and $info.MultiAgentValue -ceq 'false')
 }
 
 function Get-McpServers {
@@ -318,6 +407,8 @@ foreach ($path in $coreFiles) {
 if ($installedProfile -eq 'safe') {
     Write-Check -Name 'Sub-agent defaults' -Passed (Test-ManagedAgentDefaults -Path $configPath) -Detail $configPath
 
+    Write-Check -Name 'Multi-agent route disabled' -Passed (Test-FeaturesMultiAgentDisabled -Path $configPath) -Detail $configPath
+
     $agentsMdContent = Read-SurfaceText -Path $agentsMdPath
     $managedBlockCount = @([regex]::Matches($agentsMdContent, '# BEGIN CODEX-WORKFLOWS-KIT')).Count
     Write-Check -Name 'Unique managed policy' -Passed ($managedBlockCount -eq 1) -Detail $agentsMdPath
@@ -346,7 +437,7 @@ if ($null -ne $state) {
         Write-Check -Name 'Managed artifact' -Passed ($actual -eq [string]$file.sha256) -Detail $path
     }
 
-    if ($stateSchema -eq 3) {
+    if ($stateSchema -ge 3) {
         foreach ($file in @($state.pendingFiles)) {
             $path = [string]$file.path
             if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
@@ -464,7 +555,7 @@ if ($null -ne $state) {
             break
         }
     }
-    if ($null -eq $ahkPath -and $stateSchema -eq 3) {
+    if ($null -eq $ahkPath -and $stateSchema -ge 3) {
         foreach ($entry in @($state.pendingFiles)) {
             if ([string]$entry.path -match 'codex_prompt_pad\.ahk$') {
                 $ahkPath = [IO.Path]::GetFullPath([string]$entry.path)
@@ -584,6 +675,8 @@ if ($Detailed) {
     Write-Host "Installed paths are recorded in: $statePath"
     Write-Host 'The doctor is read-only: it inspects installed surfaces, MCP registrations,'
     Write-Host 'scheduled tasks, and the Startup shortcut without modifying configuration.'
+    Write-Host 'The safe profile requires [features] multi_agent = false; the prior value is'
+    Write-Host 'recorded in the install state and restored on uninstall only while it is still false.'
 }
 
 if ($script:Failures.Count -gt 0) {
