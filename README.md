@@ -1,20 +1,17 @@
 # Codex Workflows Kit
 
 Kit local, Windows-first, para instalar uma única interface de workflow:
-$workflows. Ele inclui a skill condicional evidence-first, perfis nativos
-opcionais de leitura (scout, researcher e reviewer) e um prompt pad AutoHotkey
-opcional. O backend de sub-agentes é resolvido pelo sufixo
-`subagents=mcp|native`: o padrão é MCP, e o backend native é opt-in explícito.
-Tudo parte de uma worktree versionada, com backup antes de sobrescrever,
-dry-run, diagnóstico e remoção segura.
+$workflows. Ele inclui a skill condicional evidence-first e um prompt pad
+AutoHotkey opcional. O executor principal é o DeepSeek Sub-Agent MCP; o
+parent GPT é o maestro que delega, integra e valida. Tudo parte de uma
+worktree versionada, com backup antes de sobrescrever, dry-run, diagnóstico e
+remoção segura.
 
 > **Segurança primeiro.** Nunca instale por pipeline remoto. Clone ou baixe o
 > repositório, revise os scripts em scripts/ e execute-os do seu próprio
 > checkout. O kit não registra telemetria nem configura serviços externos.
 
-Documentação: [Arquitetura](docs/architecture.md) ·
-[Segurança](docs/security.md) ·
-[Bootstrap](docs/agent-bootstrap-prompt.md) ·
+Documentação: [Segurança](docs/security.md) ·
 [Contribuição](CONTRIBUTING.md) · [Changelog](CHANGELOG.md).
 
 ## O que o kit instala
@@ -23,23 +20,21 @@ Documentação: [Arquitetura](docs/architecture.md) ·
 |---|---|---|
 | skill workflows | ~/.agents/skills/workflows | única interface para os modos $workflows |
 | skill evidence-first | ~/.agents/skills/evidence-first | verificação de claims materiais |
-| scout, researcher, reviewer | ~/.codex/agents | backend native opcional, read-only, em gpt-5.6-luna com esforço high |
-| codex/AGENTS.md | ~/.codex/AGENTS.md | regras globais e matriz compacta de modos |
+| codex/AGENTS.md | ~/.codex/AGENTS.md | regras globais universais |
 | prompt pad opcional | caminho escolhido pelo usuário | atalhos NUM para $workflows |
 | scripts locais | checkout | instalação, validação, diagnóstico e remoção |
 
-Os modos de workflow permanecem neutros de backend: o pedido resolve o backend
-pelo sufixo `subagents=mcp|native` (padrão MCP; native é opt-in explícito). Os
-perfis nativos continuam disponíveis como um backend opcional, somente
-leitura, para coleta de evidência, pesquisa e revisão de diff congelado. O
-ciclo de vida de sidecars, obrigações pendentes e o gate de conclusão seguem o
-contrato canônico em `skills/workflows/references/backend-policy.md`.
+O contrato único e detalhado é skills/workflows/SKILL.md (ciclo de vida,
+semântica das ferramentas MCP, modos pela tripla capacidades | permissão |
+gate de pronto e auditoria final); skills/workflows/references/ contém apenas
+referências especializadas abertas sob demanda (research, observability,
+validation, commit e quality-ratchet).
 
 ## Requisitos
 
 - Windows 10 ou 11;
 - PowerShell 5.1+ ou PowerShell 7+;
-- Codex com sub-agentes habilitados;
+- Codex com o runtime de sub-agentes habilitado;
 - opcionalmente, AutoHotkey v2 para o prompt pad.
 
 Se a política de execução exigir, permita apenas o escopo do usuário depois de
@@ -48,10 +43,9 @@ revisar o conteúdo. Nunca use bypass nem pipelines remotos.
 ## Layout
 
 ~~~text
-skills/workflows/         Skill canônica e referências dos modos
+skills/workflows/         Skill canônica (SKILL.md) e referências especializadas
 skills/evidence-first/    Verificação condicional de claims
-agents/                   Perfis nativos opcionais (backend native read-only)
-codex/AGENTS.md           Regras globais e biblioteca compacta de modos
+codex/AGENTS.md           Regras globais universais
 ahk/codex_prompt_pad.ahk  Atalhos opcionais
 scripts/                  Instalação, validação, diagnóstico e remoção
 docs/                     Documentação pública
@@ -62,7 +56,7 @@ docs/                     Documentação pública
 | Perfil | Escopo |
 |---|---|
 | minimal | skills workflows e evidence-first |
-| safe (padrão) | skills, perfis nativos e AGENTS.md |
+| safe (padrão) | skills, regras globais (AGENTS.md) e defaults de runtime |
 
 ~~~powershell
 .\scripts\install.ps1 -Profile safe
@@ -101,20 +95,17 @@ upgrade também registra o pendente no novo estado até que ele seja tratado.
 flowchart LR
     USER["Usuário"] --> WF["$workflows mode=<MODE>"]
     PAD["Prompt pad"] --> WF
-    WF --> RULES["AGENTS.md + referências"]
-    RULES --> BACKEND["backend: MCP (padrão) | native (opt-in)"]
-    BACKEND --> SIDE["scout | researcher | reviewer"]
-    SIDE --> PARENT["orquestrador"]
+    WF --> RULES["SKILL.md (política única)"]
+    RULES --> MCP["DeepSeek Sub-Agent MCP"]
+    MCP --> PARENT["parent GPT (maestro)"]
     PARENT --> GATE["diff + validação"]
 ~~~
 
-O único prefixo de workflow é $workflows. Consulte a matriz em
-skills/workflows/references/mode-matrix.md para os 16 modos e seus gates; o
-backend de sub-agentes é resolvido pelo sufixo `subagents=mcp|native` e o
-ciclo de vida de delegação segue skills/workflows/references/backend-policy.md.
-scout, researcher e reviewer são frentes de capacidade resolvidas pelo backend
-do pedido: sob o padrão MCP elas não acionam os perfis nativos, que só se
-aplicam com o opt-in explícito `subagents=native`.
+O único prefixo de workflow é $workflows. Consulte skills/workflows/SKILL.md
+para os 16 modos (tripla capacidades | permissão | gate de pronto) e o ciclo
+de vida; referências especializadas são abertas sob demanda. O executor
+principal é o DeepSeek Sub-Agent MCP; o parent GPT interpreta imagens,
+integra, valida e decide.
 
 ## Primeiros passos
 
@@ -126,9 +117,9 @@ aplicam com o opt-in explícito `subagents=native`.
 $workflows mode=PLAN.AUTO
 ~~~
 
-O contrato do modo define quando coletar evidência via backend (MCP padrão ou
-native opt-in), quando alterar e como validar. Para preparar uma tarefa antes
-do primeiro pedido, copie o texto de docs/agent-bootstrap-prompt.md.
+O contrato do modo define as capacidades, a permissão de mudança, a validação
+e o gate de pronto; o executor é o DeepSeek Sub-Agent MCP e o parent GPT
+integra, valida e decide.
 
 ## Validação
 

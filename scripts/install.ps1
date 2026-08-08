@@ -11,8 +11,6 @@ param(
     [switch]$Force
 )
 
-. (Join-Path $PSScriptRoot 'native-profile-contract.ps1')
-
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $nl = [Environment]::NewLine
@@ -84,6 +82,18 @@ function Write-Utf8NoBom {
     [IO.File]::WriteAllText($Path, $Content, $encoding)
 }
 
+function Get-RequiredFileHash {
+    param([Parameter(Mandatory)][string]$Path)
+
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return [System.BitConverter]::ToString($sha256.ComputeHash([IO.File]::ReadAllBytes($Path))).Replace('-', '')
+    }
+    finally {
+        $sha256.Dispose()
+    }
+}
+
 function Ensure-Directory {
     param([Parameter(Mandatory)][string]$Path)
 
@@ -113,12 +123,10 @@ $AhkDestination = Assert-SafeDestination $AhkDestination
 $skillsSource = Join-Path $repo 'skills'
 $workflowSource = Join-Path $skillsSource 'workflows'
 $evidenceSource = Join-Path $skillsSource 'evidence-first'
-$agentsSource = Join-Path $repo 'agents'
 $agentsMdSource = Join-Path $repo 'codex\AGENTS.md'
 $ahkSource = Join-Path $repo 'ahk\codex_prompt_pad.ahk'
 
 $skillsDest = Join-Path $AgentsHome 'skills'
-$agentsDest = Join-Path $CodexHome 'agents'
 $agentsMdDest = Join-Path $CodexHome 'AGENTS.md'
 $configPath = Join-Path $CodexHome 'config.toml'
 $statePath = Join-Path $CodexHome 'codex-workflows-kit\install-state.json'
@@ -234,7 +242,7 @@ function Add-PendingFile {
     }
 
     if ([string]::IsNullOrWhiteSpace($ExpectedHash)) {
-        $ExpectedHash = (Get-FileHash -LiteralPath $fullPath -Algorithm SHA256).Hash
+        $ExpectedHash = Get-RequiredFileHash -Path $fullPath
     }
     $script:PendingFiles[$fullPath] = [ordered]@{
         path = $fullPath
@@ -348,7 +356,7 @@ function Remove-KitBlocks {
 function Test-AgentsTableHeader {
     param([AllowEmptyString()][string]$Text)
 
-    return $Text -match '(?im)^[ \t]*\[\[?[ \t]*(?:agents|"agents"|''agents'')[ \t]*\]\]?[ \t]*(?:#.*)?$'
+    return ($Text -replace '\r\n', "`n") -match '(?im)^[ \t]*\[\[?[ \t]*(?:agents|"agents"|''agents'')[ \t]*\]\]?[ \t]*(?:#.*)?$'
 }
 
 function Install-AgentDefaults {
@@ -394,7 +402,7 @@ function Test-CanRemoveManagedFile {
         return $false
     }
 
-    $actualHash = (Get-FileHash -LiteralPath $fullPath -Algorithm SHA256).Hash
+    $actualHash = Get-RequiredFileHash -Path $fullPath
     $expectedHash = $script:PriorHashes[$fullPath]
     if ($actualHash -ne $expectedHash) {
         Write-Warning "Preserving modified ${Action}: $fullPath"
@@ -471,7 +479,7 @@ function Remove-ObsoleteManagedFiles {
         }
 
         $expectedHash = $script:PriorHashes[$priorPath]
-        $actualHash = (Get-FileHash -LiteralPath $priorPath -Algorithm SHA256).Hash
+        $actualHash = Get-RequiredFileHash -Path $priorPath
         if ($actualHash -ne $expectedHash) {
             Write-Warning "Preserving modified file no longer managed by this profile: $priorPath"
             Add-PendingFile -Path $priorPath -Reason 'modified' -ExpectedHash $expectedHash
@@ -527,7 +535,7 @@ function Save-InstallState {
         }
         $managedEntries[$path] = [ordered]@{
             path = $path
-            sha256 = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+            sha256 = Get-RequiredFileHash -Path $path
         }
     }
 
@@ -572,14 +580,6 @@ function Assert-InstallPreflight {
         return
     }
 
-    foreach ($profileName in @('scout.toml', 'researcher.toml', 'reviewer.toml')) {
-        $source = Join-Path $agentsSource $profileName
-        if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
-            throw "Native profile is missing: $source"
-        }
-        Assert-NativeProfileContract -Path $source
-    }
-
     if (Test-Path -LiteralPath $configPath -PathType Leaf) {
         $existingConfig = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8
         $configWithoutManagedBlock = Remove-KitBlocks -Text $existingConfig
@@ -614,13 +614,7 @@ try {
     Copy-ManagedTree -Source $evidenceSource -Destination (Join-Path $skillsDest 'evidence-first')
 
     if ($Profile -eq 'safe') {
-        Ensure-Directory -Path $agentsDest
         Install-GlobalAgentsFile
-
-        foreach ($profileName in @('scout.toml', 'researcher.toml', 'reviewer.toml')) {
-            $source = Join-Path $agentsSource $profileName
-            Install-ManagedContent -Destination (Join-Path $agentsDest $profileName) -Content (Get-Content -LiteralPath $source -Raw -Encoding UTF8)
-        }
 
         Install-AgentDefaults
     }
@@ -658,6 +652,5 @@ else {
 }
 Write-Host "Codex home: $CodexHome"
 Write-Host "Skills: $skillsDest"
-if ($Profile -eq 'safe') { Write-Host "Agents: $agentsDest" }
 if ($InstallAhk) { Write-Host "AHK: $AhkDestination" }
 if ($script:BackedUp.Count -gt 0) { Write-Host "Backups: $script:BackupRoot" }

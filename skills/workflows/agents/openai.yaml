@@ -1,4 +1,4 @@
 interface:
   display_name: "Workflows"
-  short_description: "Canonical workflow modes with backend-aware sub-agents (default backend, native opt-in)."
+  short_description: "Canonical workflow modes with DeepSeek Sub-Agent MCP execution."
   default_prompt: "$workflows mode=PLAN.AUTO"

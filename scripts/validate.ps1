@@ -5,8 +5,6 @@ param(
     [switch]$SkipInstalled
 )
 
-. (Join-Path $PSScriptRoot 'native-profile-contract.ps1')
-
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
@@ -40,6 +38,20 @@ function Assert-Contains {
     }
 }
 
+function Assert-Forbidden {
+    param(
+        [Parameter(Mandatory)][string]$Label,
+        [Parameter(Mandatory)][string]$Text,
+        [Parameter(Mandatory)][string[]]$Tokens
+    )
+
+    foreach ($token in $Tokens) {
+        if ($Text.IndexOf($token, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+            throw "$Label retains forbidden terminology: $token"
+        }
+    }
+}
+
 function Assert-CompletionPolicy {
     param(
         [Parameter(Mandatory)][string]$Label,
@@ -54,9 +66,9 @@ function Assert-CompletionPolicy {
     }
 
     $requiredPatterns = @(
-        '(?i)for every required sidecar,? the parent must wait for a `?final response`? before `?synthesis or advancement`?',
-        '(?i)while a sidecar is `?running`?,? do not send an `?interruptive follow-up`? or `?replace`? it',
-        '(?i)`?interrupted`?,? `?errored`?,? `?timed out`?,? or `?missing final response`? means unavailable: keep `?sidecar-gate`? `?open/BLOCKED`?; do not use a `?silent fallback`?'
+        '(?i)for every required job,? the parent must wait for a `?final response`? before `?synthesis or advancement`?',
+        '(?i)while a job is `?running`?,? do not send an `?interruptive follow-up`? or `?replace`? it',
+        '(?i)`?interrupted`?,? `?errored`?,? `?timed out`?,? or `?missing final response`? means unavailable: keep `?the gate`? `?open/BLOCKED`?; do not use a `?silent fallback`?'
     )
 
     foreach ($pattern in $requiredPatterns) {
@@ -81,7 +93,7 @@ function Assert-CompletionPolicy {
 function Assert-ManagedAgentDefaults {
     param([Parameter(Mandatory)][string]$Path)
 
-    $text = Read-RequiredText $Path
+    $text = (Read-RequiredText $Path) -replace '\r\n', "`n"
     $allAgentsHeaders = @([regex]::Matches($text, '(?im)^[ \t]*\[\[?[ \t]*(?:agents|"agents"|''agents'')[ \t]*\]\]?[ \t]*(?:#.*)?$'))
     if ($allAgentsHeaders.Count -ne 1) {
         throw "Configuration has a duplicated or missing [agents] table: $Path"
@@ -114,12 +126,6 @@ function Assert-ManagedAgentDefaults {
     if ($block -match '(?m)^\s*default_subagent_reasoning_effort\s*=\s*"max"\s*$') {
         throw "Managed agents configuration retains max reasoning: $Path"
     }
-}
-
-function Assert-Profile {
-    param([Parameter(Mandatory)][string]$Path)
-
-    Assert-NativeProfileContract -Path $Path
 }
 
 function Assert-SameFile {
@@ -231,13 +237,9 @@ function Test-FullyQualifiedPath {
 
 $workflowSource = Join-Path $repo 'skills\workflows'
 $evidenceSource = Join-Path $repo 'skills\evidence-first'
-$agentsSource = Join-Path $repo 'agents'
 $agentsMd = Join-Path $repo 'codex\AGENTS.md'
 $skill = Read-RequiredText (Join-Path $workflowSource 'SKILL.md')
 $agentsText = Read-RequiredText $agentsMd
-$matrix = Read-RequiredText (Join-Path $workflowSource 'references\mode-matrix.md')
-$backendPolicy = Read-RequiredText (Join-Path $workflowSource 'references\backend-policy.md')
-$nativeRef = Read-RequiredText (Join-Path $workflowSource 'references\subagents.md')
 $installer = Read-RequiredText (Join-Path $repo 'scripts\install.ps1')
 $promptPad = Read-RequiredText (Join-Path $repo 'ahk\codex_prompt_pad.ahk')
 
@@ -247,38 +249,12 @@ $allModes = @(
     'DEBUG', 'REWORK', 'R.A.F.V', 'TN.SKILL'
 )
 foreach ($mode in $allModes) {
-    Assert-Contains -Label 'codex AGENTS.md' -Text $agentsText -Needles @($mode)
-    Assert-Contains -Label 'mode matrix' -Text $matrix -Needles @($mode)
-}
-
-$matrixBackendPatterns = @(
-    'subagents=',
-    '(?i)\bmcp\b',
-    '(?i)\bdeepseek\b',
-    '(?i)\bnative\b'
-)
-foreach ($pattern in $matrixBackendPatterns) {
-    if ([regex]::IsMatch($matrix, $pattern)) {
-        throw "Mode matrix is not backend-neutral: $pattern"
-    }
+    Assert-Contains -Label 'workflow skill' -Text $skill -Needles @($mode)
 }
 
 Assert-Contains -Label 'workflow skill' -Text $skill -Needles @(
     'name: workflows',
-    'AGENTS.md',
-    'backend-policy'
-)
-Assert-Contains -Label 'codex AGENTS.md' -Text $agentsText -Needles @(
-    'backend-policy'
-)
-Assert-Contains -Label 'backend policy' -Text $backendPolicy -Needles @(
-    'subagents=mcp',
-    'subagents=native',
-    'default local backend',
-    'opt-in',
-    'lifecycle',
-    'pending obligation',
-    'delegation audit',
+    'FRAME -> FANOUT -> COLLECT -> ACT -> VERIFY -> REVIEW -> DONE',
     'deepseek_spawn',
     'deepseek_continue',
     'deepseek_follow',
@@ -286,41 +262,126 @@ Assert-Contains -Label 'backend policy' -Text $backendPolicy -Needles @(
     'deepseek_abort',
     'deepseek_close',
     'deepseek_recover_result',
-    'BUG.INV',
-    'DEBUG',
-    'no-edit',
-    'never change files',
-    'DELIVER.AUTO',
+    'capabilities | change permission | done gate',
+    'visual_context',
+    'Final audit',
     'never commit',
-    'COMMIT',
-    'Git index',
     'never push',
-    'final response',
-    'interrupted',
-    'errored',
-    'timed out',
-    'sidecar-gate'
+    'Git index',
+    'No-edit'
 )
-Assert-Contains -Label 'native sub-agent reference' -Text $nativeRef -Needles @(
-    'subagents=native',
-    'opt-in',
-    'backend-policy'
-)
-Assert-Contains -Label 'installer' -Text $installer -Needles @(
-    'default_subagent_model = "gpt-5.6-luna"',
-    'default_subagent_reasoning_effort = "high"'
-)
-Assert-CompletionPolicy -Label 'backend policy' -Text $backendPolicy
-
-$expectedProfiles = @('scout.toml', 'researcher.toml', 'reviewer.toml')
-$actualProfiles = @(Get-ChildItem -LiteralPath $agentsSource -Recurse -File | ForEach-Object {
-    $_.FullName.Substring($agentsSource.Length).TrimStart('\')
-})
-if (@($actualProfiles | Where-Object { $_ -notin $expectedProfiles }).Count -gt 0) {
-    throw "Unexpected native profile source: $($actualProfiles -join ', ')"
+$implAutoRow = [regex]::Match($skill, '(?m)^\| `IMPL\.AUTO` \|[^\r\n]+')
+if (-not $implAutoRow.Success -or $implAutoRow.Value -notmatch '\| write \|') {
+    throw "Workflow skill does not grant IMPL.AUTO write permission"
 }
-foreach ($profileName in $expectedProfiles) {
-    Assert-Profile (Join-Path $agentsSource $profileName)
+
+Assert-Forbidden -Label 'workflow skill' -Text $skill -Tokens @(
+    'AGENTS.md',
+    'subagents=',
+    'backend',
+    'native',
+    'sidecar',
+    'read-only'
+)
+Assert-Forbidden -Label 'codex AGENTS.md' -Text $agentsText -Tokens @(
+    'subagents=',
+    'backend',
+    'native',
+    'sidecar',
+    'read-only',
+    'FRAME',
+    'deepseek_',
+    'mode matrix',
+    'lifecycle'
+)
+
+Assert-Contains -Label 'codex AGENTS.md' -Text $agentsText -Needles @(
+    '$workflows',
+    'SKILL.md',
+    'Preserve',
+    'parent GPT',
+    'DeepSeek',
+    'MCP',
+    'delega',
+    'job',
+    'visual_context'
+)
+$agentsLines = @(($agentsText -split '\r?\n') | Where-Object { $_.Trim() -ne '' })
+if ($agentsLines.Count -gt 40) {
+    throw "codex AGENTS.md exceeds the compact budget: $($agentsLines.Count) non-empty lines"
+}
+
+Assert-CompletionPolicy -Label 'workflow skill' -Text $skill
+
+$legacyPaths = @(
+    'scripts\native-profile-contract.ps1',
+    'agents',
+    'skills\workflows\references\backend-policy.md',
+    'skills\workflows\references\subagents.md',
+    'skills\workflows\references\mode-matrix.md',
+    'skills\workflows\references\dictionary.md',
+    'docs\architecture.md',
+    'docs\agent-bootstrap-prompt.md'
+)
+foreach ($relativePath in $legacyPaths) {
+    $legacyTarget = Join-Path $repo $relativePath
+    $legacyFiles = @(
+        if (Test-Path -LiteralPath $legacyTarget) {
+            Get-ChildItem -LiteralPath $legacyTarget -File -Recurse -Force
+        }
+    )
+    if ($legacyFiles.Count -gt 0) {
+        throw "Legacy path still exists: $relativePath"
+    }
+}
+
+$legacyTokens = @(
+    'backend-policy',
+    'native-profile-contract',
+    'mode-matrix',
+    'dictionary.md',
+    'subagents.md'
+)
+$contractTokens = @(
+    'subagents=',
+    '\bnative\b',
+    '\bbackend\b',
+    '\bsidecar\b'
+)
+foreach ($relativePath in @(git -C $repo ls-files)) {
+    $path = Join-Path $repo $relativePath
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        continue
+    }
+    $text = Get-Content -LiteralPath $path -Raw -Encoding UTF8
+
+    if ($relativePath -ne 'CHANGELOG.md' -and $relativePath -ne 'scripts/validate.ps1') {
+        foreach ($token in $legacyTokens) {
+            if ($text.IndexOf($token, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+                throw "Retained reference to removed surface in ${relativePath}: $token"
+            }
+        }
+
+        foreach ($token in $contractTokens) {
+            if ([regex]::IsMatch($text, $token, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)) {
+                throw "Active text retains removed routing terminology in ${relativePath}: $token"
+            }
+        }
+    }
+
+    if ($relativePath -match '\.md$') {
+        $links = @([regex]::Matches($text, '\]\((?<target>[^)#]+\.md)\)'))
+        foreach ($link in $links) {
+            $target = $link.Groups['target'].Value
+            if ($target -match '^https?://') {
+                continue
+            }
+            $resolved = [IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $path) $target))
+            if (-not (Test-Path -LiteralPath $resolved -PathType Leaf)) {
+                throw "Broken reference in ${relativePath}: $target"
+            }
+        }
+    }
 }
 
 $promptBindings = @([regex]::Matches($promptPad, '(?m)^[^;\r\n]+::PastePrompt\("([^\"]+)"\)'))
@@ -335,6 +396,14 @@ foreach ($binding in $promptBindings) {
 if ($promptPad -match '(?m)^![A-Za-z0-9]+::') {
     throw 'Prompt pad contains a non-workflow hotkey binding.'
 }
+Assert-Forbidden -Label 'prompt pad' -Text $promptPad -Tokens @(
+    'deepseek',
+    'mcp',
+    'native',
+    'backend',
+    'reader',
+    'writer'
+)
 
 $forbidden = @(
     (-join [char[]]@(111, 112, 101, 110, 99, 111, 100, 101)),
@@ -370,10 +439,6 @@ if (-not $SkipInstalled) {
 
     if ([string]$state.profile -eq 'safe') {
         Assert-ManagedAgentDefaults -Path (Join-Path $codexHome 'config.toml')
-
-        foreach ($profileName in $expectedProfiles) {
-            Assert-SameFile -Source (Join-Path $agentsSource $profileName) -Installed (Join-Path $codexHome (Join-Path 'agents' $profileName)) -Label "native profile $profileName"
-        }
 
         $installedAgents = Read-RequiredText (Join-Path $codexHome 'AGENTS.md')
         if ($installedAgents.IndexOf($agentsText.Trim(), [StringComparison]::Ordinal) -lt 0) {

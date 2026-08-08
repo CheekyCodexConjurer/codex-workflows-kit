@@ -13,7 +13,6 @@ Fazem parte do escopo desta política:
 
 - scripts/;
 - skills/;
-- agents/;
 - ahk/ e codex/AGENTS.md.
 
 Fora do escopo estão o produto Codex e componentes instalados fora deste
@@ -34,4 +33,5 @@ forma privada:
 - O kit não registra telemetria e não coleta dados do usuário.
 - A instalação é local; execute apenas o checkout revisado.
 - Backups com timestamp são criados antes de sobrescrever destinos.
-- Os perfis nativos têm sandbox read-only e não recebem permissão de escrita.
+- Trabalho material e delimitável é delegado ao DeepSeek Sub-Agent MCP; o
+  parent GPT integra, valida e decide.

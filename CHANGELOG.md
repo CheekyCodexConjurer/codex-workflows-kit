@@ -7,18 +7,25 @@ O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ### Changed
 
-- O backend de sub-agentes é resolvido pelo sufixo `subagents=mcp|native` no
-  pedido: padrão MCP, com native como opt-in explícito; os modos de workflow
-  permanecem neutros de backend.
-- O ciclo de vida de sidecars, obrigações pendentes e o gate de conclusão são
-  centralizados em skills/workflows/references/backend-policy.md; a
-  documentação pública referencia o contrato canônico em vez de duplicá-lo.
-- scripts/validate.ps1 deixa de bloquear os conceitos mcp e deepseek, mantém
-  os banimentos dos termos legados de roteamento e passa a provar a
-  neutralidade de backend da matriz de modos, a cobertura completa dos nomes
-  de ferramentas MCP e a referência nativa explícita.
-- Perfis nativos (scout, researcher, reviewer) permanecem como um backend
-  opcional, somente leitura, fixado em gpt-5.6-luna com esforço high.
-- Instalação, diagnóstico, validação e documentação acompanham o policy
-  backend-aware, mantendo o fluxo local de skills, perfis nativos e regras
-  globais.
+- codex/AGENTS.md é agora um template global compacto com regras universais
+  apenas (skill `$workflows`, preservação de mudanças, Git não destrutivo,
+  parent GPT como maestro, DeepSeek Sub-Agent MCP como executor principal,
+  delegação obrigatória, consumo de jobs antes de gate dependente, revisão
+  independente pós-writer e `visual_context`).
+- skills/workflows/SKILL.md é a única política detalhada: lifecycle
+  FRAME → FANOUT → COLLECT → ACT → VERIFY → REVIEW → DONE, semântica compacta
+  das ferramentas MCP, modos pela tripla capacidades | permissão | gate de
+  pronto (incluindo IMPL.AUTO com write) e auditoria final.
+- Removidos o roteamento nativo e o contrato de backend: perfis agents/*.toml,
+  scripts/native-profile-contract.ps1 e as referências backend-policy.md,
+  subagents.md, mode-matrix.md e dictionary.md deixam de existir; nenhum texto
+  ativo usa `subagents=` ou terminologia de backend.
+- scripts/install.ps1, validate.ps1 e doctor.ps1 acompanham o novo layout; o
+  instalador remove perfis nativos legados por hash/estado sem apagar arquivos
+  modificados ou desconhecidos.
+- docs/architecture.md e docs/agent-bootstrap-prompt.md (duplicavam a
+  política) foram removidos; docs/security.md, README.md, CONTRIBUTING.md e
+  SECURITY.md foram atualizados para o contrato MCP-only.
+- O prompt pad segue colando apenas `$workflows mode=<MODE>` por tecla; o
+  produto, o schema de estado e a lógica de backup/hashes permanecem
+  compatíveis.

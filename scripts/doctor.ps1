@@ -5,8 +5,6 @@ param(
     [switch]$Detailed
 )
 
-. (Join-Path $PSScriptRoot 'native-profile-contract.ps1')
-
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
@@ -117,7 +115,7 @@ function Test-ManagedAgentDefaults {
     }
 
     try {
-        $text = Get-Content -LiteralPath $Path -Raw -Encoding UTF8
+        $text = (Get-Content -LiteralPath $Path -Raw -Encoding UTF8) -replace '\r\n', "`n"
         $allAgentsHeaders = @([regex]::Matches($text, '(?im)^[ \t]*\[\[?[ \t]*(?:agents|"agents"|''agents'')[ \t]*\]\]?[ \t]*(?:#.*)?$'))
         if ($allAgentsHeaders.Count -ne 1) {
             return $false
@@ -152,12 +150,6 @@ function Test-ManagedAgentDefaults {
     catch {
         return $false
     }
-}
-
-function Test-NativeProfile {
-    param([Parameter(Mandatory)][string]$Path)
-
-    return Test-NativeProfileContract -Path $Path
 }
 
 $defaultCodexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE '.codex' }
@@ -202,10 +194,7 @@ $coreFiles = @(
 )
 if ($installedProfile -eq 'safe') {
     $coreFiles += @(
-        (Join-Path $CodexHome 'AGENTS.md'),
-        (Join-Path $CodexHome 'agents\scout.toml'),
-        (Join-Path $CodexHome 'agents\researcher.toml'),
-        (Join-Path $CodexHome 'agents\reviewer.toml')
+        (Join-Path $CodexHome 'AGENTS.md')
     )
 }
 foreach ($path in $coreFiles) {
@@ -215,16 +204,6 @@ foreach ($path in $coreFiles) {
 if ($installedProfile -eq 'safe') {
     $configPath = Join-Path $CodexHome 'config.toml'
     Write-Check -Name 'Sub-agent defaults' -Passed (Test-ManagedAgentDefaults -Path $configPath) -Detail $configPath
-
-    foreach ($profileName in @('scout.toml', 'researcher.toml', 'reviewer.toml')) {
-        $path = Join-Path $CodexHome (Join-Path 'agents' $profileName)
-        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
-            continue
-        }
-
-        $valid = Test-NativeProfile -Path $path
-        Write-Check -Name 'Native profile' -Passed $valid -Detail $path
-    }
 }
 
 if ($null -ne $state) {

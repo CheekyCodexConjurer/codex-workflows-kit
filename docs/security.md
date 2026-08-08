@@ -5,11 +5,8 @@
 - Execute somente o checkout local revisado.
 - Preserve mudanças existentes e evite operações destrutivas.
 - O padrão para logs novos é none; qualquer exceção exige obs-gate.
-- O backend de sub-agentes é resolvido pelo sufixo `subagents=mcp|native`
-  (padrão MCP; native opt-in explícito), conforme
-  skills/workflows/references/backend-policy.md. Perfis nativos permanecem
-  read-only: não têm autorização para editar, produzir patches, mexer em
-  configuração, staging ou commits.
+- O executor principal é o DeepSeek Sub-Agent MCP: trabalho material e
+  delimitável é delegado; o parent GPT integra, valida e decide.
 - O orquestrador valida o diff integrado antes de entregar.
 
 ## Instalação segura

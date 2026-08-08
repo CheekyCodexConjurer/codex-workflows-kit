@@ -68,6 +68,18 @@ function Write-Utf8NoBom {
     [IO.File]::WriteAllText($Path, $Content, $encoding)
 }
 
+function Get-RequiredFileHash {
+    param([Parameter(Mandatory)][string]$Path)
+
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return [System.BitConverter]::ToString($sha256.ComputeHash([IO.File]::ReadAllBytes($Path))).Replace('-', '')
+    }
+    finally {
+        $sha256.Dispose()
+    }
+}
+
 function Assert-InstallState {
     param([Parameter(Mandatory)][object]$State)
 
@@ -219,7 +231,7 @@ function Test-CanRemoveRecordedFile {
         return $false
     }
 
-    $actualHash = (Get-FileHash -LiteralPath $fullPath -Algorithm SHA256).Hash
+    $actualHash = Get-RequiredFileHash -Path $fullPath
     if ($actualHash -ne [string]$entry.sha256) {
         $script:Skipped = $true
         Write-Warning "Skipping modified managed file; use -Force after review: $fullPath"
@@ -256,7 +268,7 @@ function Remove-ManagedFile {
     $needsForcedBackup = $Force -and (
         $null -eq $entry -or
         [bool]$entry.pending -or
-        (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash -ne [string]$entry.sha256
+        (Get-RequiredFileHash -Path $Path) -ne [string]$entry.sha256
     )
 
     $parentRoot = if ($isCodexPath) { $CodexHome } elseif ($isAgentsPath) { $AgentsHome } else { Split-Path -Parent $AhkDestination }
