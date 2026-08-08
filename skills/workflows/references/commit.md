@@ -11,7 +11,7 @@ than collapsing an unrelated worktree into one commit.
   Block without changing the index when a candidate looks secret, generated,
   cache, or local.
 - Keep simple commits local. When classification has independent material
-  fronts, use a delegated scout before changing the index.
+  fronts, use a delegated read front before changing the index.
 - Preserve existing staged content as an explicit first unit. Never unstage or
   repartition it automatically.
 

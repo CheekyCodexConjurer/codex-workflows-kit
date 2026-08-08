@@ -90,6 +90,87 @@ function Assert-CompletionPolicy {
     }
 }
 
+function Assert-ModeMatrix {
+    param(
+        [Parameter(Mandatory)][string]$Label,
+        [Parameter(Mandatory)][string]$Text
+    )
+
+    $canonical = [ordered]@{
+        'PLAN.AUTO'       = @{ capabilities = @('read'); permission = 'no-write' }
+        'PLAN'            = @{ capabilities = @('read'); permission = 'no-write' }
+        'P.DEEP'          = @{ capabilities = @('read', 'research'); permission = 'no-write' }
+        'RESEARCH.DEEP'   = @{ capabilities = @('research'); permission = 'no-write' }
+        'IMPL.AUTO'       = @{ capabilities = @('read', 'write', 'test', 'review'); permission = 'write' }
+        'IMPL'            = @{ capabilities = @('read', 'write', 'test', 'review'); permission = 'write' }
+        'IMPL.PHASE'      = @{ capabilities = @('read', 'write', 'test', 'review'); permission = 'write' }
+        'DELIVER.AUTO'    = @{ capabilities = @('read', 'write', 'test', 'review'); permission = 'write' }
+        'REVIEW'          = @{ capabilities = @('review'); permission = 'no-write' }
+        'COMMIT'          = @{ capabilities = @('read', 'verify', 'index', 'commit'); permission = 'git-only' }
+        'BUG.INV'         = @{ capabilities = @('read', 'test'); permission = 'no-write' }
+        'BUG.FIX'         = @{ capabilities = @('read', 'write', 'test', 'review'); permission = 'write' }
+        'DEBUG'           = @{ capabilities = @('read', 'test', 'write', 'review'); permission = 'write' }
+        'REWORK'          = @{ capabilities = @('read', 'research'); permission = 'no-write' }
+        'R.A.F.V'         = @{ capabilities = @('review', 'write', 'test'); permission = 'write' }
+        'TN.SKILL'        = @{ capabilities = @('read', 'review'); permission = 'no-write' }
+    }
+    $allowedCapabilities = @('read', 'research', 'write', 'test', 'review', 'verify', 'index', 'commit')
+    $nativeProfiles = @('scout', 'researcher', 'writer', 'reviewer', 'worker')
+    $allowedPermissions = @('no-write', 'write', 'git-only')
+
+    $rows = @([regex]::Matches($Text, '(?m)^\| `([A-Z][A-Z.]*)` \| ([^|]+?) \| ([^|]+?) \| ([^|]+?) \|\r?$'))
+    if ($rows.Count -ne $canonical.Count) {
+        throw "$Label does not declare exactly $($canonical.Count) mode rows: found $($rows.Count)"
+    }
+
+    $declared = @{}
+    foreach ($row in $rows) {
+        $mode = $row.Groups[1].Value
+        $capabilities = @($row.Groups[2].Value -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
+        $permission = $row.Groups[3].Value.Trim()
+        $doneGate = $row.Groups[4].Value.Trim()
+
+        if (-not $canonical.Contains($mode)) {
+            throw "$Label declares an unknown mode row: $mode"
+        }
+        if ($declared.ContainsKey($mode)) {
+            throw "$Label declares mode $mode more than once"
+        }
+        $declared[$mode] = $true
+        if ([string]::IsNullOrWhiteSpace($doneGate)) {
+            throw "$Label mode $mode has an empty done gate"
+        }
+
+        foreach ($capability in $capabilities) {
+            if ($capability -notin $allowedCapabilities) {
+                throw "$Label mode $mode declares a capability outside the vocabulary ($($allowedCapabilities -join ', ')): $capability"
+            }
+            if ($capability -in $nativeProfiles) {
+                throw "$Label mode $mode declares a native profile as a capability: $capability"
+            }
+        }
+
+        if ($permission -notin $allowedPermissions) {
+            throw "$Label mode $mode has an unsupported change permission: $permission"
+        }
+        if (($permission -eq 'no-write' -or $permission -eq 'git-only') -and $capabilities -contains 'write') {
+            throw "$Label mode $mode has a no-write or git-only permission but grants write"
+        }
+
+        $expected = $canonical[$mode]
+        if (($capabilities -join ',') -cne ($expected.capabilities -join ',')) {
+            throw "$Label mode $mode capabilities differ from the canonical matrix: got '$($capabilities -join ',')', expected '$($expected.capabilities -join ',')'"
+        }
+        if ($permission -cne $expected.permission) {
+            throw "$Label mode $mode change permission differs from the canonical matrix: got '$permission', expected '$($expected.permission)'"
+        }
+    }
+
+    if (($canonical['IMPL.AUTO'].capabilities -join ',') -cne 'read,write,test,review') {
+        throw "$Label canonical IMPL.AUTO does not grant read,write,test,review"
+    }
+}
+
 function Assert-ManagedAgentDefaults {
     param([Parameter(Mandatory)][string]$Path)
 
@@ -268,8 +349,10 @@ Assert-Contains -Label 'workflow skill' -Text $skill -Needles @(
     'never commit',
     'never push',
     'Git index',
-    'No-edit'
+    'No-edit',
+    'not the repository workforce'
 )
+Assert-ModeMatrix -Label 'workflow skill' -Text $skill
 $implAutoRow = [regex]::Match($skill, '(?m)^\| `IMPL\.AUTO` \|[^\r\n]+')
 if (-not $implAutoRow.Success -or $implAutoRow.Value -notmatch '\| write \|') {
     throw "Workflow skill does not grant IMPL.AUTO write permission"
@@ -281,7 +364,12 @@ Assert-Forbidden -Label 'workflow skill' -Text $skill -Tokens @(
     'backend',
     'native',
     'sidecar',
-    'read-only'
+    'read-only',
+    'scout',
+    'researcher',
+    'writer',
+    'reviewer',
+    'worker'
 )
 Assert-Forbidden -Label 'codex AGENTS.md' -Text $agentsText -Tokens @(
     'subagents=',
@@ -292,7 +380,12 @@ Assert-Forbidden -Label 'codex AGENTS.md' -Text $agentsText -Tokens @(
     'FRAME',
     'deepseek_',
     'mode matrix',
-    'lifecycle'
+    'lifecycle',
+    'scout',
+    'researcher',
+    'writer',
+    'reviewer',
+    'worker'
 )
 
 Assert-Contains -Label 'codex AGENTS.md' -Text $agentsText -Needles @(
@@ -304,7 +397,8 @@ Assert-Contains -Label 'codex AGENTS.md' -Text $agentsText -Needles @(
     'MCP',
     'delega',
     'job',
-    'visual_context'
+    'visual_context',
+    (-join [char[]]@(110, 227, 111, 32, 97, 32, 102, 111, 114, 231, 97, 32, 100, 101, 32, 116, 114, 97, 98, 97, 108, 104, 111, 32, 100, 111, 32, 114, 101, 112, 111, 115, 105, 116, 243, 114, 105, 111))
 )
 $agentsLines = @(($agentsText -split '\r?\n') | Where-Object { $_.Trim() -ne '' })
 if ($agentsLines.Count -gt 40) {
@@ -340,7 +434,12 @@ $legacyTokens = @(
     'native-profile-contract',
     'mode-matrix',
     'dictionary.md',
-    'subagents.md'
+    'subagents.md',
+    'scout',
+    'researcher',
+    'writer',
+    'reviewer',
+    'worker'
 )
 $contractTokens = @(
     'subagents=',
@@ -402,7 +501,11 @@ Assert-Forbidden -Label 'prompt pad' -Text $promptPad -Tokens @(
     'native',
     'backend',
     'reader',
-    'writer'
+    'writer',
+    'scout',
+    'researcher',
+    'reviewer',
+    'worker'
 )
 
 $forbidden = @(

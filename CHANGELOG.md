@@ -29,3 +29,26 @@ O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 - O prompt pad segue colando apenas `$workflows mode=<MODE>` por tecla; o
   produto, o schema de estado e a lógica de backup/hashes permanecem
   compatíveis.
+- codex/AGENTS.md e skills/workflows/SKILL.md usam vocabulário de capacidades
+  (read, research, write, test, review, verify, index, commit) e permissões
+  (no-write, write, git-only) na matriz de modos; nenhum perfil nativo
+  (scout, researcher, writer, reviewer) permanece na política ativa. O parent
+  GPT é explicitamente o cérebro, não a força de trabalho do repositório.
+- scripts/validate.ps1 valida a matriz canônica de modos, o vocabulário de
+  capacidades e os invariantes (IMPL.AUTO com read,write,test,review;
+  no-write/git-only sem write; nenhum perfil nativo como capacidade), sem
+  falsos positivos em CHANGELOG ou legado permitido.
+- scripts/doctor.ps1 não trata mais o config.toml como falha de hash quando o
+  bloco gerenciado está intacto e o Codex reescreveu o arquivo; adiciona
+  checks read-only de escopo seguro: política única, AGENTS global vs
+  template, contrato antigo instalado, perfis nativos legados, Prompt Pad com
+  override/toggle e atalho no Startup apontando para a cópia gerenciada,
+  referências removidas, registros MCP antigos, scheduled tasks relacionadas e
+  presença do MCP atual deepseek-subagent.
+- scripts/install.ps1 e uninstall.ps1: com -InstallAhk, o atalho
+  'Codex Prompt Pad.lnk' no Startup é instalado (reusando o executável do
+  AutoHotkey existente, com backup binário do atalho anterior), registrado no
+  estado e removido no uninstall somente por hash/ownership; cópias antigas
+  não gerenciadas não são apagadas.
+- references/commit.md, research.md e validation.md alinham o vocabulário ao
+  contrato de capacidades.

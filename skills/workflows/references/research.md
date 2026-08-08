@@ -19,8 +19,8 @@ Use only for `mode=RESEARCH.DEEP`.
 
 1. Define `criteria`: decision to make, target audience, expected result, constraints, and done condition. Derive missing context from the request and direct repository evidence before asking.
 2. Build `research-map`: separate the topic into 2-4 non-overlapping evidence fronts. Include the academic screen as a front when its result could change the decision; otherwise record why it is not material. Keep the decision, integration, and current repository analysis on the main path.
-3. Run `research-fanout` across the independent fronts by default for non-trivial research, even without a wall-clock gain; give each `researcher` one question, scope, source preference, and required `source-ledger` output. Avoid duplicate fronts and continue useful main-path work after spawning.
-4. Queue additional fronts only for material unresolved gaps. Join all required researchers before the decision and final synthesis.
+3. Run `research-fanout` across the independent fronts by default for non-trivial research, even without a wall-clock gain; give each research front one question, scope, source preference, and required `source-ledger` output. Avoid duplicate fronts and continue useful main-path work after spawning.
+4. Queue additional fronts only for material unresolved gaps. Join all required research fronts before the decision and final synthesis.
 5. Apply `source-grade`, `source-triangulation`, `citation-integrity`, and `fact-inference`. Prefer primary sources, official documentation, peer-reviewed studies, systematic reviews or meta-analyses when relevant, arXiv preprints, source repositories, releases, issues, benchmarks with methodology, and direct maintainer statements. Do not let a lone preprint establish causal, safety, performance, or cost claims; identify its review status and triangulate it. Treat popularity, star counts, university prestige, and unverified posts as weak signals.
 6. Use `research-stop` when the recommendation is supported, alternatives are compared, critical unknowns are explicit, and the next search is lower value than synthesis.
 

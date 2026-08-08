@@ -314,6 +314,74 @@ function Copy-ManagedTree {
     }
 }
 
+function Get-StartupShortcutPath {
+    $startup = [Environment]::GetFolderPath('Startup')
+    return Join-Path $startup 'Codex Prompt Pad.lnk'
+}
+
+function Get-ExistingShortcutTarget {
+    param([Parameter(Mandatory)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return $null
+    }
+
+    try {
+        $shell = New-Object -ComObject WScript.Shell
+        return [string]$shell.CreateShortcut($Path).TargetPath
+    }
+    catch {
+        return $null
+    }
+}
+
+function Resolve-AutoHotkeyExecutable {
+    param([string]$ExistingTarget)
+
+    if (-not [string]::IsNullOrWhiteSpace($ExistingTarget) -and (Test-Path -LiteralPath $ExistingTarget -PathType Leaf)) {
+        return [IO.Path]::GetFullPath($ExistingTarget)
+    }
+
+    foreach ($name in @('AutoHotkey64.exe', 'AutoHotkey.exe')) {
+        $command = Get-Command $name -ErrorAction SilentlyContinue
+        if ($null -ne $command -and -not [string]::IsNullOrWhiteSpace($command.Source) -and (Test-Path -LiteralPath $command.Source -PathType Leaf)) {
+            return [IO.Path]::GetFullPath($command.Source)
+        }
+    }
+
+    return $null
+}
+
+function Install-StartupShortcut {
+    param([Parameter(Mandatory)][string]$AhkPath)
+
+    $shortcutPath = Get-StartupShortcutPath
+    $existingTarget = Get-ExistingShortcutTarget -Path $shortcutPath
+    $ahkExecutable = Resolve-AutoHotkeyExecutable -ExistingTarget $existingTarget
+    if ([string]::IsNullOrWhiteSpace($ahkExecutable)) {
+        Write-Warning "AutoHotkey executable was not found; skipping the Startup shortcut: $shortcutPath"
+        return
+    }
+
+    if (Test-Path -LiteralPath $shortcutPath -PathType Leaf) {
+        Backup-ExistingFile -Destination $shortcutPath
+    }
+
+    if (-not (Confirm-InstallAction -Target $shortcutPath -Action 'install Startup shortcut')) {
+        return
+    }
+
+    $shell = New-Object -ComObject WScript.Shell
+    $shortcut = $shell.CreateShortcut($shortcutPath)
+    $shortcut.TargetPath = $ahkExecutable
+    $shortcut.Arguments = '"' + $AhkPath + '"'
+    $shortcut.WorkingDirectory = Split-Path -Parent $AhkPath
+    $shortcut.Description = 'Codex Workflows Kit Prompt Pad'
+    $shortcut.Save()
+
+    $script:ManagedFiles[$shortcutPath] = $null
+}
+
 function Install-GlobalAgentsFile {
     $raw = Get-Content -LiteralPath $agentsMdSource -Raw -Encoding UTF8
     $begin = '# BEGIN CODEX-WORKFLOWS-KIT'
@@ -625,6 +693,7 @@ try {
 
     if ($InstallAhk) {
         Install-ManagedContent -Destination $AhkDestination -Content (Get-Content -LiteralPath $ahkSource -Raw -Encoding UTF8)
+        Install-StartupShortcut -AhkPath $AhkDestination
     }
 
     Remove-ObsoleteManagedFiles

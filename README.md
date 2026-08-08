@@ -21,7 +21,7 @@ Documentação: [Segurança](docs/security.md) ·
 | skill workflows | ~/.agents/skills/workflows | única interface para os modos $workflows |
 | skill evidence-first | ~/.agents/skills/evidence-first | verificação de claims materiais |
 | codex/AGENTS.md | ~/.codex/AGENTS.md | regras globais universais |
-| prompt pad opcional | caminho escolhido pelo usuário | atalhos NUM para $workflows |
+| prompt pad opcional | caminho escolhido pelo usuário | atalhos NUM para $workflows; atalho no Startup com -InstallAhk |
 | scripts locais | checkout | instalação, validação, diagnóstico e remoção |
 
 O contrato único e detalhado é skills/workflows/SKILL.md (ciclo de vida,
@@ -70,7 +70,7 @@ docs/                     Documentação pública
 | Flag | Efeito |
 |---|---|
 | -Profile minimal\|safe | seleciona o escopo instalado |
-| -InstallAhk | instala o prompt pad, com backup do destino existente |
+| -InstallAhk | instala o prompt pad e gerencia o atalho 'Codex Prompt Pad.lnk' no Startup: reusa o executável do AutoHotkey existente quando possível, faz backup binário do atalho anterior e o registra no estado |
 | -CodexHome, -AgentsHome, -AhkDestination | substituem destinos padrão; informe o mesmo `-AhkDestination` ao desinstalar um prompt pad customizado |
 | -Force | permite substituir um AGENTS.md não gerenciado após backup |
 | -WhatIf | mostra as alterações sem tocar no disco |
@@ -88,6 +88,9 @@ apontar para outro arquivo externo, ele é preservado e o comando avisa em vez
 de apagá-lo. Revise esse arquivo manualmente; o desinstalador mantém o estado
 enquanto houver esse pendente, para não perder sua trilha de propriedade. O
 upgrade também registra o pendente no novo estado até que ele seja tratado.
+O atalho 'Codex Prompt Pad.lnk' no Startup é tratado como destino explícito
+quando instalado com -InstallAhk: o desinstalador só o remove quando o hash
+registrado ainda corresponde, preservando atalhos modificados ou não gerenciados.
 
 ## Arquitetura
 

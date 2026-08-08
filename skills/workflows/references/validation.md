@@ -13,8 +13,8 @@
 - Run targeted validation first; broaden it only when the contract or blast
   radius demands it.
 - Inspect the integrated diff, including unintended paths and generated files.
-- Use an independent reviewer for the frozen result when the selected mode
-  or risk requires review.
+- Use an independent review of the frozen result when the selected mode
+  or risk requires it.
 
 ## Repository and installed mirrors
 

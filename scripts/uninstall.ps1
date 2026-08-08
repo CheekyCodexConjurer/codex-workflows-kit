@@ -68,6 +68,11 @@ function Write-Utf8NoBom {
     [IO.File]::WriteAllText($Path, $Content, $encoding)
 }
 
+function Get-StartupShortcutPath {
+    $startup = [Environment]::GetFolderPath('Startup')
+    return Join-Path $startup 'Codex Prompt Pad.lnk'
+}
+
 function Get-RequiredFileHash {
     param([Parameter(Mandatory)][string]$Path)
 
@@ -157,6 +162,7 @@ $AhkDestination = Assert-SafeDestination $AhkDestination
 $statePath = Join-Path $CodexHome 'codex-workflows-kit\install-state.json'
 $configPath = Join-Path $CodexHome 'config.toml'
 $agentsMdPath = Join-Path $CodexHome 'AGENTS.md'
+$StartupShortcutPath = Get-StartupShortcutPath
 $script:Skipped = $false
 $script:RemovedParents = New-Object System.Collections.Generic.List[string]
 $script:BackedUp = @{}
@@ -254,7 +260,8 @@ function Remove-ManagedFile {
     $isCodexPath = $Path.StartsWith($CodexHome.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)
     $isAgentsPath = $Path.StartsWith($AgentsHome.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)
     $isAhkPath = $Path -eq $AhkDestination
-    if (-not ($isCodexPath -or $isAgentsPath -or $isAhkPath)) {
+    $isStartupPath = $Path -eq $StartupShortcutPath
+    if (-not ($isCodexPath -or $isAgentsPath -or $isAhkPath -or $isStartupPath)) {
         $script:Skipped = $true
         Write-Warning "Leaving state file outside the selected destinations untouched: $Path"
         return
@@ -271,14 +278,14 @@ function Remove-ManagedFile {
         (Get-RequiredFileHash -Path $Path) -ne [string]$entry.sha256
     )
 
-    $parentRoot = if ($isCodexPath) { $CodexHome } elseif ($isAgentsPath) { $AgentsHome } else { Split-Path -Parent $AhkDestination }
+    $parentRoot = if ($isCodexPath) { $CodexHome } elseif ($isAgentsPath) { $AgentsHome } elseif ($isStartupPath) { Split-Path -Parent $StartupShortcutPath } else { Split-Path -Parent $AhkDestination }
     Assert-ChildPath -Path $Path -Parent $parentRoot | Out-Null
     if (Confirm-UninstallAction -Target $Path -Action 'remove managed file') {
         if ($needsForcedBackup) {
             Backup-ForcedFile -Path $Path
         }
         Remove-Item -LiteralPath $Path -Force
-        if (-not $isAhkPath) {
+        if (-not $isAhkPath -and -not $isStartupPath) {
             $script:RemovedParents.Add((Split-Path -Parent $Path))
         }
     }
