@@ -8,7 +8,7 @@ diretórios de skills e perfis do usuário.
 
 - skills/workflows: roteador dos 16 modos e referências sob demanda;
 - skills/evidence-first: verificação de claims materiais;
-- agents/: scout, researcher e reviewer nativos;
+- agents/: perfis nativos opcionais (backend native read-only);
 - codex/AGENTS.md: regras globais e biblioteca compacta de modos;
 - scripts/: instalação, validação, diagnóstico e remoção;
 - ahk/: prompt pad opcional.
@@ -21,20 +21,25 @@ flowchart TD
     AGENTS --> MATRIX["Mode matrix"]
     MATRIX --> DECIDE{"Sidecar-gate?"}
     DECIDE -->|"não"| PARENT["Orquestrador"]
-    DECIDE -->|"sim"| NATIVE["Sub-agente nativo read-only"]
-    NATIVE --> PARENT
+    DECIDE -->|"sim"| BACKEND["backend: MCP (padrão) | native (opt-in)"]
+    BACKEND --> SIDE["scout | researcher | reviewer"]
+    SIDE --> PARENT
     PARENT --> VERIFY["Mudança autorizada + validação"]
     VERIFY --> FREEZE["Diff integrado"]
-    FREEZE --> REVIEW["Revisão nativa quando exigida"]
+    FREEZE --> REVIEW["Revisão quando exigida pelo modo"]
 ~~~
 
-Os três perfis nativos são fixados em gpt-5.6-luna, com esforço high e
-read-only. Eles coletam evidência, pesquisam fontes ou revisam um resultado
-congelado. Não alteram arquivos nem iniciam novos agentes.
+O backend de sub-agentes é resolvido pelo sufixo `subagents=mcp|native` do
+pedido: o padrão é MCP e o backend native é opt-in explícito. Os modos de
+workflow permanecem neutros de backend. Os perfis nativos continuam disponíveis
+como um backend opcional, somente leitura, fixado em gpt-5.6-luna com esforço
+high; não alteram arquivos nem iniciam novos agentes. scout, researcher e
+reviewer são frentes de capacidade, não um compromisso com perfis nativos: sob
+o padrão MCP elas são resolvidas pelo backend MCP, e os perfis nativos só
+entram com o opt-in `subagents=native`.
 
-O pai aguarda a resposta final de cada sidecar obrigatório antes de sintetizar
-ou avançar. Sidecar interrompido, com erro, timeout ou sem resposta deixa o
-sidecar-gate aberto, sem fallback silencioso.
+O ciclo de vida de sidecars, obrigações pendentes e o gate de conclusão são
+definidos no contrato canônico de skills/workflows/references/backend-policy.md.
 
 ## Fonte da verdade
 
@@ -44,7 +49,7 @@ precisa delas:
 
 - research.md para RESEARCH.DEEP;
 - observability.md para logs;
-- backend-policy.md e subagents.md para sidecars nativos;
+- backend-policy.md para delegação e ciclo de vida;
 - validation.md para a entrega;
 - mode-matrix.md e dictionary.md para ambiguidade;
 - quality-ratchet.md para qualidade;

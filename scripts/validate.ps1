@@ -236,8 +236,8 @@ $agentsMd = Join-Path $repo 'codex\AGENTS.md'
 $skill = Read-RequiredText (Join-Path $workflowSource 'SKILL.md')
 $agentsText = Read-RequiredText $agentsMd
 $matrix = Read-RequiredText (Join-Path $workflowSource 'references\mode-matrix.md')
-$subagents = Read-RequiredText (Join-Path $workflowSource 'references\subagents.md')
 $backendPolicy = Read-RequiredText (Join-Path $workflowSource 'references\backend-policy.md')
+$nativeRef = Read-RequiredText (Join-Path $workflowSource 'references\subagents.md')
 $installer = Read-RequiredText (Join-Path $repo 'scripts\install.ps1')
 $promptPad = Read-RequiredText (Join-Path $repo 'ahk\codex_prompt_pad.ahk')
 
@@ -251,52 +251,65 @@ foreach ($mode in $allModes) {
     Assert-Contains -Label 'mode matrix' -Text $matrix -Needles @($mode)
 }
 
+$matrixBackendPatterns = @(
+    'subagents=',
+    '(?i)\bmcp\b',
+    '(?i)\bdeepseek\b',
+    '(?i)\bnative\b'
+)
+foreach ($pattern in $matrixBackendPatterns) {
+    if ([regex]::IsMatch($matrix, $pattern)) {
+        throw "Mode matrix is not backend-neutral: $pattern"
+    }
+}
+
 Assert-Contains -Label 'workflow skill' -Text $skill -Needles @(
     'name: workflows',
     'AGENTS.md',
-    'gpt-5.6-luna',
-    'high',
-    'read-only',
-    'final response',
-    'interrupted',
-    'errored',
-    'timed out'
+    'backend-policy'
 )
 Assert-Contains -Label 'codex AGENTS.md' -Text $agentsText -Needles @(
-    'gpt-5.6-luna',
-    'high',
-    'read-only',
-    'sidecar-gate',
-    'final response',
-    'interrupted',
-    'errored',
-    'timed out'
-)
-Assert-Contains -Label 'sub-agent reference' -Text $subagents -Needles @(
-    'gpt-5.6-luna',
-    'high',
-    'final response',
-    'interrupted',
-    'errored',
-    'timed out',
-    'sidecar-gate'
+    'backend-policy'
 )
 Assert-Contains -Label 'backend policy' -Text $backendPolicy -Needles @(
-    'gpt-5.6-luna',
-    'model_reasoning_effort = "high"',
+    'subagents=mcp',
+    'subagents=native',
+    'default local backend',
+    'opt-in',
+    'lifecycle',
+    'pending obligation',
+    'delegation audit',
+    'deepseek_spawn',
+    'deepseek_continue',
+    'deepseek_follow',
+    'deepseek_consult',
+    'deepseek_abort',
+    'deepseek_close',
+    'deepseek_recover_result',
+    'BUG.INV',
+    'DEBUG',
+    'no-edit',
+    'never change files',
+    'DELIVER.AUTO',
+    'never commit',
+    'COMMIT',
+    'Git index',
+    'never push',
     'final response',
     'interrupted',
     'errored',
     'timed out',
     'sidecar-gate'
+)
+Assert-Contains -Label 'native sub-agent reference' -Text $nativeRef -Needles @(
+    'subagents=native',
+    'opt-in',
+    'backend-policy'
 )
 Assert-Contains -Label 'installer' -Text $installer -Needles @(
     'default_subagent_model = "gpt-5.6-luna"',
     'default_subagent_reasoning_effort = "high"'
 )
-Assert-CompletionPolicy -Label 'workflow skill' -Text $skill
-Assert-CompletionPolicy -Label 'codex AGENTS.md' -Text $agentsText
-Assert-CompletionPolicy -Label 'sub-agent reference' -Text $subagents
 Assert-CompletionPolicy -Label 'backend policy' -Text $backendPolicy
 
 $expectedProfiles = @('scout.toml', 'researcher.toml', 'reviewer.toml')
@@ -324,9 +337,7 @@ if ($promptPad -match '(?m)^![A-Za-z0-9]+::') {
 }
 
 $forbidden = @(
-    (-join [char[]]@(109, 99, 112)),
     (-join [char[]]@(111, 112, 101, 110, 99, 111, 100, 101)),
-    (-join [char[]]@(100, 101, 101, 112, 115, 101, 101, 107)),
     (-join [char[]]@(114, 101, 108, 97, 121)),
     (-join [char[]]@(119, 97, 116, 99, 104, 101, 114)),
     (-join [char[]]@(97, 110, 116, 105, 103, 114, 97, 118, 105, 116, 121))

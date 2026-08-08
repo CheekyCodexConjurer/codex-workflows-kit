@@ -5,8 +5,11 @@
 - Execute somente o checkout local revisado.
 - Preserve mudanças existentes e evite operações destrutivas.
 - O padrão para logs novos é none; qualquer exceção exige obs-gate.
-- Sub-agentes são nativos e read-only: não têm autorização para editar,
-  produzir patches, mexer em configuração, staging ou commits.
+- O backend de sub-agentes é resolvido pelo sufixo `subagents=mcp|native`
+  (padrão MCP; native opt-in explícito), conforme
+  skills/workflows/references/backend-policy.md. Perfis nativos permanecem
+  read-only: não têm autorização para editar, produzir patches, mexer em
+  configuração, staging ou commits.
 - O orquestrador valida o diff integrado antes de entregar.
 
 ## Instalação segura

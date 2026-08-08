@@ -19,7 +19,7 @@ mudança de contrato deve manter código, documentação e validação alinhados
 |---|---|
 | skills/workflows/ | modos, referências e contrato do roteador |
 | skills/evidence-first/ | grounding de claims materiais |
-| agents/ | perfis nativos somente leitura |
+| agents/ | perfis nativos opcionais (backend native read-only) |
 | codex/AGENTS.md | regras globais compactas |
 | scripts/ | instalador, validador, doctor e uninstall |
 | docs/, README.md | documentação pública |
@@ -28,7 +28,11 @@ mudança de contrato deve manter código, documentação e validação alinhados
 
 - Preserve mudanças existentes e trabalhe no menor escopo seguro.
 - A interface de workflow é $workflows; não crie um segundo prefixo.
-- Os sub-agentes são nativos e read-only. Não lhes atribua escrita, patches,
+- O backend de sub-agentes é resolvido pelo sufixo `subagents=mcp|native`
+  (padrão MCP; native opt-in explícito), conforme o contrato canônico em
+  skills/workflows/references/backend-policy.md. Os modos permanecem neutros
+  de backend.
+- Perfis nativos permanecem read-only. Não lhes atribua escrita, patches,
   alterações de configuração, staging ou commits.
 - Toda mudança autorizada precisa de preflight, validação proporcional e
   inspeção do diff integrado.

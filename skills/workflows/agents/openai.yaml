@@ -1,4 +1,4 @@
 interface:
   display_name: "Workflows"
-  short_description: "Canonical workflow modes with native read-only sub-agents."
+  short_description: "Canonical workflow modes with backend-aware sub-agents (default backend, native opt-in)."
   default_prompt: "$workflows mode=PLAN.AUTO"

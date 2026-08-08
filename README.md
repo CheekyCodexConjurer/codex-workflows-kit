@@ -1,8 +1,10 @@
 # Codex Workflows Kit
 
 Kit local, Windows-first, para instalar uma única interface de workflow:
-$workflows. Ele inclui a skill condicional evidence-first, perfis nativos de
-leitura (scout, researcher e reviewer) e um prompt pad AutoHotkey opcional.
+$workflows. Ele inclui a skill condicional evidence-first, perfis nativos
+opcionais de leitura (scout, researcher e reviewer) e um prompt pad AutoHotkey
+opcional. O backend de sub-agentes é resolvido pelo sufixo
+`subagents=mcp|native`: o padrão é MCP, e o backend native é opt-in explícito.
 Tudo parte de uma worktree versionada, com backup antes de sobrescrever,
 dry-run, diagnóstico e remoção segura.
 
@@ -21,18 +23,17 @@ Documentação: [Arquitetura](docs/architecture.md) ·
 |---|---|---|
 | skill workflows | ~/.agents/skills/workflows | única interface para os modos $workflows |
 | skill evidence-first | ~/.agents/skills/evidence-first | verificação de claims materiais |
-| scout, researcher, reviewer | ~/.codex/agents | leitura nativa em gpt-5.6-luna com esforço high |
+| scout, researcher, reviewer | ~/.codex/agents | backend native opcional, read-only, em gpt-5.6-luna com esforço high |
 | codex/AGENTS.md | ~/.codex/AGENTS.md | regras globais e matriz compacta de modos |
 | prompt pad opcional | caminho escolhido pelo usuário | atalhos NUM para $workflows |
 | scripts locais | checkout | instalação, validação, diagnóstico e remoção |
 
-Todos os sub-agentes são read-only: coletam evidência, fazem pesquisa ou
-revisam um diff congelado. O orquestrador continua responsável por síntese,
-alterações autorizadas, validação e integração.
-
-Para sidecars obrigatórios, o orquestrador aguarda uma resposta final antes de
-sintetizar ou avançar. Interrupção, erro, timeout ou ausência de resposta mantém
-o gate aberto, sem fallback silencioso.
+Os modos de workflow permanecem neutros de backend: o pedido resolve o backend
+pelo sufixo `subagents=mcp|native` (padrão MCP; native é opt-in explícito). Os
+perfis nativos continuam disponíveis como um backend opcional, somente
+leitura, para coleta de evidência, pesquisa e revisão de diff congelado. O
+ciclo de vida de sidecars, obrigações pendentes e o gate de conclusão seguem o
+contrato canônico em `skills/workflows/references/backend-policy.md`.
 
 ## Requisitos
 
@@ -49,7 +50,7 @@ revisar o conteúdo. Nunca use bypass nem pipelines remotos.
 ~~~text
 skills/workflows/         Skill canônica e referências dos modos
 skills/evidence-first/    Verificação condicional de claims
-agents/                   Perfis nativos somente leitura
+agents/                   Perfis nativos opcionais (backend native read-only)
 codex/AGENTS.md           Regras globais e biblioteca compacta de modos
 ahk/codex_prompt_pad.ahk  Atalhos opcionais
 scripts/                  Instalação, validação, diagnóstico e remoção
@@ -101,17 +102,19 @@ flowchart LR
     USER["Usuário"] --> WF["$workflows mode=<MODE>"]
     PAD["Prompt pad"] --> WF
     WF --> RULES["AGENTS.md + referências"]
-    RULES --> SCOUT["scout read-only"]
-    RULES --> RESEARCH["researcher read-only"]
-    RULES --> REVIEW["reviewer read-only"]
-    SCOUT --> PARENT["orquestrador"]
-    RESEARCH --> PARENT
-    REVIEW --> PARENT
+    RULES --> BACKEND["backend: MCP (padrão) | native (opt-in)"]
+    BACKEND --> SIDE["scout | researcher | reviewer"]
+    SIDE --> PARENT["orquestrador"]
     PARENT --> GATE["diff + validação"]
 ~~~
 
 O único prefixo de workflow é $workflows. Consulte a matriz em
-skills/workflows/references/mode-matrix.md para os 16 modos e seus gates.
+skills/workflows/references/mode-matrix.md para os 16 modos e seus gates; o
+backend de sub-agentes é resolvido pelo sufixo `subagents=mcp|native` e o
+ciclo de vida de delegação segue skills/workflows/references/backend-policy.md.
+scout, researcher e reviewer são frentes de capacidade resolvidas pelo backend
+do pedido: sob o padrão MCP elas não acionam os perfis nativos, que só se
+aplicam com o opt-in explícito `subagents=native`.
 
 ## Primeiros passos
 
@@ -123,9 +126,9 @@ skills/workflows/references/mode-matrix.md para os 16 modos e seus gates.
 $workflows mode=PLAN.AUTO
 ~~~
 
-O contrato do modo define quando coletar evidência nativa, quando alterar e
-como validar. Para preparar uma tarefa antes do primeiro pedido, copie o texto
-de docs/agent-bootstrap-prompt.md.
+O contrato do modo define quando coletar evidência via backend (MCP padrão ou
+native opt-in), quando alterar e como validar. Para preparar uma tarefa antes
+do primeiro pedido, copie o texto de docs/agent-bootstrap-prompt.md.
 
 ## Validação
 

@@ -12,8 +12,8 @@
 - Run targeted validation first; broaden it only when the contract or blast
   radius demands it.
 - Inspect the integrated diff, including unintended paths and generated files.
-- Use a native reviewer for the frozen result when the selected mode or risk
-  requires review.
+- Use an independent reviewer on the resolved backend for the frozen result
+  when the selected mode or risk requires review.
 
 ## Repository and installed mirrors
 
@@ -22,6 +22,6 @@
   before validating the installed mirrors.
 - `scripts/doctor.ps1` verifies managed files and their hashes without making
   changes.
-- A fresh native read-only handoff may be used as a smoke only when the host
-  exposes that capability. Its result proves the assigned evidence task, not
-  a file change.
+- A fresh read-only handoff on the resolved backend may be used as a smoke
+  only when the host exposes that capability. Its result proves the assigned
+  evidence task, not a file change.
