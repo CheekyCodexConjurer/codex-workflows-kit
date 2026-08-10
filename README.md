@@ -7,6 +7,13 @@ parent GPT é o maestro que delega, integra e valida. Tudo parte de uma
 worktree versionada, com backup antes de sobrescrever, dry-run, diagnóstico e
 remoção segura.
 
+Todo pedido não qualificado de sub-agentes, agentes ou delegação — com ou sem
+`$workflows` — usa as ferramentas `deepseek_spawn`/`deepseek_continue`/
+`deepseek_follow` do DeepSeek Sub-Agent MCP. As ferramentas nativas de
+sub-agentes do Codex (`multi_agent_v1__spawn_agent`/`spawn_agent`/`wait_agent`)
+são proibidas, exceto quando o usuário pedir explicitamente sub-agentes
+nativos do Codex.
+
 > **Segurança primeiro.** Nunca instale por pipeline remoto. Clone ou baixe o
 > repositório, revise os scripts em scripts/ e execute-os do seu próprio
 > checkout. O kit não registra telemetria nem configura serviços externos.
@@ -58,7 +65,7 @@ docs/                     Documentação pública
 | Perfil | Escopo |
 |---|---|
 | minimal | skills workflows e evidence-first |
-| safe (padrão) | skills, regras globais (AGENTS.md) e defaults de runtime |
+| safe (padrão) | skills, regras globais (AGENTS.md) e o gate `multi_agent = false` |
 
 ~~~powershell
 .\scripts\install.ps1 -Profile safe
@@ -82,6 +89,9 @@ docs/                     Documentação pública
 O instalador é idempotente. Ele registra hashes dos arquivos que gerencia,
 faz backup antes de sobrescrever e preserva arquivos fora do seu estado.
 
+O perfil safe não instala mais defaults gerenciados em `[agents]` do
+config.toml do Codex: uma seção `[agents]` existente não gerenciada é
+preservada, e blocos gerenciados antigos do kit são removidos na reexecução.
 O perfil safe também define `multi_agent = false` na tabela `[features]` do
 config.toml do Codex, preservando as demais chaves e comentários: a
 orquestração passa a ser exclusivamente via DeepSeek Sub-Agent MCP, e a rota

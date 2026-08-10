@@ -145,49 +145,15 @@ function Test-FullyQualifiedPath {
     return $Path -match '^[A-Za-z]:\\' -or $Path -match '^\\\\[^\\]+\\[^\\]+\\'
 }
 
-function Test-ManagedAgentDefaults {
+function Test-NoManagedAgentsBlock {
     param([Parameter(Mandatory)][string]$Path)
 
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
         return $false
     }
 
-    try {
-        $text = (Get-Content -LiteralPath $Path -Raw -Encoding UTF8) -replace '\r\n', "`n"
-        $allAgentsHeaders = @([regex]::Matches($text, '(?im)^[ \t]*\[\[?[ \t]*(?:agents|"agents"|''agents'')[ \t]*\]\]?[ \t]*(?:#.*)?$'))
-        if ($allAgentsHeaders.Count -ne 1) {
-            return $false
-        }
-
-        $blockPattern = '(?ms)^# BEGIN CODEX-WORKFLOWS-KIT: agents\r?\n(?<block>.*?)^# END CODEX-WORKFLOWS-KIT: agents\r?$'
-        $blocks = @([regex]::Matches($text, $blockPattern))
-        if ($blocks.Count -ne 1) {
-            return $false
-        }
-
-        $block = $blocks[0].Groups['block'].Value
-        $headers = @([regex]::Matches($block, '(?m)^[ \t]*\[\[?[^\r\n\]]+\]\]?[ \t]*(?:#.*)?$'))
-        if ($headers.Count -ne 1 -or $headers[0].Value.Trim() -notmatch '^\[agents\][ \t]*(?:#.*)?$') {
-            return $false
-        }
-
-        $requiredSettings = [ordered]@{
-            default_subagent_model = 'gpt-5.6-luna'
-            default_subagent_reasoning_effort = 'high'
-        }
-        foreach ($setting in $requiredSettings.GetEnumerator()) {
-            $pattern = '(?m)^\s*' + [regex]::Escape([string]$setting.Key) + '\s*=\s*"([^\"]+)"\s*$'
-            $matches = @([regex]::Matches($block, $pattern))
-            if ($matches.Count -ne 1 -or $matches[0].Groups[1].Value -cne [string]$setting.Value) {
-                return $false
-            }
-        }
-
-        return $block -notmatch '(?m)^\s*default_subagent_reasoning_effort\s*=\s*"max"\s*$'
-    }
-    catch {
-        return $false
-    }
+    $text = Get-Content -LiteralPath $Path -Raw -Encoding UTF8
+    return $text.IndexOf('# BEGIN CODEX-WORKFLOWS-KIT: agents', [StringComparison]::Ordinal) -lt 0
 }
 
 function Test-TomlTableHeader {
@@ -405,7 +371,7 @@ foreach ($path in $coreFiles) {
 }
 
 if ($installedProfile -eq 'safe') {
-    Write-Check -Name 'Sub-agent defaults' -Passed (Test-ManagedAgentDefaults -Path $configPath) -Detail $configPath
+    Write-Check -Name 'No managed agents defaults' -Passed (Test-NoManagedAgentsBlock -Path $configPath) -Detail $configPath
 
     Write-Check -Name 'Multi-agent route disabled' -Passed (Test-FeaturesMultiAgentDisabled -Path $configPath) -Detail $configPath
 

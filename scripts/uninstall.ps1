@@ -448,6 +448,7 @@ function Restore-MultiAgentFeature {
     if ($info.MultiAgentValue -cne 'false') {
         if (-not ($priorPresent -and $priorValue -ceq $info.MultiAgentValue)) {
             Write-Warning "multi_agent is '$($info.MultiAgentValue)'; leaving it as-is. The safe profile expects false: $configPath"
+            $script:Skipped = $true
         }
         return
     }
@@ -456,6 +457,7 @@ function Restore-MultiAgentFeature {
     }
     if (-not $AllowWrite) {
         Write-Warning "config.toml was modified; leaving multi_agent as-is: $configPath"
+        $script:Skipped = $true
         return
     }
 

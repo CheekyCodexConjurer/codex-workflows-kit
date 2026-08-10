@@ -171,41 +171,12 @@ function Assert-ModeMatrix {
     }
 }
 
-function Assert-ManagedAgentDefaults {
+function Assert-NoManagedAgentsBlock {
     param([Parameter(Mandatory)][string]$Path)
 
     $text = (Read-RequiredText $Path) -replace '\r\n', "`n"
-    $allAgentsHeaders = @([regex]::Matches($text, '(?im)^[ \t]*\[\[?[ \t]*(?:agents|"agents"|''agents'')[ \t]*\]\]?[ \t]*(?:#.*)?$'))
-    if ($allAgentsHeaders.Count -ne 1) {
-        throw "Configuration has a duplicated or missing [agents] table: $Path"
-    }
-
-    $blockPattern = '(?ms)^# BEGIN CODEX-WORKFLOWS-KIT: agents\r?\n(?<block>.*?)^# END CODEX-WORKFLOWS-KIT: agents\r?$'
-    $blocks = @([regex]::Matches($text, $blockPattern))
-    if ($blocks.Count -ne 1) {
-        throw "Managed agents configuration block is missing or duplicated: $Path"
-    }
-
-    $block = $blocks[0].Groups['block'].Value
-    $headers = @([regex]::Matches($block, '(?m)^[ \t]*\[\[?[^\r\n\]]+\]\]?[ \t]*(?:#.*)?$'))
-    if ($headers.Count -ne 1 -or $headers[0].Value.Trim() -notmatch '^\[agents\][ \t]*(?:#.*)?$') {
-        throw "Managed agents configuration has an invalid or non-unique [agents] section: $Path"
-    }
-
-    $requiredSettings = [ordered]@{
-        default_subagent_model = 'gpt-5.6-luna'
-        default_subagent_reasoning_effort = 'high'
-    }
-    foreach ($setting in $requiredSettings.GetEnumerator()) {
-        $pattern = '(?m)^\s*' + [regex]::Escape([string]$setting.Key) + '\s*=\s*"([^\"]+)"\s*$'
-        $matches = @([regex]::Matches($block, $pattern))
-        if ($matches.Count -ne 1 -or $matches[0].Groups[1].Value -cne [string]$setting.Value) {
-            throw "Managed agents configuration has an invalid $($setting.Key): $Path"
-        }
-    }
-
-    if ($block -match '(?m)^\s*default_subagent_reasoning_effort\s*=\s*"max"\s*$') {
-        throw "Managed agents configuration retains max reasoning: $Path"
+    if ($text.IndexOf('# BEGIN CODEX-WORKFLOWS-KIT: agents', [StringComparison]::Ordinal) -ge 0) {
+        throw "Installed configuration retains the managed agents defaults block: $Path"
     }
 }
 
@@ -464,18 +435,13 @@ Assert-Forbidden -Label 'workflow skill' -Text $skill -Tokens @(
 Assert-Forbidden -Label 'codex AGENTS.md' -Text $agentsText -Tokens @(
     'subagents=',
     'backend',
-    'native',
     'sidecar',
     'read-only',
     'FRAME',
-    'deepseek_',
     'mode matrix',
     'lifecycle',
     'scout',
-    'researcher',
-    'writer',
-    'reviewer',
-    'worker'
+    'researcher'
 )
 
 Assert-Contains -Label 'codex AGENTS.md' -Text $agentsText -Needles @(
@@ -488,7 +454,23 @@ Assert-Contains -Label 'codex AGENTS.md' -Text $agentsText -Needles @(
     'delega',
     'job',
     'visual_context',
-    (-join [char[]]@(110, 227, 111, 32, 97, 32, 102, 111, 114, 231, 97, 32, 100, 101, 32, 116, 114, 97, 98, 97, 108, 104, 111, 32, 100, 111, 32, 114, 101, 112, 111, 115, 105, 116, 243, 114, 105, 111))
+    (-join [char[]]@(110, 227, 111, 32, 97, 32, 102, 111, 114, 231, 97, 32, 100, 101, 32, 116, 114, 97, 98, 97, 108, 104, 111, 32, 100, 111, 32, 114, 101, 112, 111, 115, 105, 116, 243, 114, 105, 111)),
+    'deepseek_spawn',
+    'deepseek_continue',
+    'deepseek_follow',
+    'multi_agent_v1__spawn_agent',
+    'spawn_agent',
+    'wait_agent',
+    'workers',
+    'readers',
+    'writers',
+    'explorers',
+    'reviewers',
+    'nativo',
+    (-join [char[]]@(110, 227, 111, 32, 233, 32, 99, 111, 110, 100, 105, 231, 227, 111)),
+    'explicitamente',
+    'falha fechado',
+    'resultado terminal'
 )
 $agentsLines = @(($agentsText -split '\r?\n') | Where-Object { $_.Trim() -ne '' })
 if ($agentsLines.Count -gt 40) {
@@ -546,12 +528,18 @@ foreach ($relativePath in @(git -C $repo ls-files)) {
 
     if ($relativePath -ne 'CHANGELOG.md' -and $relativePath -ne 'scripts/validate.ps1') {
         foreach ($token in $legacyTokens) {
+            if ($relativePath -eq 'codex/AGENTS.md' -and $token -in @('writer', 'reviewer', 'worker')) {
+                continue
+            }
             if ($text.IndexOf($token, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
                 throw "Retained reference to removed surface in ${relativePath}: $token"
             }
         }
 
         foreach ($token in $contractTokens) {
+            if ($relativePath -eq 'codex/AGENTS.md' -and $token -eq '\bnative\b') {
+                continue
+            }
             if ([regex]::IsMatch($text, $token, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)) {
                 throw "Active text retains removed routing terminology in ${relativePath}: $token"
             }
@@ -631,7 +619,7 @@ if (-not $SkipInstalled) {
     Assert-MirrorTree -Source $evidenceSource -Installed $evidenceDest -Label 'evidence skill'
 
     if ([string]$state.profile -eq 'safe') {
-        Assert-ManagedAgentDefaults -Path (Join-Path $codexHome 'config.toml')
+        Assert-NoManagedAgentsBlock -Path (Join-Path $codexHome 'config.toml')
         Assert-FeaturesMultiAgentDisabled -Path (Join-Path $codexHome 'config.toml')
 
         $installedAgents = Read-RequiredText (Join-Path $codexHome 'AGENTS.md')

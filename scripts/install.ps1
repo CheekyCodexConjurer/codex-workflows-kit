@@ -450,12 +450,6 @@ function Remove-KitBlocks {
     return [regex]::Replace($result, '(?m)^# (?:BEGIN|END) CODEX-WORKFLOWS-KIT:.*(?:\r?\n|$)', '').Trim()
 }
 
-function Test-AgentsTableHeader {
-    param([AllowEmptyString()][string]$Text)
-
-    return ($Text -replace '\r\n', "`n") -match '(?im)^[ \t]*\[\[?[ \t]*(?:agents|"agents"|''agents'')[ \t]*\]\]?[ \t]*(?:#.*)?$'
-}
-
 function Test-TomlTableHeader {
     param([AllowEmptyString()][string]$Line)
 
@@ -599,22 +593,9 @@ function Install-SafeConfig {
     }
 
     $content = Remove-KitBlocks -Text $existing
-    if (Test-AgentsTableHeader -Text $content) {
-        throw "An unmanaged [agents] section already exists; refusing to install managed defaults: $configPath"
-    }
-
-    $block = @'
-# BEGIN CODEX-WORKFLOWS-KIT: agents
-[agents]
-max_concurrent_threads_per_session = 5
-default_subagent_model = "gpt-5.6-luna"
-default_subagent_reasoning_effort = "high"
-# END CODEX-WORKFLOWS-KIT: agents
-'@
-    $content = if ([string]::IsNullOrWhiteSpace($content)) { $block } else { $content.TrimEnd() + $nl + $nl + $block }
     $content = Set-FeaturesMultiAgentGate -Text $content
 
-    Install-ManagedContent -Destination $configPath -Content ($content.TrimEnd() + $nl)
+    Install-ManagedContent -Destination $configPath -Content ($content.Trim() + $nl)
 }
 
 function Test-CanRemoveManagedFile {
@@ -645,7 +626,7 @@ function Test-CanRemoveManagedFile {
     return $true
 }
 
-function Remove-AgentDefaults {
+function Remove-ManagedConfigBlocks {
     if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) {
         return
     }
@@ -840,14 +821,6 @@ function Assert-InstallPreflight {
         return
     }
 
-    if (Test-Path -LiteralPath $configPath -PathType Leaf) {
-        $existingConfig = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8
-        $configWithoutManagedBlock = Remove-KitBlocks -Text $existingConfig
-        if (Test-AgentsTableHeader -Text $configWithoutManagedBlock) {
-            throw "An unmanaged [agents] section already exists; refusing to install managed defaults: $configPath"
-        }
-    }
-
     if (-not (Test-Path -LiteralPath $agentsMdDest -PathType Leaf)) {
         return
     }
@@ -879,7 +852,7 @@ try {
         Install-SafeConfig
     }
     else {
-        Remove-AgentDefaults
+        Remove-ManagedConfigBlocks
         Remove-ManagedAgentsBlock
         if ($null -ne $script:PriorFeaturesRecord) {
             $allowWrite = $script:ConfigModified

@@ -7,6 +7,29 @@ O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ### Changed
 
+- codex/AGENTS.md ganha o bloco canônico de roteamento: todo pedido não
+  qualificado de sub-agentes, agentes, delegação, trabalho, leitura, escrita,
+  exploração ou revisão — incluindo os aliases comuns `workers`, `readers`,
+  `writers`, `explorers`, `reviewers` — usa
+  `deepseek_spawn`/`deepseek_continue`/`deepseek_follow`, com ou sem
+  `$workflows` (`$workflows` acrescenta ciclo e modos, mas não é condição
+  para selecionar o MCP). As ferramentas nativas
+  `multi_agent_v1__spawn_agent`/`spawn_agent`/`wait_agent` são proibidas,
+  exceto pedido explícito de sub-agentes nativos do Codex. Consumo terminal,
+  revisão independente, `visual_context` e fail-closed são preservados.
+  scripts/validate.ps1 exige os aliases apenas no bloco canônico; a
+  terminologia retirada continua proibida nos demais arquivos.
+- scripts/install.ps1 (perfil safe) deixa de instalar o bloco gerenciado
+  `[agents]` com defaults nativos; a reexecução remove blocos gerenciados
+  antigos e preserva uma seção `[agents]` não gerenciada existente. O gate
+  `multi_agent = false` em `[features]` continua.
+- scripts/validate.ps1 e doctor.ps1 permitem o vocabulário canônico de
+  roteamento em codex/AGENTS.md (nomes de ferramentas `native`/`deepseek_`)
+  sem reativar superfícies legadas em outros arquivos; a validação do perfil
+  safe instalado agora exige a ausência do bloco gerenciado de agents, e o
+  doctor substitui o check de defaults gerenciados pelo de ausência. Os
+  fixtures ganham o cenário de reinstall que remove o bloco legado e preserva
+  `[agents]` não gerenciado (scripts/test-safe-profile-gate.ps1).
 - scripts/install.ps1 (perfil safe) define `multi_agent = false` na tabela
   `[features]` do config.toml do Codex de forma idempotente e TOML-aware: sem
   cabeçalhos `[features]` ou chaves duplicadas, preservando chaves e
