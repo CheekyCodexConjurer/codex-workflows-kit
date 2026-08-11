@@ -125,6 +125,22 @@ function Test-StateExists {
     return Test-Path -LiteralPath (Join-Path (Get-CodexHome $Root) 'codex-workflows-kit\install-state.json') -PathType Leaf
 }
 
+function Test-AgentsOrchestrationSemantics {
+    param([Parameter(Mandatory)][string]$Text)
+
+    $normalized = [regex]::Replace($Text, '\s+', ' ').Trim()
+    if (-not [regex]::IsMatch($normalized, '(?i)falha fechado')) {
+        return $false
+    }
+    if ([regex]::IsMatch($normalized, '(?i)\b(?=[^.;]*\b(?:pode|podem|poderia|poderiam|poder[aá]|poder[aã]o|poderao|deve|devem|deveria|deveriam|s[aã]o autorizad[ao]s? a|est[aã]o autorizad[ao]s? a|usam)\b)(?=[^.;]*\b(?:spawn_agent|wait_agent|multi_agent_v1__spawn_agent)\b)(?=[^.;]*\b(?:supervis[aã]o|guardian)\b)[^.;]+')) {
+        return $false
+    }
+    if ([regex]::IsMatch($normalized, '(?i)\b(?:pode|podem|poderia|poderiam|poder[aá]|poder[aã]o|poderao|deve|devem|deveria|deveriam)\b[^.;]*\b(?:l[eê]|ler|escreve|escrever|testa|testar|revisa|revisar|investiga|investigar|executa|executar|realiza|realizar|faz|fazer|verifica|verificar|confere|conferir)\b[^.;]*\b(?:localmente|diretamente|por conta pr[oó]pria)\b')) {
+        return $false
+    }
+    return $true
+}
+
 $scenario = 0
 $fixtures = New-Object System.Collections.Generic.List[string]
 
@@ -322,6 +338,38 @@ multi_agent = true
     Assert-Condition 'S9 uninstall preserves the unmanaged agents section and restores multi_agent' ($config3 -ceq $expectedAfterUninstall) $config3
     Assert-Condition 'S9 uninstall leaves no kit markers' ($config3.IndexOf('# BEGIN CODEX-WORKFLOWS-KIT', [StringComparison]::Ordinal) -lt 0) $config3
     Assert-Condition 'S9 state is removed' (-not (Test-StateExists $root)) ''
+
+    $scenario = 10
+    Write-Host 'Scenario 10: safe profile propagates the AGENTS orchestration policy and heals tampering' -ForegroundColor Cyan
+    $root = New-FixtureHome
+    $fixtures.Add($root)
+    $original = '[features]' + $nl + 'multi_agent = true' + $nl
+    Write-FixtureFile -Path (Join-Path (Get-CodexHome $root) 'config.toml') -Content $original
+    Invoke-SafeInstall -Root $root
+    $agentsMdPath = Join-Path (Get-CodexHome $root) 'AGENTS.md'
+    $installedAgents = Get-Content -LiteralPath $agentsMdPath -Raw -Encoding UTF8
+    $canonicalAgents = Get-Content -LiteralPath (Join-Path $repo 'codex\AGENTS.md') -Raw -Encoding UTF8
+    $normalizedInstalled = ([regex]::Replace($installedAgents, '\s+', ' ')).Trim()
+    $normalizedCanonical = ([regex]::Replace($canonicalAgents, '\s+', ' ')).Trim()
+    Assert-Condition 'S10 wraps the policy in managed markers' (($installedAgents -like '*# BEGIN CODEX-WORKFLOWS-KIT*') -and ($installedAgents -like '*# END CODEX-WORKFLOWS-KIT*')) ''
+    Assert-Condition 'S10 propagates the full canonical AGENTS policy' ($normalizedInstalled.IndexOf($normalizedCanonical, [StringComparison]::Ordinal) -ge 0) ''
+    Assert-Condition 'S10 installed policy satisfies the orchestration semantics' (Test-AgentsOrchestrationSemantics -Text $installedAgents) ''
+
+    $tampered = $installedAgents.Replace('# END CODEX-WORKFLOWS-KIT', '- O parent pode ler arquivos localmente sem delegar.' + $nl + '# END CODEX-WORKFLOWS-KIT')
+    Write-FixtureFile -Path $agentsMdPath -Content $tampered
+    Assert-Condition 'S10 tamper injects a direct-local-work carve-out' (($tampered -ne $installedAgents) -and ($tampered -like '*pode ler arquivos localmente*')) ''
+    Assert-Condition 'S10 detects the tampered policy' (-not (Test-AgentsOrchestrationSemantics -Text $tampered)) ''
+
+    $superTampered = $installedAgents.Replace('# END CODEX-WORKFLOWS-KIT', ' Os agentes de supervisão do sistema podem usar spawn_agent para gerenciar o ciclo de vida.' + $nl + '# END CODEX-WORKFLOWS-KIT')
+    Assert-Condition 'S10 detects the supervision tool tamper' (-not (Test-AgentsOrchestrationSemantics -Text $superTampered)) ''
+
+    Invoke-SafeInstall -Root $root
+    $healedAgents = Get-Content -LiteralPath $agentsMdPath -Raw -Encoding UTF8
+    $normalizedHealed = ([regex]::Replace($healedAgents, '\s+', ' ')).Trim()
+    Assert-Condition 'S10 reinstall heals the tamper back to the canonical policy' (($normalizedHealed.IndexOf($normalizedCanonical, [StringComparison]::Ordinal) -ge 0) -and ($healedAgents.IndexOf('pode ler arquivos localmente', [StringComparison]::Ordinal) -lt 0) -and (Test-AgentsOrchestrationSemantics -Text $healedAgents)) ''
+
+    Invoke-SafeUninstall -Root $root
+    Assert-Condition 'S10 uninstall removes the managed AGENTS block' (-not (Test-Path -LiteralPath $agentsMdPath -PathType Leaf)) ''
 }
 finally {
     foreach ($fixture in $fixtures) {

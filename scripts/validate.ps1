@@ -90,6 +90,152 @@ function Assert-CompletionPolicy {
     }
 }
 
+function Test-OrchestrationPolicy {
+    param([Parameter(Mandatory)][string]$Text)
+
+    $normalized = [regex]::Replace($Text, '\s+', ' ').Trim()
+
+    $requiredPatterns = @(
+        '(?i)sem `?\$?workflows`?,? a delega[cç][aã]o continua usando o deepseek',
+        '(?i)mas n[aã]o [eé] condi[cç][aã]o para selecionar o mcp',
+        '(?i)mesmo quando o usu[aá]rio n[aã]o (?:menciona|pede|invoca)',
+        '(?i)trabalho material (?:de|em) leitura, investiga[cç][aã]o, teste, escrita e revis[aã]o [eé] delegado',
+        '(?i)delegado ao deepseek mcp por padr[aã]o',
+        '(?i)trabalho local do parent [eé] at[oóô]mico',
+        '(?i)nunca refazer localmente uma frente material delegada',
+        '(?i)consuma todo job aceito antes de um gate dependente ou da resposta final',
+        '(?i)feche explicitamente todo agente terminado',
+        '(?i)sem obriga[cç][oõ]es pendentes ou em aberto',
+        '(?i)o writer fica aberto.{0,80}at[ée] a revis[aã]o independente',
+        '(?i)defeitos provados voltam [aáà] mesma frente',
+        '(?i)feche s[oó] depois',
+        '(?i)n[aã]o est[aá] terminado antes de revis[aã]o e corre[cç][oõ]es conclu[ií]das',
+        '(?i)exceto quando o usu[aá]rio pedir explicitamente sub-agentes nativos do codex',
+        '(?i)agentes de supervis[aã]o do sistema.{0,60}isentos',
+        '(?i)a isen[cç][aã]o nunca autoriza o parent a invocar ferramentas nativas',
+        '(?i)falha fechado',
+        '(?i)visual_context'
+    )
+
+    foreach ($pattern in $requiredPatterns) {
+        if (-not [regex]::IsMatch($normalized, $pattern)) {
+            return "missing required orchestration policy pattern: $pattern"
+        }
+    }
+
+    $forbiddenPatterns = @(
+        '(?i)\b(?:pode|podem|poderia|poderiam|poder[aá]|poder[aã]o|poderao|deve|devem|deveria|deveriam)\b[^.;]*\b(?:l[eê]|ler|escreve|escrever|testa|testar|revisa|revisar|investiga|investigar|executa|executar|realiza|realizar|faz|fazer|verifica|verificar|confere|conferir)\b[^.;]*\b(?:localmente|diretamente|por conta pr[oó]pria)\b',
+        '(?i)\b(?:pode|poderia|poder[aá]|deve|deveria)\b[^.;]*\b(?:refazer|repetir|duplicar)\b',
+        '(?i)(?:n[aã]o precisa|sem precisar|sem a necessidade)\b[^.;]*\bdelegar\b',
+        '(?i)\b(?:exceto|salvo)\b[^.;]*\b(?:leitura|investiga[cç][aã]o|escrita|teste|revis[aã]o)\b',
+        '(?i)\b(?:pode|poderia|poder[aá]|deve|deveria)\b[^.;]*\b(?:fechar|encerrar)\b[^.;]*(?:writer|agente|frente)',
+        '(?i)\b(?=[^.;]*\b(?:pode|podem|poderia|poderiam|poder[aá]|poder[aã]o|poderao|deve|devem|deveria|deveriam|s[aã]o autorizad[ao]s? a|est[aã]o autorizad[ao]s? a|usam)\b)(?=[^.;]*\b(?:spawn_agent|wait_agent|multi_agent_v1__spawn_agent)\b)(?=[^.;]*\b(?:supervis[aã]o|guardian)\b)[^.;]+',
+        '(?i)\b(?:parent|parent gpt)\b[^.;]*\b(?:l[eê]|ler|escreve|escrever|testa|testar|revisa|revisar|investiga|investigar|executa|executar|realiza|realizar|faz|fazer|verifica|verificar|confere|conferir)\b[^.;]*\b(?:localmente|diretamente|por conta pr[oó]pria)\b'
+    )
+
+    foreach ($pattern in $forbiddenPatterns) {
+        if ([regex]::IsMatch($normalized, $pattern)) {
+            return "forbidden direct-local-work carve-out: $pattern"
+        }
+    }
+
+    return $null
+}
+
+function New-TamperedText {
+    param(
+        [Parameter(Mandatory)][string]$Text,
+        [Parameter(Mandatory)][string]$Old,
+        [string]$New = ''
+    )
+
+    $index = $Text.IndexOf($Old, [StringComparison]::Ordinal)
+    if ($index -lt 0) {
+        throw "Tamper fixture source text is missing: $Old"
+    }
+    return $Text.Remove($index, $Old.Length).Insert($index, $New)
+}
+
+function Assert-OrchestrationPolicySelfCheck {
+    param([Parameter(Mandatory)][string]$Canonical)
+
+    $normalized = [regex]::Replace($Canonical, '\s+', ' ').Trim()
+    $samples = @(
+        [pscustomobject]@{
+            Name = 'parent permitted to redo a delegated front locally'
+            Text = (New-TamperedText -Text $normalized -Old 'nunca refazer localmente' -New 'pode refazer localmente')
+        }
+        [pscustomobject]@{
+            Name = 'direct-local-work carve-out added'
+            Text = ($normalized + ' O parent pode ler arquivos localmente sem delegar.')
+        }
+        [pscustomobject]@{
+            Name = 'native tools authorized for supervisory agents'
+            Text = ($normalized + ' O parent pode usar spawn_agent para agentes de supervisao do sistema.')
+        }
+        [pscustomobject]@{
+            Name = 'parent verifies results locally'
+            Text = ($normalized + ' O parent verifica o resultado localmente.')
+        }
+        [pscustomobject]@{
+            Name = 'parent double-checks directly'
+            Text = ($normalized + ' O parent confere o resultado diretamente.')
+        }
+        [pscustomobject]@{
+            Name = 'fail-closed behavior removed'
+            Text = (New-TamperedText -Text $normalized -Old 'e o parent falha fechado — inclusive quando os tools DeepSeek estão indisponíveis — em vez de outra rota silenciosa.')
+        }
+        [pscustomobject]@{
+            Name = 'user-mention default-delegation clause removed'
+            Text = (New-TamperedText -Text $normalized -Old 'e vale mesmo quando o usuário não menciona `$workflows`, sub-agentes ou delegação')
+        }
+        [pscustomobject]@{
+            Name = '$workflows made a condition for MCP selection'
+            Text = (New-TamperedText -Text $normalized -Old 'mas não é condição para selecionar o MCP' -New 'mas é condição para selecionar o MCP')
+        }
+        [pscustomobject]@{
+            Name = 'writer close-before-review exemption added'
+            Text = ($normalized + ' O parent pode fechar o writer antes da revisão independente.')
+        }
+        [pscustomobject]@{
+            Name = 'supervisory agents may use native tools to manage lifecycle'
+            Text = ($normalized + ' Os agentes de supervisão do sistema podem usar spawn_agent para gerenciar o ciclo de vida.')
+        }
+        [pscustomobject]@{
+            Name = 'supervisory agents authorized to use native tools'
+            Text = ($normalized + ' Os agentes de supervisão do sistema estão autorizados a usar wait_agent.')
+        }
+        [pscustomobject]@{
+            Name = 'supervisory agents use native tools freely'
+            Text = ($normalized + ' Os agentes de supervisão do sistema usam spawn_agent livremente.')
+        }
+        [pscustomobject]@{
+            Name = 'native-tool ban negated'
+            Text = (New-TamperedText -Text $normalized -Old 'nunca autoriza' -New 'autoriza')
+        }
+    )
+
+    foreach ($sample in $samples) {
+        if ($null -eq (Test-OrchestrationPolicy -Text $sample.Text)) {
+            throw "Orchestration policy self-check failed to detect tampering: $($sample.Name)"
+        }
+    }
+}
+
+function Assert-OrchestrationPolicy {
+    param(
+        [Parameter(Mandatory)][string]$Label,
+        [Parameter(Mandatory)][string]$Text
+    )
+
+    $reason = Test-OrchestrationPolicy -Text $Text
+    if ($null -ne $reason) {
+        throw "$Label fails the default-delegation orchestration policy ($reason)"
+    }
+
+    Assert-OrchestrationPolicySelfCheck -Canonical $Text
+}
+
 function Assert-ModeMatrix {
     param(
         [Parameter(Mandatory)][string]$Label,
@@ -479,6 +625,8 @@ if ($agentsLines.Count -gt 40) {
 
 Assert-CompletionPolicy -Label 'workflow skill' -Text $skill
 
+Assert-OrchestrationPolicy -Label 'codex AGENTS.md' -Text $agentsText
+
 $legacyPaths = @(
     'scripts\native-profile-contract.ps1',
     'agents',
@@ -623,9 +771,7 @@ if (-not $SkipInstalled) {
         Assert-FeaturesMultiAgentDisabled -Path (Join-Path $codexHome 'config.toml')
 
         $installedAgents = Read-RequiredText (Join-Path $codexHome 'AGENTS.md')
-        if ($installedAgents.IndexOf($agentsText.Trim(), [StringComparison]::Ordinal) -lt 0) {
-            throw 'Installed AGENTS.md does not contain the current managed contract.'
-        }
+        Assert-OrchestrationPolicy -Label 'installed AGENTS.md' -Text $installedAgents
     }
 }
 
