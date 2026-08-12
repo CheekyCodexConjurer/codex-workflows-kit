@@ -247,17 +247,17 @@ function Assert-ModeMatrix {
         'PLAN'            = @{ capabilities = @('read'); permission = 'no-write' }
         'P.DEEP'          = @{ capabilities = @('read', 'research'); permission = 'no-write' }
         'RESEARCH.DEEP'   = @{ capabilities = @('research'); permission = 'no-write' }
-        'IMPL.AUTO'       = @{ capabilities = @('read', 'write', 'test', 'review'); permission = 'write' }
-        'IMPL'            = @{ capabilities = @('read', 'write', 'test', 'review'); permission = 'write' }
-        'IMPL.PHASE'      = @{ capabilities = @('read', 'write', 'test', 'review'); permission = 'write' }
-        'DELIVER.AUTO'    = @{ capabilities = @('read', 'write', 'test', 'review'); permission = 'write' }
+        'IMPL.AUTO'       = @{ capabilities = @('read', 'write', 'test', 'review', 'commit'); permission = 'write' }
+        'IMPL'            = @{ capabilities = @('read', 'write', 'test', 'review', 'commit'); permission = 'write' }
+        'IMPL.PHASE'      = @{ capabilities = @('read', 'write', 'test', 'review', 'commit'); permission = 'write' }
+        'DELIVER.AUTO'    = @{ capabilities = @('read', 'write', 'test', 'review', 'commit'); permission = 'write' }
         'REVIEW'          = @{ capabilities = @('review'); permission = 'no-write' }
         'COMMIT'          = @{ capabilities = @('read', 'verify', 'index', 'commit'); permission = 'git-only' }
         'BUG.INV'         = @{ capabilities = @('read', 'test'); permission = 'no-write' }
-        'BUG.FIX'         = @{ capabilities = @('read', 'write', 'test', 'review'); permission = 'write' }
-        'DEBUG'           = @{ capabilities = @('read', 'test', 'write', 'review'); permission = 'write' }
+        'BUG.FIX'         = @{ capabilities = @('read', 'write', 'test', 'review', 'commit'); permission = 'write' }
+        'DEBUG'           = @{ capabilities = @('read', 'test', 'write', 'review', 'commit'); permission = 'write' }
         'REWORK'          = @{ capabilities = @('read', 'research'); permission = 'no-write' }
-        'R.A.F.V'         = @{ capabilities = @('review', 'write', 'test'); permission = 'write' }
+        'R.A.F.V'         = @{ capabilities = @('review', 'write', 'test', 'commit'); permission = 'write' }
         'TN.SKILL'        = @{ capabilities = @('read', 'review'); permission = 'no-write' }
     }
     $allowedCapabilities = @('read', 'research', 'write', 'test', 'review', 'verify', 'index', 'commit')
@@ -302,6 +302,9 @@ function Assert-ModeMatrix {
         if (($permission -eq 'no-write' -or $permission -eq 'git-only') -and $capabilities -contains 'write') {
             throw "$Label mode $mode has a no-write or git-only permission but grants write"
         }
+        if ($capabilities -contains 'commit' -and $permission -notin @('write', 'git-only')) {
+            throw "$Label mode $mode grants commit outside write or git-only permissions"
+        }
 
         $expected = $canonical[$mode]
         if (($capabilities -join ',') -cne ($expected.capabilities -join ',')) {
@@ -312,8 +315,8 @@ function Assert-ModeMatrix {
         }
     }
 
-    if (($canonical['IMPL.AUTO'].capabilities -join ',') -cne 'read,write,test,review') {
-        throw "$Label canonical IMPL.AUTO does not grant read,write,test,review"
+    if (($canonical['IMPL.AUTO'].capabilities -join ',') -cne 'read,write,test,review,commit') {
+        throw "$Label canonical IMPL.AUTO does not grant read,write,test,review,commit"
     }
 }
 
@@ -553,7 +556,8 @@ Assert-Contains -Label 'workflow skill' -Text $skill -Needles @(
     'capabilities | change permission | done gate',
     'visual_context',
     'Final audit',
-    'never commit',
+    'Delivery commit gate',
+    'local commit series',
     'never push',
     'Git index',
     'No-edit',

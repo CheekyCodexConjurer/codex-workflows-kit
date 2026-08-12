@@ -16,6 +16,16 @@
 - Use an independent review of the frozen result when the selected mode
   or risk requires it.
 
+## Delivery commit gate
+
+Write modes end with a validated, reviewed, scoped local commit series and
+never push. Record the baseline and claim-map/path ownership before work;
+block on pre-existing, staged, or other-front changes and on
+generated/cache/local/ignored candidates. Run `git diff --check` plus
+targeted and integrated validation before committing. Independent review
+before the first commit; follow-up fixes are new commits — no amend or
+rewrite.
+
 ## Repository and installed mirrors
 
 - Run `scripts/validate.ps1` and `git diff --check`.

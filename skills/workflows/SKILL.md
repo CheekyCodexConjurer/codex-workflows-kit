@@ -17,6 +17,8 @@ selected mode or an open gate requires it.
 - Preserve existing work. Define the failure signature and validation before
   editing. No instrumentation without an explicit `obs-gate` contract
   (`observability.md`).
+- Write delivery modes close with a validated, reviewed, scoped local commit
+  series; never push.
 - Material current, external, or high-impact claims use the `evidence-first`
   skill.
 
@@ -51,7 +53,8 @@ FRAME -> FANOUT -> COLLECT -> ACT -> VERIFY -> REVIEW -> DONE
 - VERIFY: prove the affected behavior with the mode's validation; inspect the
   integrated diff.
 - REVIEW: after material write output, ask an independent agent to review it.
-- DONE: run the final audit before the final response.
+- DONE: run the final audit and close the local commit series before the
+  final response.
 
 ## MCP tool semantics
 
@@ -84,7 +87,8 @@ Normative contract:
 Each row is `capabilities | change permission | done gate`. Capability names
 are read, research, write, test, review, verify, index, and commit. Modes
 grant exactly these capabilities; no mode with a no-write or git-only
-permission may grant write.
+permission may grant write, and commit is granted only to write and git-only
+permissions.
 
 | Mode | Capabilities | Change permission | Done gate |
 |---|---|---|---|
@@ -92,31 +96,52 @@ permission may grant write.
 | `PLAN` | read | no-write | plan backed by evidence |
 | `P.DEEP` | read, research | no-write | phase graph and claim-map joined |
 | `RESEARCH.DEEP` | research | no-write | research fronts joined |
-| `IMPL.AUTO` | read, write, test, review | write | change implemented and validated without an extra approval gate |
-| `IMPL` | read, write, test, review | write | scoped behavior validated |
-| `IMPL.PHASE` | read, write, test, review | write | each phase validated before the next |
-| `DELIVER.AUTO` | read, write, test, review | write | integrated freeze reviewed; never commit |
+| `IMPL.AUTO` | read, write, test, review, commit | write | change implemented and validated without an extra approval gate; local commit series; never push |
+| `IMPL` | read, write, test, review, commit | write | scoped behavior validated; local commit series; never push |
+| `IMPL.PHASE` | read, write, test, review, commit | write | each phase validated before the next; final local commit series; never push |
+| `DELIVER.AUTO` | read, write, test, review, commit | write | integrated freeze reviewed; local commit series; never push |
 | `REVIEW` | review | no-write | proven findings |
 | `COMMIT` | read, verify, index, commit | git-only | commit evidence complete; never push |
 | `BUG.INV` | read, test | no-write | evidence-backed hypotheses |
-| `BUG.FIX` | read, write, test, review | write | regression check passes |
-| `DEBUG` | read, test, write, review | write | functional gate, then clean gate |
+| `BUG.FIX` | read, write, test, review, commit | write | regression check passes; local commit series; never push |
+| `DEBUG` | read, test, write, review, commit | write | functional gate, then clean gate; local commit series; never push |
 | `REWORK` | read, research | no-write | rework roadmap backed by evidence |
-| `R.A.F.V` | review, write, test | write | repair batch revalidated; no commit |
+| `R.A.F.V` | review, write, test, commit | write | repair batch revalidated; local commit series; no push |
 | `TN.SKILL` | read, review | no-write | quality roadmap backed by evidence |
 
-No-edit rows never change files. `COMMIT` touches only the Git index and
-never pushes. `DELIVER.AUTO` ends at the reviewed integrated diff and never
-commits. No reset, pull, merge, push, publication, or destructive action
+No-edit rows never change files. `COMMIT` touches only the Git index, never
+pushes, and is reserved for pre-existing or exceptional dirty worktrees.
+Write delivery modes close with a validated, reviewed, scoped local commit
+series and never push; `DELIVER.AUTO` freezes the integrated diff and commits
+it locally. No reset, pull, merge, push, publication, or destructive action
 without an explicit request.
+
+## Delivery commit gate
+
+Write modes — `IMPL.AUTO`, `IMPL`, `IMPL.PHASE`, `DELIVER.AUTO`, `BUG.FIX`,
+`DEBUG`, `R.A.F.V` — end with a validated, reviewed, scoped local commit
+series; never push. `references/commit.md` owns the gate details:
+
+- Record the baseline and claim-map/path ownership before work; the series
+  commits only owned changes — never pre-existing, staged, or other-front
+  changes.
+- Block without changing the index on ambiguous overlap, secrets, or
+  generated/cache/local/ignored candidates.
+- Build a coherent commit-map with separate commits; run targeted and
+  integrated validation plus `git diff --check`.
+- Independent review before commit; follow-up fixes are new commits — no
+  amend or rewrite.
+- `COMMIT` stays git-only for pre-existing or exceptional dirty worktrees;
+  `REWORK` stays no-write: roadmap only, never implementation.
 
 ## Final audit
 
 Before the final response, prove and report: every required job consumed
 (`completed`, `completed_partial`, `failed`, `timed_out`, `aborted`, or
 `explicitly unavailable-blocked`), validation run, integrated diff inspected,
-independent review requested after material write output, and remaining
-risks. Never declare success with an open required gate.
+independent review requested after material write output, local commit series
+closed without push, and remaining risks. Never declare success with an open
+required gate.
 
 ## References
 
@@ -125,5 +150,5 @@ Open only when the mode or a gate requires it:
 - `references/research.md` — `RESEARCH.DEEP`
 - `references/observability.md` — logging decisions
 - `references/validation.md` — delivery gate and installed mirrors
-- `references/commit.md` — `COMMIT`
+- `references/commit.md` — delivery commit gate and `COMMIT`
 - `references/quality-ratchet.md` — `TN.SKILL` and code quality

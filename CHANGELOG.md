@@ -7,6 +7,23 @@ O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ### Changed
 
+- Modos de entrega com escrita (`IMPL.AUTO`, `IMPL`, `IMPL.PHASE`,
+  `DELIVER.AUTO`, `BUG.FIX`, `DEBUG`, `R.A.F.V`) passam a fechar com uma
+  série de commits locais validada, revisada e escopada — nunca push. A
+  matriz de modos em skills/workflows/SKILL.md ganha a capacidade `commit`
+  nesses modos e o gate de pronto declara a série local; o novo gate de
+  entrega exige baseline e claim-map/ownership de caminhos, nunca inclui
+  mudanças pré-existentes/staged/de outra frente, bloqueia por overlap
+  ambíguo, segredos ou candidatos gerados/cache/local/ignorados, usa um
+  commit-map coerente com validação direcionada e integrada mais `git diff
+  --check`, revisão independente antes do commit e correções como commits
+  novos (sem amend/rewrite). O modo `COMMIT` permanece git-only para
+  worktrees sujos pré-existentes ou excepcionais; `REWORK` continua no-write
+  (roadmap, nunca implementação). skills/workflows/references/commit.md e
+  validation.md definem o gate; scripts/validate.ps1 sincroniza a matriz
+  canônica, exige `commit` apenas sob permissões write/git-only e verifica o
+  novo vocabulário do contrato.
+
 - codex/AGENTS.md ganha o bloco canônico de roteamento: todo pedido não
   qualificado de sub-agentes, agentes, delegação, trabalho, leitura, escrita,
   exploração ou revisão — incluindo os aliases comuns `workers`, `readers`,
