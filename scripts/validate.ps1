@@ -114,7 +114,13 @@ function Test-OrchestrationPolicy {
         '(?i)agentes de supervis[aã]o do sistema.{0,60}isentos',
         '(?i)a isen[cç][aã]o nunca autoriza o parent a invocar ferramentas nativas',
         '(?i)falha fechado',
-        '(?i)visual_context'
+        '(?i)visual_context',
+        '(?i)antes de esperar,? mapeie frentes independentes,? depend[eê]ncias e recursos exclusivos ou compartilhados',
+        '(?i)lance em lote todas as frentes materiais independentes antes do primeiro follow',
+        '(?i)apenas trilhas com depend[eê]ncia real ou recurso compartilhado ficam seriais',
+        '(?i)enquanto aguarda,? fa[cç]a orquestra[cç][aã]o independente [uú]til',
+        '(?i)ledger est[aá]vel de request_id.{0,60}frente,? agente,? job,? estado,? consumido e fechado',
+        '(?i)consuma cada job e feche cada agente ap[oó]s a integra[cç][aã]o'
     )
 
     foreach ($pattern in $requiredPatterns) {
@@ -212,6 +218,30 @@ function Assert-OrchestrationPolicySelfCheck {
         [pscustomobject]@{
             Name = 'native-tool ban negated'
             Text = (New-TamperedText -Text $normalized -Old 'nunca autoriza' -New 'autoriza')
+        }
+        [pscustomobject]@{
+            Name = 'map-before-wait removed'
+            Text = (New-TamperedText -Text $normalized -Old 'Antes de esperar, mapeie frentes independentes' -New 'Antes de esperar, apenas aguarde')
+        }
+        [pscustomobject]@{
+            Name = 'batch launch before first follow removed'
+            Text = (New-TamperedText -Text $normalized -Old 'lance em lote todas as frentes materiais independentes' -New 'lance as frentes uma a uma')
+        }
+        [pscustomobject]@{
+            Name = 'serial-only-real-dependencies removed'
+            Text = (New-TamperedText -Text $normalized -Old 'apenas trilhas com dependência real ou recurso compartilhado ficam seriais' -New 'todas as trilhas podem ser seriais')
+        }
+        [pscustomobject]@{
+            Name = 'useful orchestration while waiting removed'
+            Text = (New-TamperedText -Text $normalized -Old 'enquanto aguarda, faça orquestração independente útil' -New 'enquanto aguarda, espere ocioso')
+        }
+        [pscustomobject]@{
+            Name = 'request_id ledger removed'
+            Text = (New-TamperedText -Text $normalized -Old 'ledger estável de request_id' -New 'controle interno de jobs')
+        }
+        [pscustomobject]@{
+            Name = 'consume-and-close-after-integration removed'
+            Text = (New-TamperedText -Text $normalized -Old 'consuma cada job e feche cada agente após a integração' -New 'consuma os resultados')
         }
     )
 

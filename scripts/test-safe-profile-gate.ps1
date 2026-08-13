@@ -132,6 +132,24 @@ function Test-AgentsOrchestrationSemantics {
     if (-not [regex]::IsMatch($normalized, '(?i)falha fechado')) {
         return $false
     }
+    if (-not [regex]::IsMatch($normalized, '(?i)antes de esperar,? mapeie frentes independentes,? depend[eê]ncias e recursos exclusivos ou compartilhados')) {
+        return $false
+    }
+    if (-not [regex]::IsMatch($normalized, '(?i)lance em lote todas as frentes materiais independentes antes do primeiro follow')) {
+        return $false
+    }
+    if (-not [regex]::IsMatch($normalized, '(?i)apenas trilhas com depend[eê]ncia real ou recurso compartilhado ficam seriais')) {
+        return $false
+    }
+    if (-not [regex]::IsMatch($normalized, '(?i)enquanto aguarda,? fa[cç]a orquestra[cç][aã]o independente [uú]til')) {
+        return $false
+    }
+    if (-not [regex]::IsMatch($normalized, '(?i)ledger est[aá]vel de request_id.{0,60}frente,? agente,? job,? estado,? consumido e fechado')) {
+        return $false
+    }
+    if (-not [regex]::IsMatch($normalized, '(?i)consuma cada job e feche cada agente ap[oó]s a integra[cç][aã]o')) {
+        return $false
+    }
     if ([regex]::IsMatch($normalized, '(?i)\b(?=[^.;]*\b(?:pode|podem|poderia|poderiam|poder[aá]|poder[aã]o|poderao|deve|devem|deveria|deveriam|s[aã]o autorizad[ao]s? a|est[aã]o autorizad[ao]s? a|usam)\b)(?=[^.;]*\b(?:spawn_agent|wait_agent|multi_agent_v1__spawn_agent)\b)(?=[^.;]*\b(?:supervis[aã]o|guardian)\b)[^.;]+')) {
         return $false
     }

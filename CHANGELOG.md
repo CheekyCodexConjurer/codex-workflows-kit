@@ -7,6 +7,20 @@ O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ### Changed
 
+- codex/AGENTS.md e skills/workflows/SKILL.md reforçam a orquestração sem
+  citar rotas de modelo/provedor: antes de esperar, o parent mapeia frentes
+  independentes, dependências e recursos exclusivos/compartilhados e lança
+  todas as frentes materiais independentes em lote antes do primeiro follow;
+  apenas trilhas com dependência real ou recurso compartilhado ficam seriais;
+  enquanto aguarda, faz orquestração independente útil e mantém um ledger
+  estável de request_id com frente, agente, job, estado, consumido e fechado,
+  consumindo cada job e fechando cada agente após a integração. A cadeia serial
+  writer → revisão independente → correções no mesmo writer é preservada, sem
+  teto numérico artificial ou guarda de duplicação na mesma thread.
+  scripts/validate.ps1 e scripts/test-safe-profile-gate.ps1 exigem as cláusulas
+  de mapeamento, lote, serialidade e ledger, com fixtures anti-adulteração;
+  o orçamento compacto de codex/AGENTS.md é mantido consolidando redação.
+
 - Modos de entrega com escrita (`IMPL.AUTO`, `IMPL`, `IMPL.PHASE`,
   `DELIVER.AUTO`, `BUG.FIX`, `DEBUG`, `R.A.F.V`) passam a fechar com uma
   série de commits locais validada, revisada e escopada — nunca push. A

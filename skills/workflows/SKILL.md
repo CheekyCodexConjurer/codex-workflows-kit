@@ -44,10 +44,14 @@ FRAME -> FANOUT -> COLLECT -> ACT -> VERIFY -> REVIEW -> DONE
 ```
 
 - FRAME: goal, expected behavior, validation, and done gate before acting.
-- FANOUT: spawn one MCP agent per independent front; continue only genuine
-  orchestration while they run.
+- FANOUT: map independent fronts, dependencies, and exclusive/shared
+  resources before waiting; launch every independent material front as a batch
+  before the first follow, keeping only real dependency or shared-resource
+  lanes serial; keep a stable request_id ledger (front, agent, job, state,
+  consumed, closed); spawn one MCP agent per independent front and continue
+  only genuine orchestration while they run.
 - COLLECT: consume a result when a gate depends on it or no useful work
-  remains.
+  remains; consume every job and close each agent after integration.
 - ACT: decide from collected evidence; route defects back to the same front
   via `deepseek_continue`, re-plan, or stop.
 - VERIFY: prove the affected behavior with the mode's validation; inspect the
