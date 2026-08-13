@@ -90,6 +90,46 @@ function Assert-CompletionPolicy {
     }
 }
 
+function Assert-RecoveryPolicy {
+    param(
+        [Parameter(Mandatory)][string]$Label,
+        [Parameter(Mandatory)][string]$Text
+    )
+
+    $normalized = [regex]::Replace($Text, '\s+', ' ').Trim()
+
+    $requiredPatterns = @(
+        '(?i)allow_respawn\s*=\s*true',
+        '(?i)terminal result',
+        '(?i)same request.{0,40}scope.{0,40}cwd.{0,40}ownership',
+        '(?i)no new consent prompt',
+        '(?i)new session/agent with lineage',
+        '(?i)never a fake continuation',
+        '(?i)running jobs',
+        '(?i)explicitly aborted fronts',
+        '(?i)provider fallback stays forbidden'
+    )
+
+    foreach ($pattern in $requiredPatterns) {
+        if (-not [regex]::IsMatch($normalized, $pattern)) {
+            throw "$Label has an incomplete or incorrectly ordered recovery policy: $pattern"
+        }
+    }
+
+    $forbiddenPatterns = @(
+        '(?i)\b(?:may|can|should|must)\b[^.;]*\b(?:ask|request|prompt)\b[^.;]*\b(?:permission|consent)\b',
+        '(?i)\b(?:may|can|should|must)\b[^.;]*\b(?:reuse|reopen|same session|original session)\b[^.;]*(?:continue|resume|recover)',
+        '(?i)\b(?:may|can|should|must)\b[^.;]*\b(?:continue|resume|reopen|recover|allow_respawn)\b[^.;]*(?:running|aborted|in flight|in-flight|ongoing|missing final|without a final|divergent|different scope|new scope|beyond|outside|another|cwd|switch(?:ing)?|swap(?:ping)?|chang(?:e|ing|ed)|substitut\w*|provider|model)',
+        '(?i)\b(?:may|can|should|must)\b[^.;]*\b(?:open a new session|new session)\b[^.;]*(?:new front|another front|different front|other front)'
+    )
+
+    foreach ($pattern in $forbiddenPatterns) {
+        if ([regex]::IsMatch($normalized, $pattern)) {
+            throw "$Label contains a forbidden recovery-policy exception: $pattern"
+        }
+    }
+}
+
 function Test-OrchestrationPolicy {
     param([Parameter(Mandatory)][string]$Text)
 
@@ -120,7 +160,14 @@ function Test-OrchestrationPolicy {
         '(?i)apenas trilhas com depend[eê]ncia real ou recurso compartilhado ficam seriais',
         '(?i)enquanto aguarda,? fa[cç]a orquestra[cç][aã]o independente [uú]til',
         '(?i)ledger est[aá]vel de request_id.{0,60}frente,? agente,? job,? estado,? consumido e fechado',
-        '(?i)consuma cada job e feche cada agente ap[oó]s a integra[cç][aã]o'
+        '(?i)consuma cada job e feche cada agente ap[oó]s a integra[cç][aã]o',
+        '(?i)deepseek_continue.{0,80}allow_respawn',
+        '(?i)sem pedir nova permiss[ãa]o',
+        '(?i)cria sess[ãa]o.{0,60}lineage',
+        '(?i)nunca recupere job running',
+        '(?i)abortad[oa] explicitamente',
+        '(?i)sem fallback',
+        '(?i)fora do pedido original'
     )
 
     foreach ($pattern in $requiredPatterns) {
@@ -142,6 +189,21 @@ function Test-OrchestrationPolicy {
     foreach ($pattern in $forbiddenPatterns) {
         if ([regex]::IsMatch($normalized, $pattern)) {
             return "forbidden direct-local-work carve-out: $pattern"
+        }
+    }
+
+    $recoveryForbiddenPatterns = @(
+        '(?i)\b(?:pode|podem|poderia|poderiam|poder[aá]|poder[aã]o|poderao|deve|devem|deveria|deveriam)\b[^.;]*\b(?:recupera[rç]|reabrir|retomar|continuar|abrir|usar)\b[^.;]*(?:job running|running|em execu[cç][aã]o|em andamento|em curso|ativos?|andamento)',
+        '(?i)\b(?:pode|podem|poderia|poderiam|poder[aá]|poder[aã]o|poderao|deve|devem|deveria|deveriam)\b[^.;]*\b(?:recupera[rç]|reabrir|retomar|continuar|abrir|usar)\b[^.;]*(?:sem resposta final|resposta final persistida|sem resultado final|resultado final persistido|sem resultado terminal)',
+        '(?i)\b(?:pode|podem|poderia|poderiam|poder[aá]|poder[aã]o|poderao|deve|devem|deveria|deveriam)\b[^.;]*\b(?:recupera[rç]|reabrir|retomar|continuar|abrir|usar)\b[^.;]*(?:abortad[oa]|abortados)',
+        '(?i)\b(?:pode|podem|poderia|poderiam|poder[aá]|poder[aã]o|poderao|deve|devem|deveria|deveriam)\b[^.;]*\b(?:recupera[rç]|reabrir|retomar|continuar|abrir|usar)\b[^.;]*(?:escopo novo|outro escopo|escopo diferente|frente nova|fora do pedido|mudança material|pedido divergiu|pedido divergente|outro pedido|mudança de cwd|cwd diferente|mudando de cwd|outro cwd|cwd divergente)',
+        '(?i)\b(?:pode|podem|poderia|poderiam|poder[aá]|poder[aã]o|poderao|deve|devem|deveria|deveriam)\b[^.;]*\b(?:recupera[rç]|reabrir|retomar|continuar|abrir|usar|allow_respawn)\b[^.;]*\b(?:fallback|outro provedor|outro modelo|troc\w*|substitu\w*)\b',
+        '(?i)\b(?:pode|podem|poderia|poderiam|poder[aá]|poder[aã]o|poderao|deve|devem|deveria|deveriam)\b[^.;]*\b(?:reabrir a sess[ãa]o|mesma sess[ãa]o|sess[ãa]o antiga|continuar a sess[ãa]o|abrir nova sess[ãa]o|sess[ãa]o nova)\b'
+    )
+
+    foreach ($pattern in $recoveryForbiddenPatterns) {
+        if ([regex]::IsMatch($normalized, $pattern)) {
+            return "forbidden recovery-policy carve-out: $pattern"
         }
     }
 
@@ -242,6 +304,54 @@ function Assert-OrchestrationPolicySelfCheck {
         [pscustomobject]@{
             Name = 'consume-and-close-after-integration removed'
             Text = (New-TamperedText -Text $normalized -Old 'consuma cada job e feche cada agente após a integração' -New 'consuma os resultados')
+        }
+        [pscustomobject]@{
+            Name = 'recovery respawn authorized for a running job'
+            Text = ($normalized + ' O parent pode recuperar job running com allow_respawn.')
+        }
+        [pscustomobject]@{
+            Name = 'recovery respawn authorized for an explicitly aborted job'
+            Text = ($normalized + ' O parent pode reabrir job abortado com allow_respawn.')
+        }
+        [pscustomobject]@{
+            Name = 'recovery respawn authorizes scope expansion'
+            Text = ($normalized + ' O parent pode recuperar com allow_respawn em escopo novo.')
+        }
+        [pscustomobject]@{
+            Name = 'recovery respawn allows a provider fallback'
+            Text = ($normalized + ' O parent pode recuperar com allow_respawn usando fallback de provedor.')
+        }
+        [pscustomobject]@{
+            Name = 'recovery as a fake continuation of the original session'
+            Text = ($normalized + ' O parent pode reabrir a sessão antiga em vez de criar sessão nova.')
+        }
+        [pscustomobject]@{
+            Name = 'recovery via continue authorized for a job in progress'
+            Text = ($normalized + ' O parent pode continuar com allow_respawn para job em andamento.')
+        }
+        [pscustomobject]@{
+            Name = 'recovery of a job without a persisted final response'
+            Text = ($normalized + ' O parent pode recuperar job sem resposta final persistida.')
+        }
+        [pscustomobject]@{
+            Name = 'recovery authorized after the request diverged'
+            Text = ($normalized + ' O parent pode usar allow_respawn quando o pedido divergiu.')
+        }
+        [pscustomobject]@{
+            Name = 'recovery authorized while changing cwd'
+            Text = ($normalized + ' O parent pode recuperar com allow_respawn mudando de cwd.')
+        }
+        [pscustomobject]@{
+            Name = 'recovery opens a new session for a new front'
+            Text = ($normalized + ' O parent pode abrir nova sessão para frente nova.')
+        }
+        [pscustomobject]@{
+            Name = 'recovery respawn allowed while switching model/provider'
+            Text = ($normalized + ' O parent pode retomar com allow_respawn trocando de modelo/provedor.')
+        }
+        [pscustomobject]@{
+            Name = 'recovery respawn allowed while substituting the provider'
+            Text = ($normalized + ' O parent pode retomar com allow_respawn substituindo o provedor.')
         }
     )
 
@@ -583,6 +693,7 @@ Assert-Contains -Label 'workflow skill' -Text $skill -Needles @(
     'deepseek_abort',
     'deepseek_close',
     'deepseek_recover_result',
+    'allow_respawn',
     'capabilities | change permission | done gate',
     'visual_context',
     'Final audit',
@@ -658,6 +769,8 @@ if ($agentsLines.Count -gt 40) {
 }
 
 Assert-CompletionPolicy -Label 'workflow skill' -Text $skill
+
+Assert-RecoveryPolicy -Label 'workflow skill' -Text $skill
 
 Assert-OrchestrationPolicy -Label 'codex AGENTS.md' -Text $agentsText
 

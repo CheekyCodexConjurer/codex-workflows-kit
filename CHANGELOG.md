@@ -7,6 +7,21 @@ O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ### Changed
 
+- Continuidade automática após fechamento prematuro do writer: o writer
+  permanece aberto até a revisão independente e as correções comprovadas, e
+  a correção do mesmo trabalho não pede nova permissão. Se o próprio parent
+  fechou cedo um writer com resultado terminal, a correção estritamente no
+  mesmo request/escopo/cwd/ownership/rota-modelo retoma via
+  `deepseek_continue` com `allow_respawn=true`, automaticamente; a
+  recuperação cria sessão/agente novo com lineage, nunca continuação falsa,
+  mantém o modelo/provedor da frente original (sem fallback) e é fail-closed:
+  nunca para jobs running, resultado final ausente, abort explícito,
+  divergência de request/escopo/cwd/ownership/modelo ou mudança material fora
+  do pedido original. codex/AGENTS.md, skills/workflows/SKILL.md,
+  scripts/validate.ps1 e scripts/test-safe-profile-gate.ps1 declaram e
+  fiscalizam a regra (padrões obrigatórios/proibidos, self-check
+  anti-adulteração e fixtures S10), mantendo o orçamento compacto do AGENTS.
+
 - codex/AGENTS.md e skills/workflows/SKILL.md reforçam a orquestração sem
   citar rotas de modelo/provedor: antes de esperar, o parent mapeia frentes
   independentes, dependências e recursos exclusivos/compartilhados e lança

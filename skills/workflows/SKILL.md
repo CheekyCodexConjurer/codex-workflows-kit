@@ -64,14 +64,24 @@ FRAME -> FANOUT -> COLLECT -> ACT -> VERIFY -> REVIEW -> DONE
 
 - `deepseek_spawn`: open one independent front.
 - `deepseek_continue`: follow up the same front after a result, correction,
-  or review; never spawn a replacement for it.
+  or review; never spawn a replacement for it. After a premature close with
+  a terminal result, a correction strictly within the same request/scope/cwd/
+  ownership/model route resumes automatically with `allow_respawn=true` — no
+  new consent prompt; recovery creates a new session/agent with lineage, never
+  a fake continuation of the original session, and never applies to running
+  jobs, missing final responses, explicitly aborted fronts, divergent
+  scope/cwd/ownership/model routes, or material changes beyond the original
+  request; provider fallback stays forbidden.
 - `deepseek_follow`: consume a result when a gate depends on it, or before
   the final response for every still-needed job; normal close of a required
   job.
 - `deepseek_consult`: exceptional snapshot of a running agent; never poll.
 - `deepseek_abort`: stop a front only when it is obsolete or the stop is
   explicit; consume the obligation as `aborted`.
-- `deepseek_close`: retire an agent after its result is consumed.
+- `deepseek_close`: retire an agent after its result is consumed; a write
+  front closes only after the independent review and the proven corrections,
+  and a premature close stays recoverable only through `deepseek_continue`
+  with `allow_respawn=true` as described above.
 - `deepseek_recover_result`: delivery recovery only; never re-open or re-run
   a finished front.
 
