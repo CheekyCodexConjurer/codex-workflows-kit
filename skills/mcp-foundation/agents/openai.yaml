@@ -1,0 +1,4 @@
+interface:
+  display_name: "MCP Foundation"
+  short_description: "Canonical routing and usage for Context7, CodeGraph, and Serena MCP."
+  default_prompt: "Route MCP tools according to canonical policies (Context7, CodeGraph, Serena)."

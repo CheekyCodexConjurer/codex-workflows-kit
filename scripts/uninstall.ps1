@@ -2,6 +2,7 @@
 param(
     [string]$CodexHome,
     [string]$AgentsHome,
+    [string]$AntigravityHome,
     [string]$AhkDestination,
     [switch]$Force
 )
@@ -174,9 +175,11 @@ function Test-FullyQualifiedPath {
 
 $defaultCodexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE '.codex' }
 $defaultAgentsHome = if ($env:AGENTS_HOME) { $env:AGENTS_HOME } else { Join-Path $env:USERPROFILE '.agents' }
+$defaultAntigravityHome = if ($env:ANTIGRAVITY_HOME) { $env:ANTIGRAVITY_HOME } else { Join-Path $env:USERPROFILE '.gemini' }
 
 $CodexHome = Assert-SafeDestination (Resolve-HomePath -Requested $CodexHome -Fallback $defaultCodexHome)
 $AgentsHome = Assert-SafeDestination (Resolve-HomePath -Requested $AgentsHome -Fallback $defaultAgentsHome)
+$AntigravityHome = Assert-SafeDestination (Resolve-HomePath -Requested $AntigravityHome -Fallback $defaultAntigravityHome)
 if ([string]::IsNullOrWhiteSpace($AhkDestination)) {
     $AhkDestination = Join-Path $env:USERPROFILE 'Documents\Codex\PromptPad\codex_prompt_pad.ahk'
 }
@@ -184,6 +187,7 @@ $AhkDestination = Assert-SafeDestination $AhkDestination
 $statePath = Join-Path $CodexHome 'codex-workflows-kit\install-state.json'
 $configPath = Join-Path $CodexHome 'config.toml'
 $agentsMdPath = Join-Path $CodexHome 'AGENTS.md'
+$geminiMdPath = Join-Path (Join-Path $AntigravityHome 'config') 'GEMINI.md'
 $StartupShortcutPath = Get-StartupShortcutPath
 $script:Skipped = $false
 $script:RemovedParents = New-Object System.Collections.Generic.List[string]
@@ -282,9 +286,10 @@ function Remove-ManagedFile {
 
     $isCodexPath = $Path.StartsWith($CodexHome.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)
     $isAgentsPath = $Path.StartsWith($AgentsHome.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)
+    $isAntigravityPath = $Path.StartsWith($AntigravityHome.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)
     $isAhkPath = $Path -eq $AhkDestination
     $isStartupPath = $Path -eq $StartupShortcutPath
-    if (-not ($isCodexPath -or $isAgentsPath -or $isAhkPath -or $isStartupPath)) {
+    if (-not ($isCodexPath -or $isAgentsPath -or $isAntigravityPath -or $isAhkPath -or $isStartupPath)) {
         $script:Skipped = $true
         Write-Warning "Leaving state file outside the selected destinations untouched: $Path"
         return
@@ -301,7 +306,7 @@ function Remove-ManagedFile {
         (Get-RequiredFileHash -Path $Path) -ne [string]$entry.sha256
     )
 
-    $parentRoot = if ($isCodexPath) { $CodexHome } elseif ($isAgentsPath) { $AgentsHome } elseif ($isStartupPath) { Split-Path -Parent $StartupShortcutPath } else { Split-Path -Parent $AhkDestination }
+    $parentRoot = if ($isCodexPath) { $CodexHome } elseif ($isAgentsPath) { $AgentsHome } elseif ($isAntigravityPath) { $AntigravityHome } elseif ($isStartupPath) { Split-Path -Parent $StartupShortcutPath } else { Split-Path -Parent $AhkDestination }
     Assert-ChildPath -Path $Path -Parent $parentRoot | Out-Null
     if (Confirm-UninstallAction -Target $Path -Action 'remove managed file') {
         if ($needsForcedBackup) {
@@ -350,6 +355,38 @@ function Remove-ManagedAgentsBlock {
         }
         else {
             Write-Utf8NoBom -Path $agentsMdPath -Content ($result + $nl)
+        }
+    }
+}
+
+function Remove-ManagedGeminiBlock {
+    if (-not (Test-Path -LiteralPath $geminiMdPath -PathType Leaf)) {
+        return
+    }
+
+    $begin = '# BEGIN CODEX-WORKFLOWS-KIT'
+    $end = '# END CODEX-WORKFLOWS-KIT'
+    $content = Get-Content -LiteralPath $geminiMdPath -Raw -Encoding UTF8
+    $start = $content.IndexOf($begin, [StringComparison]::Ordinal)
+    if ($start -lt 0) {
+        return
+    }
+    $endStart = $content.IndexOf($end, $start, [StringComparison]::Ordinal)
+    if ($endStart -lt 0) {
+        throw "Managed GEMINI.md block is incomplete: $geminiMdPath"
+    }
+    if (-not (Test-CanRemoveRecordedFile -Path $geminiMdPath)) {
+        return
+    }
+
+    $result = ($content.Substring(0, $start) + $content.Substring($endStart + $end.Length)).Trim()
+    if (Confirm-UninstallAction -Target $geminiMdPath -Action 'remove managed GEMINI.md block') {
+        Backup-ForcedFile -Path $geminiMdPath
+        if ([string]::IsNullOrWhiteSpace($result)) {
+            Remove-Item -LiteralPath $geminiMdPath -Force
+        }
+        else {
+            Write-Utf8NoBom -Path $geminiMdPath -Content ($result + $nl)
         }
     }
 }
@@ -480,7 +517,7 @@ function Restore-MultiAgentFeature {
 }
 
 foreach ($path in ($script:StateEntries.Keys | Sort-Object)) {
-    if ($path -eq $statePath -or $path -eq $configPath -or $path -eq $agentsMdPath) {
+    if ($path -eq $statePath -or $path -eq $configPath -or $path -eq $agentsMdPath -or $path -eq $geminiMdPath) {
         continue
     }
     Remove-ManagedFile -Path $path -ExpectedHash ([string]$script:StateEntries[$path].sha256)
@@ -488,6 +525,7 @@ foreach ($path in ($script:StateEntries.Keys | Sort-Object)) {
 
 Remove-ManagedConfigBlocks
 Remove-ManagedAgentsBlock
+Remove-ManagedGeminiBlock
 
 if ($stateSchema -ge 4 -and ($state.PSObject.Properties.Name -contains 'codexFeaturesPrior')) {
     $fullConfigPath = [IO.Path]::GetFullPath($configPath)
@@ -506,7 +544,8 @@ foreach ($parent in ($script:RemovedParents | Sort-Object -Unique)) {
     while (-not [string]::IsNullOrWhiteSpace($current)) {
         $isCodexRoot = $current.TrimEnd('\') -eq $CodexHome.TrimEnd('\')
         $isAgentsRoot = $current.TrimEnd('\') -eq $AgentsHome.TrimEnd('\')
-        if ($isCodexRoot -or $isAgentsRoot -or -not (Test-Path -LiteralPath $current -PathType Container)) {
+        $isAntigravityRoot = $current.TrimEnd('\') -eq $AntigravityHome.TrimEnd('\')
+        if ($isCodexRoot -or $isAgentsRoot -or $isAntigravityRoot -or -not (Test-Path -LiteralPath $current -PathType Container)) {
             break
         }
 
@@ -515,7 +554,8 @@ foreach ($parent in ($script:RemovedParents | Sort-Object -Unique)) {
         }
 
         $isCodexPath = $current.StartsWith($CodexHome.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)
-        $parentRoot = if ($isCodexPath) { $CodexHome } else { $AgentsHome }
+        $isAgentsPath = $current.StartsWith($AgentsHome.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)
+        $parentRoot = if ($isCodexPath) { $CodexHome } elseif ($isAgentsPath) { $AgentsHome } else { $AntigravityHome }
         Assert-ChildPath -Path $current -Parent $parentRoot | Out-Null
         if (Confirm-UninstallAction -Target $current -Action 'remove empty managed directory') {
             Remove-Item -LiteralPath $current -Force

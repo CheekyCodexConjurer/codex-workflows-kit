@@ -2,6 +2,7 @@
 param(
     [string]$CodexHome,
     [string]$AgentsHome,
+    [string]$AntigravityHome,
     [switch]$Detailed
 )
 
@@ -56,6 +57,24 @@ function Read-SurfaceText {
     }
 
     return Get-Content -LiteralPath $Path -Raw -Encoding UTF8
+}
+
+function Get-ManagedBlock {
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
+
+    $begin = '# BEGIN CODEX-WORKFLOWS-KIT'
+    $end = '# END CODEX-WORKFLOWS-KIT'
+    $start = $Text.IndexOf($begin, [StringComparison]::Ordinal)
+    if ($start -lt 0) {
+        return ''
+    }
+
+    $endStart = $Text.IndexOf($end, $start, [StringComparison]::Ordinal)
+    if ($endStart -lt 0) {
+        return $Text.Substring($start)
+    }
+
+    return $Text.Substring($start, ($endStart + $end.Length) - $start)
 }
 
 function Assert-InstallState {
@@ -224,7 +243,7 @@ function Test-FeaturesMultiAgentDisabled {
 }
 
 function Get-McpServers {
-    param([Parameter(Mandatory)][string]$Text)
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
 
     $servers = @()
     if ([string]::IsNullOrWhiteSpace($Text)) {
@@ -303,13 +322,18 @@ function Get-ShortcutInfo {
 
 $defaultCodexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE '.codex' }
 $defaultAgentsHome = if ($env:AGENTS_HOME) { $env:AGENTS_HOME } else { Join-Path $env:USERPROFILE '.agents' }
+$defaultAntigravityHome = if ($env:ANTIGRAVITY_HOME) { $env:ANTIGRAVITY_HOME } else { Join-Path $env:USERPROFILE '.gemini' }
 $CodexHome = Resolve-HomePath -Requested $CodexHome -Fallback $defaultCodexHome
 $AgentsHome = Resolve-HomePath -Requested $AgentsHome -Fallback $defaultAgentsHome
+$AntigravityHome = Resolve-HomePath -Requested $AntigravityHome -Fallback $defaultAntigravityHome
 $repoRoot = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 $statePath = Join-Path $CodexHome 'codex-workflows-kit\install-state.json'
 $configPath = Join-Path $CodexHome 'config.toml'
 $agentsMdPath = Join-Path $CodexHome 'AGENTS.md'
+$geminiMdPath = Join-Path (Join-Path $AntigravityHome 'config') 'GEMINI.md'
 $skillsRoot = Join-Path $AgentsHome 'skills'
+$antigravitySkills1 = Join-Path $AntigravityHome 'antigravity\skills'
+$antigravitySkills2 = Join-Path $AntigravityHome 'config\skills'
 $script:Failures = New-Object System.Collections.Generic.List[string]
 $script:Warnings = New-Object System.Collections.Generic.List[string]
 
@@ -332,6 +356,7 @@ $tokSubagentsMd = Get-RuntimeToken @(115, 117, 98, 97, 103, 101, 110, 116, 115, 
 Write-Host 'Codex Workflows Kit doctor'
 Write-Host "Codex home: $CodexHome"
 Write-Host "Agents home: $AgentsHome"
+Write-Host "Antigravity home: $AntigravityHome"
 Write-Check -Name 'Install state' -Passed (Test-Path -LiteralPath $statePath -PathType Leaf) -Detail $statePath
 
 $state = $null
@@ -359,11 +384,13 @@ if (Test-Path -LiteralPath $statePath -PathType Leaf) {
 
 $coreFiles = @(
     (Join-Path $AgentsHome 'skills\workflows\SKILL.md'),
-    (Join-Path $AgentsHome 'skills\evidence-first\SKILL.md')
+    (Join-Path $AgentsHome 'skills\evidence-first\SKILL.md'),
+    (Join-Path $AgentsHome 'skills\mcp-foundation\SKILL.md')
 )
 if ($installedProfile -eq 'safe') {
     $coreFiles += @(
-        (Join-Path $CodexHome 'AGENTS.md')
+        (Join-Path $CodexHome 'AGENTS.md'),
+        $geminiMdPath
     )
 }
 foreach ($path in $coreFiles) {
@@ -377,7 +404,7 @@ if ($installedProfile -eq 'safe') {
 
     $agentsMdContent = Read-SurfaceText -Path $agentsMdPath
     $managedBlockCount = @([regex]::Matches($agentsMdContent, '# BEGIN CODEX-WORKFLOWS-KIT')).Count
-    Write-Check -Name 'Unique managed policy' -Passed ($managedBlockCount -eq 1) -Detail $agentsMdPath
+    Write-Check -Name 'Unique managed policy (AGENTS)' -Passed ($managedBlockCount -eq 1) -Detail $agentsMdPath
 
     $templatePath = Join-Path $repoRoot 'codex\AGENTS.md'
     $templateMatches = $false
@@ -386,12 +413,24 @@ if ($installedProfile -eq 'safe') {
         $templateMatches = $agentsMdContent.IndexOf($template, [StringComparison]::Ordinal) -ge 0
     }
     Write-Check -Name 'Managed AGENTS template' -Passed $templateMatches -Detail $agentsMdPath -Optional
+
+    $geminiMdContent = Read-SurfaceText -Path $geminiMdPath
+    $geminiManagedBlockCount = @([regex]::Matches($geminiMdContent, '# BEGIN CODEX-WORKFLOWS-KIT')).Count
+    Write-Check -Name 'Unique managed policy (GEMINI)' -Passed ($geminiManagedBlockCount -eq 1) -Detail $geminiMdPath
+
+    $geminiTemplatePath = Join-Path $repoRoot 'antigravity\GEMINI.md'
+    $geminiTemplateMatches = $false
+    if (-not [string]::IsNullOrWhiteSpace($geminiMdContent) -and (Test-Path -LiteralPath $geminiTemplatePath -PathType Leaf)) {
+        $geminiTemplate = (Get-Content -LiteralPath $geminiTemplatePath -Raw -Encoding UTF8).Trim()
+        $geminiTemplateMatches = $geminiMdContent.IndexOf($geminiTemplate, [StringComparison]::Ordinal) -ge 0
+    }
+    Write-Check -Name 'Managed GEMINI template' -Passed $geminiTemplateMatches -Detail $geminiMdPath -Optional
 }
 
 if ($null -ne $state) {
     foreach ($file in @($state.files)) {
         $path = [string]$file.path
-        if ($path -eq $configPath -or $path -eq $agentsMdPath) {
+        if ($path -eq $configPath -or $path -eq $agentsMdPath -or $path -eq $geminiMdPath) {
             continue
         }
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
@@ -429,21 +468,29 @@ $contractPatterns = @(
 )
 $removedReferenceMarkers = @(($tokBackend + '-policy'), ($tokNative + '-profile-contract'), $tokModeMatrix, $tokDictionaryMd, $tokSubagentsMd)
 $surfaceFiles = New-Object System.Collections.Generic.List[string]
-foreach ($path in @($configPath, $agentsMdPath)) {
+foreach ($path in @($configPath, $agentsMdPath, $geminiMdPath)) {
     if (Test-Path -LiteralPath $path -PathType Leaf) {
         $surfaceFiles.Add($path)
     }
 }
-if (Test-Path -LiteralPath $skillsRoot -PathType Container) {
-    foreach ($file in @(Get-ChildItem -LiteralPath $skillsRoot -Recurse -File -Include *.md, *.toml, *.yaml, *.ahk -ErrorAction SilentlyContinue)) {
-        $surfaceFiles.Add($file.FullName)
+foreach ($sRoot in @($skillsRoot, $antigravitySkills1, $antigravitySkills2)) {
+    if (Test-Path -LiteralPath $sRoot -PathType Container) {
+        foreach ($file in @(Get-ChildItem -LiteralPath $sRoot -Recurse -File -Include *.md, *.toml, *.yaml, *.ahk -ErrorAction SilentlyContinue)) {
+            $surfaceFiles.Add($file.FullName)
+        }
     }
 }
 
 $contractDirty = $null
 foreach ($surface in $surfaceFiles) {
     $content = Get-Content -LiteralPath $surface -Raw -Encoding UTF8
+    if ($surface -eq $geminiMdPath) {
+        $content = Get-ManagedBlock -Text $content
+    }
     foreach ($pattern in $contractPatterns) {
+        if ($pattern -eq 'read-only' -and $surface -like '*mcp-foundation*') {
+            continue
+        }
         if ([regex]::IsMatch($content, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)) {
             $contractDirty = $surface
             break
@@ -458,6 +505,9 @@ Write-Check -Name 'Installed contract' -Passed ($null -eq $contractDirty) -Detai
 $referenceDirty = $null
 foreach ($surface in $surfaceFiles) {
     $content = Get-Content -LiteralPath $surface -Raw -Encoding UTF8
+    if ($surface -eq $geminiMdPath) {
+        $content = Get-ManagedBlock -Text $content
+    }
     foreach ($marker in $removedReferenceMarkers) {
         if ($content.IndexOf($marker, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
             $referenceDirty = $surface
@@ -471,7 +521,7 @@ foreach ($surface in $surfaceFiles) {
 Write-Check -Name 'Removed references' -Passed ($null -eq $referenceDirty) -Detail $(if ($null -eq $referenceDirty) { 'No active references to removed documents' } else { "Reference to removed document in: $referenceDirty" })
 
 $legacyProfileNames = @($tSct, $tRsr, $tRvw, $tWk, $tWtch, $tRly)
-foreach ($installRoot in @($CodexHome, $AgentsHome)) {
+foreach ($installRoot in @($CodexHome, $AgentsHome, $AntigravityHome)) {
     $agentsDir = Join-Path $installRoot 'agents'
     if (-not (Test-Path -LiteralPath $agentsDir -PathType Container)) {
         continue
@@ -493,14 +543,16 @@ foreach ($installRoot in @($CodexHome, $AgentsHome)) {
 
 $canonicalSkillPath = Join-Path $AgentsHome 'skills\workflows\SKILL.md'
 $competingPolicies = @()
-if (Test-Path -LiteralPath $skillsRoot -PathType Container) {
-    foreach ($file in @(Get-ChildItem -LiteralPath $skillsRoot -Recurse -File -Filter *.md -ErrorAction SilentlyContinue)) {
-        if ($file.FullName -eq $canonicalSkillPath) {
-            continue
-        }
-        $content = Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8
-        if ($content.IndexOf('$workflows', [StringComparison]::Ordinal) -ge 0) {
-            $competingPolicies += $file.FullName
+foreach ($sRoot in @($skillsRoot, $antigravitySkills1, $antigravitySkills2)) {
+    if (Test-Path -LiteralPath $sRoot -PathType Container) {
+        foreach ($file in @(Get-ChildItem -LiteralPath $sRoot -Recurse -File -Filter *.md -ErrorAction SilentlyContinue)) {
+            if ($file.FullName -eq $canonicalSkillPath -or $file.FullName -eq (Join-Path $antigravitySkills1 'workflows\SKILL.md') -or $file.FullName -eq (Join-Path $antigravitySkills2 'workflows\SKILL.md')) {
+                continue
+            }
+            $content = Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8
+            if ($content.IndexOf('$workflows', [StringComparison]::Ordinal) -ge 0) {
+                $competingPolicies += $file.FullName
+            }
         }
     }
 }
@@ -571,9 +623,9 @@ if (-not [string]::IsNullOrWhiteSpace($ahkPath) -and (Test-Path -LiteralPath $ah
 
 $configText = Read-SurfaceText -Path $configPath
 $mcpServers = @(Get-McpServers -Text $configText)
-$legacyServerNames = @(($tOc + '_' + $tWk), $tRly, $tWtch, $tWk, $tSct, $tRsr, $tRvw, $tokNative, 'mcp-foundation', 'runtime-adapters')
+$legacyServerNames = @(($tOc + '_' + $tWk), $tRly, $tWtch, $tWk, $tSct, $tRsr, $tRvw, $tokNative, 'runtime-adapters')
 $legacyMcpHits = @($mcpServers | Where-Object { $_.Name -in $legacyServerNames })
-$legacyConfigMarkers = @(($tOc + '-' + $tWk), 'runtime-adapters', 'marketplace.json', ($tWk + '.toml'), ($tRly + '.toml'), 'mcp-foundation')
+$legacyConfigMarkers = @(($tOc + '-' + $tWk), 'runtime-adapters', 'marketplace.json', ($tWk + '.toml'), ($tRly + '.toml'))
 $legacyConfigHit = $null
 foreach ($marker in $legacyConfigMarkers) {
     if ($configText.IndexOf($marker, [StringComparison]::OrdinalIgnoreCase) -ge 0) {

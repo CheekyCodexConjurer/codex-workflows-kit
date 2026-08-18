@@ -5,6 +5,7 @@ param(
 
     [string]$CodexHome,
     [string]$AgentsHome,
+    [string]$AntigravityHome,
     [string]$AhkDestination,
 
     [switch]$InstallAhk,
@@ -111,9 +112,11 @@ function Ensure-Directory {
 
 $defaultCodexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE '.codex' }
 $defaultAgentsHome = if ($env:AGENTS_HOME) { $env:AGENTS_HOME } else { Join-Path $env:USERPROFILE '.agents' }
+$defaultAntigravityHome = if ($env:ANTIGRAVITY_HOME) { $env:ANTIGRAVITY_HOME } else { Join-Path $env:USERPROFILE '.gemini' }
 
 $CodexHome = Assert-SafeDestination (Resolve-HomePath -Requested $CodexHome -Fallback $defaultCodexHome)
 $AgentsHome = Assert-SafeDestination (Resolve-HomePath -Requested $AgentsHome -Fallback $defaultAgentsHome)
+$AntigravityHome = Assert-SafeDestination (Resolve-HomePath -Requested $AntigravityHome -Fallback $defaultAntigravityHome)
 
 if ([string]::IsNullOrWhiteSpace($AhkDestination)) {
     $AhkDestination = Join-Path $env:USERPROFILE 'Documents\Codex\PromptPad\codex_prompt_pad.ahk'
@@ -123,11 +126,16 @@ $AhkDestination = Assert-SafeDestination $AhkDestination
 $skillsSource = Join-Path $repo 'skills'
 $workflowSource = Join-Path $skillsSource 'workflows'
 $evidenceSource = Join-Path $skillsSource 'evidence-first'
+$mcpSource = Join-Path $skillsSource 'mcp-foundation'
 $agentsMdSource = Join-Path $repo 'codex\AGENTS.md'
+$geminiMdSource = Join-Path $repo 'antigravity\GEMINI.md'
 $ahkSource = Join-Path $repo 'ahk\codex_prompt_pad.ahk'
 
 $skillsDest = Join-Path $AgentsHome 'skills'
+$antigravitySkillsDest1 = Join-Path $AntigravityHome 'antigravity\skills'
+$antigravitySkillsDest2 = Join-Path $AntigravityHome 'config\skills'
 $agentsMdDest = Join-Path $CodexHome 'AGENTS.md'
+$geminiMdDest = Join-Path (Join-Path $AntigravityHome 'config') 'GEMINI.md'
 $configPath = Join-Path $CodexHome 'config.toml'
 $statePath = Join-Path $CodexHome 'codex-workflows-kit\install-state.json'
 
@@ -442,6 +450,42 @@ function Install-GlobalAgentsFile {
     Install-ManagedContent -Destination $agentsMdDest -Content $content
 }
 
+function Install-GlobalGeminiFile {
+    if (-not (Test-Path -LiteralPath $geminiMdSource -PathType Leaf)) {
+        return
+    }
+    $raw = Get-Content -LiteralPath $geminiMdSource -Raw -Encoding UTF8
+    $begin = '# BEGIN CODEX-WORKFLOWS-KIT'
+    $end = '# END CODEX-WORKFLOWS-KIT'
+    $managed = $begin + $nl + $raw.Trim() + $nl + $end + $nl
+    $existing = if (Test-Path -LiteralPath $geminiMdDest -PathType Leaf) {
+        Get-Content -LiteralPath $geminiMdDest -Raw -Encoding UTF8
+    }
+    else {
+        ''
+    }
+
+    if ($existing.IndexOf($begin, [StringComparison]::Ordinal) -ge 0) {
+        $start = $existing.IndexOf($begin, [StringComparison]::Ordinal)
+        $endStart = $existing.IndexOf($end, $start, [StringComparison]::Ordinal)
+        if ($endStart -lt 0) {
+            throw "Managed GEMINI.md block is incomplete: $geminiMdDest"
+        }
+        $head = $existing.Substring(0, $start)
+        $tail = $existing.Substring($endStart + $end.Length).TrimStart([char[]]@([char]13, [char]10))
+        $content = $head + $managed + $tail
+    }
+    elseif (-not [string]::IsNullOrWhiteSpace($existing)) {
+        $tail = $existing.TrimStart([char[]]@([char]13, [char]10))
+        $content = $managed + $tail
+    }
+    else {
+        $content = $managed
+    }
+
+    Install-ManagedContent -Destination $geminiMdDest -Content $content
+}
+
 function Remove-KitBlocks {
     param([AllowEmptyString()][string]$Text)
 
@@ -680,9 +724,44 @@ function Remove-ManagedAgentsBlock {
     }
 }
 
+function Remove-ManagedGeminiBlock {
+    if (-not (Test-Path -LiteralPath $geminiMdDest -PathType Leaf)) {
+        return
+    }
+
+    $begin = '# BEGIN CODEX-WORKFLOWS-KIT'
+    $end = '# END CODEX-WORKFLOWS-KIT'
+    $content = Get-Content -LiteralPath $geminiMdDest -Raw -Encoding UTF8
+    $start = $content.IndexOf($begin, [StringComparison]::Ordinal)
+    if ($start -lt 0) {
+        return
+    }
+
+    $endStart = $content.IndexOf($end, $start, [StringComparison]::Ordinal)
+    if ($endStart -lt 0) {
+        throw "Managed GEMINI.md block is incomplete: $geminiMdDest"
+    }
+
+    if (-not (Test-CanRemoveManagedFile -Path $geminiMdDest -Action 'managed GEMINI.md block')) {
+        return
+    }
+
+    $result = ($content.Substring(0, $start) + $content.Substring($endStart + $end.Length)).Trim()
+    if (Confirm-InstallAction -Target $geminiMdDest -Action 'remove managed GEMINI.md block') {
+        Backup-ExistingFile -Destination $geminiMdDest
+        if ([string]::IsNullOrWhiteSpace($result)) {
+            Remove-Item -LiteralPath $geminiMdDest -Force
+            $script:RemovedParents.Add((Split-Path -Parent $geminiMdDest))
+        }
+        else {
+            Write-Utf8NoBom -Path $geminiMdDest -Content ($result + $nl)
+        }
+    }
+}
+
 function Remove-ObsoleteManagedFiles {
     foreach ($priorPath in $script:PriorPaths) {
-        if ($priorPath -eq $statePath -or $priorPath -eq $configPath -or $priorPath -eq $agentsMdDest) {
+        if ($priorPath -eq $statePath -or $priorPath -eq $configPath -or $priorPath -eq $agentsMdDest -or $priorPath -eq $geminiMdDest) {
             continue
         }
         if ($script:ManagedFiles.ContainsKey($priorPath)) {
@@ -702,13 +781,14 @@ function Remove-ObsoleteManagedFiles {
 
         $isCodexPath = $priorPath.StartsWith($CodexHome.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)
         $isAgentsPath = $priorPath.StartsWith($AgentsHome.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)
-        if (-not ($isCodexPath -or $isAgentsPath)) {
+        $isAntigravityPath = $priorPath.StartsWith($AntigravityHome.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)
+        if (-not ($isCodexPath -or $isAgentsPath -or $isAntigravityPath)) {
             Write-Warning "Preserving obsolete managed file outside the selected destinations: $priorPath"
             Add-PendingFile -Path $priorPath -Reason 'outside-destinations' -ExpectedHash $expectedHash
             continue
         }
 
-        $parent = if ($isCodexPath) { $CodexHome } else { $AgentsHome }
+        $parent = if ($isCodexPath) { $CodexHome } elseif ($isAgentsPath) { $AgentsHome } else { $AntigravityHome }
         Assert-ChildPath -Path $priorPath -Parent $parent | Out-Null
         if (Confirm-InstallAction -Target $priorPath -Action 'remove obsolete managed file') {
             Remove-Item -LiteralPath $priorPath -Force
@@ -721,7 +801,8 @@ function Remove-ObsoleteManagedFiles {
         while (-not [string]::IsNullOrWhiteSpace($current)) {
             $isCodexRoot = $current.TrimEnd('\') -eq $CodexHome.TrimEnd('\')
             $isAgentsRoot = $current.TrimEnd('\') -eq $AgentsHome.TrimEnd('\')
-            if ($isCodexRoot -or $isAgentsRoot -or -not (Test-Path -LiteralPath $current -PathType Container)) {
+            $isAntigravityRoot = $current.TrimEnd('\') -eq $AntigravityHome.TrimEnd('\')
+            if ($isCodexRoot -or $isAgentsRoot -or $isAntigravityRoot -or -not (Test-Path -LiteralPath $current -PathType Container)) {
                 break
             }
 
@@ -731,7 +812,8 @@ function Remove-ObsoleteManagedFiles {
             }
 
             $isCodexPath = $current.StartsWith($CodexHome.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)
-            $parentRoot = if ($isCodexPath) { $CodexHome } else { $AgentsHome }
+            $isAgentsPath = $current.StartsWith($AgentsHome.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)
+            $parentRoot = if ($isCodexPath) { $CodexHome } elseif ($isAgentsPath) { $AgentsHome } else { $AntigravityHome }
             Assert-ChildPath -Path $current -Parent $parentRoot | Out-Null
             if (Confirm-InstallAction -Target $current -Action 'remove empty managed directory') {
                 Remove-Item -LiteralPath $current -Force
@@ -813,6 +895,9 @@ function Assert-InstallPreflight {
     if (-not (Test-Path -LiteralPath $evidenceSource -PathType Container)) {
         throw "Evidence skill is missing: $evidenceSource"
     }
+    if (-not (Test-Path -LiteralPath $mcpSource -PathType Container)) {
+        throw "Canonical mcp-foundation skill is missing: $mcpSource"
+    }
     if ($InstallAhk -and -not (Test-Path -LiteralPath $ahkSource -PathType Leaf)) {
         throw "Prompt pad source is missing: $ahkSource"
     }
@@ -821,19 +906,27 @@ function Assert-InstallPreflight {
         return
     }
 
-    if (-not (Test-Path -LiteralPath $agentsMdDest -PathType Leaf)) {
-        return
+    if (Test-Path -LiteralPath $agentsMdDest -PathType Leaf) {
+        $existing = Get-Content -LiteralPath $agentsMdDest -Raw -Encoding UTF8
+        $begin = '# BEGIN CODEX-WORKFLOWS-KIT'
+        $end = '# END CODEX-WORKFLOWS-KIT'
+        $start = $existing.IndexOf($begin, [StringComparison]::Ordinal)
+        if ($start -ge 0 -and $existing.IndexOf($end, $start, [StringComparison]::Ordinal) -lt 0) {
+            throw "Managed AGENTS.md block is incomplete: $agentsMdDest"
+        }
+        if ($start -lt 0 -and -not [string]::IsNullOrWhiteSpace($existing) -and -not $Force) {
+            throw "An unmanaged AGENTS.md already exists. Review it and use -Force to replace it: $agentsMdDest"
+        }
     }
 
-    $existing = Get-Content -LiteralPath $agentsMdDest -Raw -Encoding UTF8
-    $begin = '# BEGIN CODEX-WORKFLOWS-KIT'
-    $end = '# END CODEX-WORKFLOWS-KIT'
-    $start = $existing.IndexOf($begin, [StringComparison]::Ordinal)
-    if ($start -ge 0 -and $existing.IndexOf($end, $start, [StringComparison]::Ordinal) -lt 0) {
-        throw "Managed AGENTS.md block is incomplete: $agentsMdDest"
-    }
-    if ($start -lt 0 -and -not [string]::IsNullOrWhiteSpace($existing) -and -not $Force) {
-        throw "An unmanaged AGENTS.md already exists. Review it and use -Force to replace it: $agentsMdDest"
+    if (Test-Path -LiteralPath $geminiMdDest -PathType Leaf) {
+        $existing = Get-Content -LiteralPath $geminiMdDest -Raw -Encoding UTF8
+        $begin = '# BEGIN CODEX-WORKFLOWS-KIT'
+        $end = '# END CODEX-WORKFLOWS-KIT'
+        $start = $existing.IndexOf($begin, [StringComparison]::Ordinal)
+        if ($start -ge 0 -and $existing.IndexOf($end, $start, [StringComparison]::Ordinal) -lt 0) {
+            throw "Managed GEMINI.md block is incomplete: $geminiMdDest"
+        }
     }
 }
 
@@ -842,18 +935,29 @@ try {
     Assert-InstallPreflight
     Initialize-PriorState
 
-    Ensure-Directory -Path $skillsDest
-    Copy-ManagedTree -Source $workflowSource -Destination (Join-Path $skillsDest 'workflows')
-    Copy-ManagedTree -Source $evidenceSource -Destination (Join-Path $skillsDest 'evidence-first')
+    $skillTargets = @(
+        $skillsDest,
+        $antigravitySkillsDest1,
+        $antigravitySkillsDest2
+    )
+
+    foreach ($target in $skillTargets) {
+        Ensure-Directory -Path $target
+        Copy-ManagedTree -Source $workflowSource -Destination (Join-Path $target 'workflows')
+        Copy-ManagedTree -Source $evidenceSource -Destination (Join-Path $target 'evidence-first')
+        Copy-ManagedTree -Source $mcpSource -Destination (Join-Path $target 'mcp-foundation')
+    }
 
     if ($Profile -eq 'safe') {
         Install-GlobalAgentsFile
+        Install-GlobalGeminiFile
 
         Install-SafeConfig
     }
     else {
         Remove-ManagedConfigBlocks
         Remove-ManagedAgentsBlock
+        Remove-ManagedGeminiBlock
         if ($null -ne $script:PriorFeaturesRecord) {
             $allowWrite = $script:ConfigModified
             if (-not $allowWrite) {
@@ -892,6 +996,8 @@ else {
     Write-Host "Installed Codex Workflows Kit profile '$Profile'."
 }
 Write-Host "Codex home: $CodexHome"
+Write-Host "Agents home: $AgentsHome"
+Write-Host "Antigravity home: $AntigravityHome"
 Write-Host "Skills: $skillsDest"
 if ($Profile -eq 'safe' -and -not $WhatIfPreference) {
     Write-Host "Multi-agent route: disabled via [features] multi_agent = false in $configPath"

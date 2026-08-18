@@ -33,6 +33,7 @@ function New-FixtureHome {
     $root = Join-Path ([IO.Path]::GetTempPath()) ('cwkgate-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path (Join-Path $root 'codex') -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $root 'agents') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $root 'gemini') -Force | Out-Null
     return $root
 }
 
@@ -72,16 +73,34 @@ function Get-AgentsHome {
     return (Join-Path $Root 'agents')
 }
 
+function Get-AntigravityHome {
+    param([Parameter(Mandatory)][string]$Root)
+
+    return (Join-Path $Root 'gemini')
+}
+
 function Invoke-SafeInstall {
     param([Parameter(Mandatory)][string]$Root, [string]$Profile = 'safe')
 
-    & $installer -Profile $Profile -CodexHome (Get-CodexHome $Root) -AgentsHome (Get-AgentsHome $Root) -Force *>&1 | Out-Host
+    & $installer -Profile $Profile -CodexHome (Get-CodexHome $Root) -AgentsHome (Get-AgentsHome $Root) -AntigravityHome (Get-AntigravityHome $Root) -Force *>&1 | Out-Host
 }
 
 function Invoke-SafeUninstall {
     param([Parameter(Mandatory)][string]$Root)
 
-    & $uninstaller -CodexHome (Get-CodexHome $Root) -AgentsHome (Get-AgentsHome $Root) *>&1 | Out-Host
+    & $uninstaller -CodexHome (Get-CodexHome $Root) -AgentsHome (Get-AgentsHome $Root) -AntigravityHome (Get-AntigravityHome $Root) *>&1 | Out-Host
+}
+
+function Invoke-Doctor {
+    param([Parameter(Mandatory)][string]$Root)
+
+    $doctorScript = Join-Path $repo 'scripts\doctor.ps1'
+    $output = & pwsh -NoProfile -File $doctorScript -CodexHome (Get-CodexHome $Root) -AgentsHome (Get-AgentsHome $Root) -AntigravityHome (Get-AntigravityHome $Root) 2>&1
+    $exitCode = $LASTEXITCODE
+    return [pscustomobject]@{
+        ExitCode = $exitCode
+        Output = ($output | ForEach-Object { $_.ToString() }) -join [Environment]::NewLine
+    }
 }
 
 function Get-FeatureHeaderCount {
@@ -451,6 +470,79 @@ multi_agent = true
 
     Invoke-SafeUninstall -Root $root
     Assert-Condition 'S10 uninstall removes the managed AGENTS block' (-not (Test-Path -LiteralPath $agentsMdPath -PathType Leaf)) ''
+
+    $scenario = 11
+    Write-Host 'Scenario 11: safe profile installs mcp-foundation skill across all targets and GEMINI.md in config, preserves unmanaged content without Force' -ForegroundColor Cyan
+    $root = New-FixtureHome
+    $fixtures.Add($root)
+    $canonicalGemini = Get-Content -LiteralPath (Join-Path $repo 'antigravity\GEMINI.md') -Raw -Encoding UTF8
+    $unmanagedGemini = '# My Custom Rules' + $nl + 'custom_setting = true' + $nl
+    $installedGeminiPath = Join-Path (Get-AntigravityHome $root) 'config\GEMINI.md'
+    Write-FixtureFile -Path $installedGeminiPath -Content $unmanagedGemini
+
+    # Install without -Force over unmanaged content
+    & $installer -Profile 'safe' -CodexHome (Get-CodexHome $root) -AgentsHome (Get-AgentsHome $root) -AntigravityHome (Get-AntigravityHome $root) *>&1 | Out-Host
+
+    $installedGemini = Get-Content -LiteralPath $installedGeminiPath -Raw -Encoding UTF8
+    $mcpSkillPathAgents = Join-Path (Get-AgentsHome $root) 'skills\mcp-foundation\SKILL.md'
+    $mcpSkillPathAg1 = Join-Path (Get-AntigravityHome $root) 'antigravity\skills\mcp-foundation\SKILL.md'
+    $mcpSkillPathAg2 = Join-Path (Get-AntigravityHome $root) 'config\skills\mcp-foundation\SKILL.md'
+    $wfSkillPathAg1 = Join-Path (Get-AntigravityHome $root) 'antigravity\skills\workflows\SKILL.md'
+    $efSkillPathAg1 = Join-Path (Get-AntigravityHome $root) 'antigravity\skills\evidence-first\SKILL.md'
+    $wfSkillPathAg2 = Join-Path (Get-AntigravityHome $root) 'config\skills\workflows\SKILL.md'
+    $efSkillPathAg2 = Join-Path (Get-AntigravityHome $root) 'config\skills\evidence-first\SKILL.md'
+
+    Assert-Condition 'S11 installs mcp-foundation in agents skills' (Test-Path -LiteralPath $mcpSkillPathAgents -PathType Leaf) $mcpSkillPathAgents
+    Assert-Condition 'S11 installs mcp-foundation in antigravity skills 1' (Test-Path -LiteralPath $mcpSkillPathAg1 -PathType Leaf) $mcpSkillPathAg1
+    Assert-Condition 'S11 installs mcp-foundation in antigravity skills 2' (Test-Path -LiteralPath $mcpSkillPathAg2 -PathType Leaf) $mcpSkillPathAg2
+    Assert-Condition 'S11 installs workflows in antigravity skills 1' (Test-Path -LiteralPath $wfSkillPathAg1 -PathType Leaf) $wfSkillPathAg1
+    Assert-Condition 'S11 installs evidence in antigravity skills 1' (Test-Path -LiteralPath $efSkillPathAg1 -PathType Leaf) $efSkillPathAg1
+    Assert-Condition 'S11 installs workflows in antigravity skills 2' (Test-Path -LiteralPath $wfSkillPathAg2 -PathType Leaf) $wfSkillPathAg2
+    Assert-Condition 'S11 installs evidence in antigravity skills 2' (Test-Path -LiteralPath $efSkillPathAg2 -PathType Leaf) $efSkillPathAg2
+
+    Assert-Condition 'S11 wraps GEMINI in managed markers' (($installedGemini -like '*# BEGIN CODEX-WORKFLOWS-KIT*') -and ($installedGemini -like '*# END CODEX-WORKFLOWS-KIT*')) ''
+    Assert-Condition 'S11 preserves unmanaged GEMINI rules without Force' ($installedGemini -like '*custom_setting = true*') $installedGemini
+    Assert-Condition 'S11 includes canonical GEMINI content' ($installedGemini.IndexOf('mcp-foundation', [StringComparison]::Ordinal) -ge 0) $installedGemini
+
+    # Idempotent re-run
+    Invoke-SafeInstall -Root $root
+    $installedGemini2 = Get-Content -LiteralPath $installedGeminiPath -Raw -Encoding UTF8
+    Assert-Condition 'S11 rerun is identical' ($installedGemini -ceq $installedGemini2) ''
+
+    Invoke-SafeUninstall -Root $root
+    $geminiAfterUninstall = Get-Content -LiteralPath $installedGeminiPath -Raw -Encoding UTF8
+    Assert-Condition 'S11 uninstall preserves unmanaged GEMINI content' ($geminiAfterUninstall -ceq ($unmanagedGemini -replace "`r?`n", "`r`n")) $geminiAfterUninstall
+    Assert-Condition 'S11 uninstall removes mcp-foundation skill from agents' (-not (Test-Path -LiteralPath $mcpSkillPathAgents -PathType Leaf)) ''
+    Assert-Condition 'S11 uninstall removes mcp-foundation skill from antigravity 1' (-not (Test-Path -LiteralPath $mcpSkillPathAg1 -PathType Leaf)) ''
+    Assert-Condition 'S11 uninstall removes mcp-foundation skill from antigravity 2' (-not (Test-Path -LiteralPath $mcpSkillPathAg2 -PathType Leaf)) ''
+
+    $scenario = 12
+    Write-Host 'Scenario 12: doctor scopes GEMINI contract scan to managed block and tolerates unmanaged read-only' -ForegroundColor Cyan
+    $root = New-FixtureHome
+    $fixtures.Add($root)
+    $originalConfig = '[features]' + $nl + 'multi_agent = false' + $nl + $nl + '[mcp_servers.deepseek-subagent]' + $nl + 'command = "pwsh"' + $nl
+    Write-FixtureFile -Path (Join-Path (Get-CodexHome $root) 'config.toml') -Content $originalConfig
+    $unmanagedGeminiWithReadOnly = '# My Custom Rules' + $nl + '- All read-only subagents must use sol medium.' + $nl
+    $installedGeminiPath = Join-Path (Get-AntigravityHome $root) 'config\GEMINI.md'
+    Write-FixtureFile -Path $installedGeminiPath -Content $unmanagedGeminiWithReadOnly
+
+    Invoke-SafeInstall -Root $root
+
+    $docResult1 = Invoke-Doctor -Root $root
+    Assert-Condition 'S12 doctor succeeds when read-only is in unmanaged GEMINI content' ($docResult1.ExitCode -eq 0 -and $docResult1.Output -match '\[OK\]\s+Installed contract') $docResult1.Output
+
+    $installedGemini = Get-Content -LiteralPath $installedGeminiPath -Raw -Encoding UTF8
+    $tamperedManagedGemini = $installedGemini.Replace('# END CODEX-WORKFLOWS-KIT', '- forbidden read-only inside managed block' + $nl + '# END CODEX-WORKFLOWS-KIT')
+    Write-FixtureFile -Path $installedGeminiPath -Content $tamperedManagedGemini
+
+    $docResult2 = Invoke-Doctor -Root $root
+    Assert-Condition 'S12 doctor fails when read-only is inside the managed GEMINI block' ($docResult2.ExitCode -ne 0 -and $docResult2.Output -match '\[FAIL\]\s+Installed contract') $docResult2.Output
+
+    Write-FixtureFile -Path $installedGeminiPath -Content $installedGemini
+    $docResult3 = Invoke-Doctor -Root $root
+    Assert-Condition 'S12 doctor passes again after restoring clean managed block' ($docResult3.ExitCode -eq 0 -and $docResult3.Output -match '\[OK\]\s+Installed contract') $docResult3.Output
+
+    Invoke-SafeUninstall -Root $root
 }
 finally {
     foreach ($fixture in $fixtures) {

@@ -25,9 +25,11 @@ Documentação: [Segurança](docs/security.md) ·
 
 | Componente | Destino | Finalidade |
 |---|---|---|
-| skill workflows | ~/.agents/skills/workflows | única interface para os modos $workflows |
-| skill evidence-first | ~/.agents/skills/evidence-first | verificação de claims materiais |
-| codex/AGENTS.md | ~/.codex/AGENTS.md | regras globais universais |
+| skill workflows | ~/.agents/skills/workflows, ~/.gemini/antigravity/skills/workflows, ~/.gemini/config/skills/workflows | única interface para os modos $workflows |
+| skill evidence-first | ~/.agents/skills/evidence-first, ~/.gemini/antigravity/skills/evidence-first, ~/.gemini/config/skills/evidence-first | verificação de claims materiais |
+| skill mcp-foundation | ~/.agents/skills/mcp-foundation, ~/.gemini/antigravity/skills/mcp-foundation, ~/.gemini/config/skills/mcp-foundation | roteamento, uso e manutenção segura de Context7, CodeGraph e Serena |
+| codex/AGENTS.md | ~/.codex/AGENTS.md | regras globais universais (Codex) |
+| antigravity/GEMINI.md | ~/.gemini/config/GEMINI.md | regras globais universais (Antigravity) |
 | feature multi_agent | config.toml ([features]) | desliga a rota multi-agente embutida no perfil safe; reativável manualmente |
 | prompt pad opcional | caminho escolhido pelo usuário | atalhos NUM para $workflows; atalho no Startup com -InstallAhk |
 | scripts locais | checkout | instalação, validação, diagnóstico e remoção |
@@ -54,7 +56,9 @@ revisar o conteúdo. Nunca use bypass nem pipelines remotos.
 ~~~text
 skills/workflows/         Skill canônica (SKILL.md) e referências especializadas
 skills/evidence-first/    Verificação condicional de claims
-codex/AGENTS.md           Regras globais universais
+skills/mcp-foundation/    Roteamento canônico de Context7, CodeGraph e Serena
+codex/AGENTS.md           Regras globais universais (Codex)
+antigravity/GEMINI.md     Regras globais universais (Antigravity: ~/.gemini/config/GEMINI.md)
 ahk/codex_prompt_pad.ahk  Atalhos opcionais
 scripts/                  Instalação, validação, diagnóstico e remoção
 docs/                     Documentação pública
@@ -65,7 +69,7 @@ docs/                     Documentação pública
 | Perfil | Escopo |
 |---|---|
 | minimal | skills workflows e evidence-first |
-| safe (padrão) | skills, regras globais (AGENTS.md) e o gate `multi_agent = false` |
+| safe (padrão) | skills, regras globais (AGENTS.md, GEMINI.md) e o gate `multi_agent = false` |
 
 ~~~powershell
 .\scripts\install.ps1 -Profile safe
@@ -80,7 +84,7 @@ docs/                     Documentação pública
 |---|---|
 | -Profile minimal\|safe | seleciona o escopo instalado |
 | -InstallAhk | instala o prompt pad e gerencia o atalho 'Codex Prompt Pad.lnk' no Startup: reusa o executável do AutoHotkey existente quando possível, faz backup binário do atalho anterior e o registra no estado |
-| -CodexHome, -AgentsHome, -AhkDestination | substituem destinos padrão; informe o mesmo `-AhkDestination` ao desinstalar um prompt pad customizado |
+| -CodexHome, -AgentsHome, -AntigravityHome, -AhkDestination | substituem destinos padrão; informe o mesmo `-AhkDestination` ao desinstalar um prompt pad customizado |
 | -Force | permite substituir um AGENTS.md não gerenciado após backup |
 | -WhatIf | mostra as alterações sem tocar no disco |
 | `validate.ps1 -SkipInstalled` | valida apenas o checkout, sem exigir espelhos instalados |

@@ -2,6 +2,7 @@
 param(
     [string]$CodexHome,
     [string]$AgentsHome,
+    [string]$AntigravityHome,
     [switch]$SkipInstalled
 )
 
@@ -11,8 +12,10 @@ $ErrorActionPreference = 'Stop'
 $repo = [IO.Path]::GetFullPath((Split-Path -Parent (Split-Path -Parent $PSCommandPath)))
 $defaultCodexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE '.codex' }
 $defaultAgentsHome = if ($env:AGENTS_HOME) { $env:AGENTS_HOME } else { Join-Path $env:USERPROFILE '.agents' }
+$defaultAntigravityHome = if ($env:ANTIGRAVITY_HOME) { $env:ANTIGRAVITY_HOME } else { Join-Path $env:USERPROFILE '.gemini' }
 $codexHome = [IO.Path]::GetFullPath($(if ([string]::IsNullOrWhiteSpace($CodexHome)) { $defaultCodexHome } else { $CodexHome }))
 $agentsHome = [IO.Path]::GetFullPath($(if ([string]::IsNullOrWhiteSpace($AgentsHome)) { $defaultAgentsHome } else { $AgentsHome }))
+$antigravityHome = [IO.Path]::GetFullPath($(if ([string]::IsNullOrWhiteSpace($AntigravityHome)) { $defaultAntigravityHome } else { $AntigravityHome }))
 
 function Read-RequiredText {
     param([Parameter(Mandatory)][string]$Path)
@@ -126,6 +129,77 @@ function Assert-RecoveryPolicy {
     foreach ($pattern in $forbiddenPatterns) {
         if ([regex]::IsMatch($normalized, $pattern)) {
             throw "$Label contains a forbidden recovery-policy exception: $pattern"
+        }
+    }
+}
+
+function Assert-McpFoundationSkill {
+    param(
+        [Parameter(Mandatory)][string]$Label,
+        [Parameter(Mandatory)][string]$Text
+    )
+
+    $normalized = [regex]::Replace($Text, '\s+', ' ').Trim()
+
+    $requiredPatterns = @(
+        'name:\s*mcp-foundation',
+        'description:\s*Use when\b',
+        '(?i)context7',
+        '(?i)resolve',
+        '(?i)query',
+        '(?i)codegraph',
+        '(?i)\.codegraph',
+        '(?i)serena',
+        '(?i)doctor',
+        '(?i)read-only|somente leitura',
+        '(?i)taskkill',
+        '(?i)auto-init|auto_init'
+    )
+    foreach ($pattern in $requiredPatterns) {
+        if (-not [regex]::IsMatch($Text, $pattern)) {
+            throw "$Label is missing required pattern: $pattern"
+        }
+    }
+
+    $forbiddenAutomations = @(
+        '(?i)\b(?:may|can|should|must|authorized to)\b\s+(?!not\b|never\b)[^.;]*\b(?:automate|auto-kill|auto-restart|auto-upgrade|auto-init)\b',
+        '(?i)\b(?:permite|autoriza|deve|pode)\b\s+(?!n[aã]o\b|nunca\b)[^.;]*\b(?:automatizar|auto-kill|auto-restart|auto-upgrade|auto-init)\b'
+    )
+    foreach ($pattern in $forbiddenAutomations) {
+        if ([regex]::IsMatch($normalized, $pattern)) {
+            throw "$Label declares forbidden automation: $pattern"
+        }
+    }
+}
+
+function Assert-McpTemplateRouting {
+    param(
+        [Parameter(Mandatory)][string]$Label,
+        [Parameter(Mandatory)][string]$Text
+    )
+
+    if ($Text -notmatch '(?i)mcp-foundation') {
+        throw "$Label does not route to mcp-foundation skill"
+    }
+
+    if ($Text -notmatch '(?i)GEMINI\.md') {
+        throw "$Label does not reference GEMINI.md for MCP / PromptPad context"
+    }
+
+    $universalPatterns = @(
+        '(?i)GEMINI\.md[^.;]*(?:todas as tarefas|all tasks|every task|anexado em todas|attached to all)',
+        '(?i)(?:todas as tarefas|all tasks|every task)[^.;]*GEMINI\.md'
+    )
+    foreach ($pattern in $universalPatterns) {
+        if ([regex]::IsMatch($Text, $pattern)) {
+            throw "$Label wrongly claims GEMINI.md is attached to all tasks: $pattern"
+        }
+    }
+
+    $forbiddenPatterns = @('taskkill\s+/', 'rm\s+-rf', 'format\s+[A-Za-z]:', 'drop\s+table', 'password\s*=', 'secret\s*=', 'api_key\s*=')
+    foreach ($pattern in $forbiddenPatterns) {
+        if ([regex]::IsMatch($Text, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)) {
+            throw "$Label contains forbidden destructive command or secret pattern: $pattern"
         }
     }
 }
@@ -668,9 +742,13 @@ function Test-FullyQualifiedPath {
 
 $workflowSource = Join-Path $repo 'skills\workflows'
 $evidenceSource = Join-Path $repo 'skills\evidence-first'
+$mcpSource = Join-Path $repo 'skills\mcp-foundation'
 $agentsMd = Join-Path $repo 'codex\AGENTS.md'
+$geminiTemplate = Join-Path $repo 'antigravity\GEMINI.md'
 $skill = Read-RequiredText (Join-Path $workflowSource 'SKILL.md')
+$mcpSkill = Read-RequiredText (Join-Path $mcpSource 'SKILL.md')
 $agentsText = Read-RequiredText $agentsMd
+$geminiText = Read-RequiredText $geminiTemplate
 $installer = Read-RequiredText (Join-Path $repo 'scripts\install.ps1')
 $promptPad = Read-RequiredText (Join-Path $repo 'ahk\codex_prompt_pad.ahk')
 
@@ -773,6 +851,12 @@ Assert-CompletionPolicy -Label 'workflow skill' -Text $skill
 Assert-RecoveryPolicy -Label 'workflow skill' -Text $skill
 
 Assert-OrchestrationPolicy -Label 'codex AGENTS.md' -Text $agentsText
+
+Assert-McpFoundationSkill -Label 'mcp-foundation skill' -Text $mcpSkill
+
+Assert-McpTemplateRouting -Label 'codex AGENTS.md' -Text $agentsText
+
+Assert-McpTemplateRouting -Label 'antigravity GEMINI.md' -Text $geminiText
 
 $legacyPaths = @(
     'scripts\native-profile-contract.ps1',
@@ -884,8 +968,7 @@ Assert-Forbidden -Label 'prompt pad' -Text $promptPad -Tokens @(
 $forbidden = @(
     (-join [char[]]@(111, 112, 101, 110, 99, 111, 100, 101)),
     (-join [char[]]@(114, 101, 108, 97, 121)),
-    (-join [char[]]@(119, 97, 116, 99, 104, 101, 114)),
-    (-join [char[]]@(97, 110, 116, 105, 103, 114, 97, 118, 105, 116, 121))
+    (-join [char[]]@(119, 97, 116, 99, 104, 101, 114))
 )
 foreach ($relativePath in @(git -C $repo ls-files)) {
     $path = Join-Path $repo $relativePath
@@ -910,8 +993,24 @@ if (-not $SkipInstalled) {
 
     $workflowsDest = Join-Path $agentsHome 'skills\workflows'
     $evidenceDest = Join-Path $agentsHome 'skills\evidence-first'
-    Assert-MirrorTree -Source $workflowSource -Installed $workflowsDest -Label 'workflows skill'
-    Assert-MirrorTree -Source $evidenceSource -Installed $evidenceDest -Label 'evidence skill'
+    $mcpDest = Join-Path $agentsHome 'skills\mcp-foundation'
+    Assert-MirrorTree -Source $workflowSource -Installed $workflowsDest -Label 'workflows skill (agents)'
+    Assert-MirrorTree -Source $evidenceSource -Installed $evidenceDest -Label 'evidence skill (agents)'
+    Assert-MirrorTree -Source $mcpSource -Installed $mcpDest -Label 'mcp-foundation skill (agents)'
+
+    $agWorkflows1 = Join-Path $antigravityHome 'antigravity\skills\workflows'
+    $agEvidence1 = Join-Path $antigravityHome 'antigravity\skills\evidence-first'
+    $agMcp1 = Join-Path $antigravityHome 'antigravity\skills\mcp-foundation'
+    Assert-MirrorTree -Source $workflowSource -Installed $agWorkflows1 -Label 'workflows skill (antigravity 1)'
+    Assert-MirrorTree -Source $evidenceSource -Installed $agEvidence1 -Label 'evidence skill (antigravity 1)'
+    Assert-MirrorTree -Source $mcpSource -Installed $agMcp1 -Label 'mcp-foundation skill (antigravity 1)'
+
+    $agWorkflows2 = Join-Path $antigravityHome 'config\skills\workflows'
+    $agEvidence2 = Join-Path $antigravityHome 'config\skills\evidence-first'
+    $agMcp2 = Join-Path $antigravityHome 'config\skills\mcp-foundation'
+    Assert-MirrorTree -Source $workflowSource -Installed $agWorkflows2 -Label 'workflows skill (antigravity 2)'
+    Assert-MirrorTree -Source $evidenceSource -Installed $agEvidence2 -Label 'evidence skill (antigravity 2)'
+    Assert-MirrorTree -Source $mcpSource -Installed $agMcp2 -Label 'mcp-foundation skill (antigravity 2)'
 
     if ([string]$state.profile -eq 'safe') {
         Assert-NoManagedAgentsBlock -Path (Join-Path $codexHome 'config.toml')
@@ -919,6 +1018,10 @@ if (-not $SkipInstalled) {
 
         $installedAgents = Read-RequiredText (Join-Path $codexHome 'AGENTS.md')
         Assert-OrchestrationPolicy -Label 'installed AGENTS.md' -Text $installedAgents
+        Assert-McpTemplateRouting -Label 'installed AGENTS.md' -Text $installedAgents
+
+        $installedGemini = Read-RequiredText (Join-Path (Join-Path $antigravityHome 'config') 'GEMINI.md')
+        Assert-McpTemplateRouting -Label 'installed GEMINI.md' -Text $installedGemini
     }
 }
 
