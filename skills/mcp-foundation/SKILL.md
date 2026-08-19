@@ -45,8 +45,9 @@ Canonical routing, usage constraints, and operational maintenance for allowliste
    - Server idleness (no active requests or locks).
    - Zero pending or running jobs across the session.
 4. No Unsafe Automation: NEVER automate kill, restart, upgrade, or initialization (auto-init) of MCP servers or background tooling.
+5. DeepSeek Daemon Restart Exception: A tightly scoped, fail-closed restart exception applies ONLY to the local DeepSeek Sub-Agent daemon when expressly authorized by the current user and executed via canonical `dist/cli.js restart --config <known-config> --json`. All gates must pass: failing GET `/health` probe, verified PID/command/data-dir ownership, zero active/pending jobs in `bridge.sqlite`, and bounded readiness wait. Never trigger on `AntigravityProcessError`, `agy` failures, or HTTP errors alone; never restart Codex, Antigravity, Serena, CodeGraph, Context7, or use generic kill/process commands (`taskkill`, `Stop-Process`).
 
 ## References
 
-Open only when safe shutdown verification or detailed process audits are required:
-- references/lifecycle.md - Process ownership, idle verification, and mirror audit procedures.
+Open only when safe shutdown verification, daemon recovery gates, or detailed process audits are required:
+- references/lifecycle.md - Process ownership, idle verification, DeepSeek daemon restart gates, and mirror audit procedures.

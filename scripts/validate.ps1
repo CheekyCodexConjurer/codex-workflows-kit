@@ -3,7 +3,8 @@ param(
     [string]$CodexHome,
     [string]$AgentsHome,
     [string]$AntigravityHome,
-    [switch]$SkipInstalled
+    [switch]$SkipInstalled,
+    [switch]$SkipGateTests
 )
 
 Set-StrictMode -Version Latest
@@ -170,6 +171,143 @@ function Assert-McpFoundationSkill {
             throw "$Label declares forbidden automation: $pattern"
         }
     }
+}
+
+function Assert-DeepSeekDaemonRestartLifecycle {
+    param(
+        [Parameter(Mandatory)][string]$Label,
+        [Parameter(Mandatory)][string]$Text
+    )
+
+    if ($Text -match '(?i)/v1/health') {
+        throw "$Label contains forbidden endpoint /v1/health; actual bridge endpoint is /health"
+    }
+
+    $lifecycleNormalized = [regex]::Replace($Text, '\s+', ' ').Trim()
+    $lifecycleRequired = @(
+        '(?i)express (?:human|user) authorization|explicit user authorization',
+        '(?i)dist/cli\.js restart --config <known-config> --json',
+        '(?i)GET\s+[`]?/health',
+        '(?i)PID,? command(?: line)?,? and data (?:dir|directory) ownership',
+        '(?i)bridge\.sqlite',
+        '(?i)bounded readiness',
+        '(?i)fail-closed',
+        '(?i)AntigravityProcessError',
+        '(?i)taskkill',
+        '(?i)Stop-Process'
+    )
+    foreach ($pattern in $lifecycleRequired) {
+        if (-not [regex]::IsMatch($lifecycleNormalized, $pattern)) {
+            throw "$Label is missing required DeepSeek daemon restart policy pattern: $pattern"
+        }
+    }
+
+    # Forbidden un-gated generic automations
+    if ([regex]::IsMatch($lifecycleNormalized, '(?i)\b(?:may|can|should|must|authorized to)\b\s+(?!not\b|never\b)[^.;]*\b(?:restart automatically|auto-restart without consent|restart on any error)\b')) {
+        throw "$Label permits unauthorized automatic daemon restart"
+    }
+    if ([regex]::IsMatch($lifecycleNormalized, '(?i)\b(?:may|can|should|must|authorized to)\b\s+(?!not\b|never\b)[^.;]*\b(?:use taskkill|use Stop-Process|kill-all)\b')) {
+        throw "$Label permits taskkill or Stop-Process"
+    }
+    if ([regex]::IsMatch($lifecycleNormalized, '(?i)\b(?:may|can|should|must|authorized to)\b\s+(?!not\b|never\b)[^.;]*\b(?:restart Serena|restart CodeGraph|restart Context7|restart Codex|restart Antigravity)\b')) {
+        throw "$Label permits restarting other MCPs or host platforms"
+    }
+    if ([regex]::IsMatch($lifecycleNormalized, '(?i)\b(?:may|can|should|must|authorized to)\b\s+(?!not\b|never\b)[^.;]*\b(?:restart with active jobs|restart when jobs are running|ignore active jobs)\b')) {
+        throw "$Label permits restarting while jobs are active in sqlite"
+    }
+    if ([regex]::IsMatch($lifecycleNormalized, '(?i)\b(?:may|can|should|must|authorized to)\b\s+(?!not\b|never\b)[^.;]*\b(?:trigger on AntigravityProcessError|triggered by agy failure|trigger on HTTP error alone)\b')) {
+        throw "$Label permits restarting on non-trigger conditions"
+    }
+}
+
+function Assert-DeepSeekDaemonRestartSkill {
+    param(
+        [Parameter(Mandatory)][string]$Label,
+        [Parameter(Mandatory)][string]$Text
+    )
+
+    if ($Text -match '(?i)/v1/health') {
+        throw "$Label contains forbidden endpoint /v1/health; actual bridge endpoint is /health"
+    }
+
+    $skillNormalized = [regex]::Replace($Text, '\s+', ' ').Trim()
+    $skillRequired = @(
+        '(?i)DeepSeek (?:Sub-Agent )?Daemon Restart Exception',
+        '(?i)dist/cli\.js restart --config <known-config> --json',
+        '(?i)/health',
+        '(?i)bridge\.sqlite',
+        '(?i)bounded readiness',
+        '(?i)AntigravityProcessError'
+    )
+    foreach ($pattern in $skillRequired) {
+        if (-not [regex]::IsMatch($skillNormalized, $pattern)) {
+            throw "$Label is missing required DeepSeek daemon restart policy pattern: $pattern"
+        }
+    }
+}
+
+function Assert-DeepSeekDaemonRestartAgents {
+    param(
+        [Parameter(Mandatory)][string]$Label,
+        [Parameter(Mandatory)][string]$Text
+    )
+
+    if ($Text -match '(?i)/v1/health') {
+        throw "$Label contains forbidden endpoint /v1/health; actual bridge endpoint is /health"
+    }
+
+    $agentsNormalized = [regex]::Replace($Text, '\s+', ' ').Trim()
+    $agentsRequired = @(
+        '(?i)daemon DeepSeek',
+        '(?i)dist/cli\.js restart --config <known-config> --json',
+        '(?i)/health',
+        '(?i)bridge\.sqlite'
+    )
+    foreach ($pattern in $agentsRequired) {
+        if (-not [regex]::IsMatch($agentsNormalized, $pattern)) {
+            throw "$Label is missing required DeepSeek daemon restart policy pattern: $pattern"
+        }
+    }
+}
+
+function Assert-DeepSeekDaemonRestartGemini {
+    param(
+        [Parameter(Mandatory)][string]$Label,
+        [Parameter(Mandatory)][string]$Text
+    )
+
+    if ($Text -match '(?i)/v1/health') {
+        throw "$Label contains forbidden endpoint /v1/health; actual bridge endpoint is /health"
+    }
+
+    $geminiNormalized = [regex]::Replace($Text, '\s+', ' ').Trim()
+    $geminiRequired = @(
+        '(?i)daemon DeepSeek',
+        '(?i)dist/cli\.js restart --config <known-config> --json',
+        '(?i)/health',
+        '(?i)bridge\.sqlite'
+    )
+    foreach ($pattern in $geminiRequired) {
+        if (-not [regex]::IsMatch($geminiNormalized, $pattern)) {
+            throw "$Label is missing required DeepSeek daemon restart policy pattern: $pattern"
+        }
+    }
+}
+
+function Assert-DeepSeekDaemonRestartPolicy {
+    param(
+        [Parameter(Mandatory)][string]$SkillText,
+        [Parameter(Mandatory)][string]$LifecycleText,
+        [Parameter(Mandatory)][string]$AgentsText,
+        [Parameter(Mandatory)][string]$GeminiText,
+        [string]$LabelPrefix = ''
+    )
+
+    $pfx = if ([string]::IsNullOrWhiteSpace($LabelPrefix)) { '' } else { "$LabelPrefix " }
+    Assert-DeepSeekDaemonRestartLifecycle -Label "${pfx}mcp-foundation lifecycle.md" -Text $LifecycleText
+    Assert-DeepSeekDaemonRestartSkill -Label "${pfx}mcp-foundation SKILL.md" -Text $SkillText
+    Assert-DeepSeekDaemonRestartAgents -Label "${pfx}codex AGENTS.md" -Text $AgentsText
+    Assert-DeepSeekDaemonRestartGemini -Label "${pfx}antigravity GEMINI.md" -Text $GeminiText
 }
 
 function Assert-McpTemplateRouting {
@@ -747,6 +885,7 @@ $agentsMd = Join-Path $repo 'codex\AGENTS.md'
 $geminiTemplate = Join-Path $repo 'antigravity\GEMINI.md'
 $skill = Read-RequiredText (Join-Path $workflowSource 'SKILL.md')
 $mcpSkill = Read-RequiredText (Join-Path $mcpSource 'SKILL.md')
+$mcpLifecycle = Read-RequiredText (Join-Path (Join-Path $mcpSource 'references') 'lifecycle.md')
 $agentsText = Read-RequiredText $agentsMd
 $geminiText = Read-RequiredText $geminiTemplate
 $installer = Read-RequiredText (Join-Path $repo 'scripts\install.ps1')
@@ -853,6 +992,8 @@ Assert-RecoveryPolicy -Label 'workflow skill' -Text $skill
 Assert-OrchestrationPolicy -Label 'codex AGENTS.md' -Text $agentsText
 
 Assert-McpFoundationSkill -Label 'mcp-foundation skill' -Text $mcpSkill
+
+Assert-DeepSeekDaemonRestartPolicy -SkillText $mcpSkill -LifecycleText $mcpLifecycle -AgentsText $agentsText -GeminiText $geminiText
 
 Assert-McpTemplateRouting -Label 'codex AGENTS.md' -Text $agentsText
 
@@ -994,23 +1135,28 @@ if (-not $SkipInstalled) {
     $workflowsDest = Join-Path $agentsHome 'skills\workflows'
     $evidenceDest = Join-Path $agentsHome 'skills\evidence-first'
     $mcpDest = Join-Path $agentsHome 'skills\mcp-foundation'
-    Assert-MirrorTree -Source $workflowSource -Installed $workflowsDest -Label 'workflows skill (agents)'
-    Assert-MirrorTree -Source $evidenceSource -Installed $evidenceDest -Label 'evidence skill (agents)'
-    Assert-MirrorTree -Source $mcpSource -Installed $mcpDest -Label 'mcp-foundation skill (agents)'
-
     $agWorkflows1 = Join-Path $antigravityHome 'antigravity\skills\workflows'
     $agEvidence1 = Join-Path $antigravityHome 'antigravity\skills\evidence-first'
     $agMcp1 = Join-Path $antigravityHome 'antigravity\skills\mcp-foundation'
-    Assert-MirrorTree -Source $workflowSource -Installed $agWorkflows1 -Label 'workflows skill (antigravity 1)'
-    Assert-MirrorTree -Source $evidenceSource -Installed $agEvidence1 -Label 'evidence skill (antigravity 1)'
-    Assert-MirrorTree -Source $mcpSource -Installed $agMcp1 -Label 'mcp-foundation skill (antigravity 1)'
-
     $agWorkflows2 = Join-Path $antigravityHome 'config\skills\workflows'
     $agEvidence2 = Join-Path $antigravityHome 'config\skills\evidence-first'
     $agMcp2 = Join-Path $antigravityHome 'config\skills\mcp-foundation'
-    Assert-MirrorTree -Source $workflowSource -Installed $agWorkflows2 -Label 'workflows skill (antigravity 2)'
-    Assert-MirrorTree -Source $evidenceSource -Installed $agEvidence2 -Label 'evidence skill (antigravity 2)'
-    Assert-MirrorTree -Source $mcpSource -Installed $agMcp2 -Label 'mcp-foundation skill (antigravity 2)'
+
+    # DeepSeek restart-policy semantic assertions on all installed mcp-foundation skill & lifecycle mirrors (fail-closed on missing/unreadable)
+    $installedSkillAgents = Read-RequiredText (Join-Path $mcpDest 'SKILL.md')
+    $installedLifecycleAgents = Read-RequiredText (Join-Path (Join-Path $mcpDest 'references') 'lifecycle.md')
+    Assert-DeepSeekDaemonRestartSkill -Label 'installed mcp-foundation SKILL.md (agents)' -Text $installedSkillAgents
+    Assert-DeepSeekDaemonRestartLifecycle -Label 'installed mcp-foundation lifecycle.md (agents)' -Text $installedLifecycleAgents
+
+    $installedSkillAg1 = Read-RequiredText (Join-Path $agMcp1 'SKILL.md')
+    $installedLifecycleAg1 = Read-RequiredText (Join-Path (Join-Path $agMcp1 'references') 'lifecycle.md')
+    Assert-DeepSeekDaemonRestartSkill -Label 'installed mcp-foundation SKILL.md (antigravity 1)' -Text $installedSkillAg1
+    Assert-DeepSeekDaemonRestartLifecycle -Label 'installed mcp-foundation lifecycle.md (antigravity 1)' -Text $installedLifecycleAg1
+
+    $installedSkillAg2 = Read-RequiredText (Join-Path $agMcp2 'SKILL.md')
+    $installedLifecycleAg2 = Read-RequiredText (Join-Path (Join-Path $agMcp2 'references') 'lifecycle.md')
+    Assert-DeepSeekDaemonRestartSkill -Label 'installed mcp-foundation SKILL.md (antigravity 2)' -Text $installedSkillAg2
+    Assert-DeepSeekDaemonRestartLifecycle -Label 'installed mcp-foundation lifecycle.md (antigravity 2)' -Text $installedLifecycleAg2
 
     if ([string]$state.profile -eq 'safe') {
         Assert-NoManagedAgentsBlock -Path (Join-Path $codexHome 'config.toml')
@@ -1018,13 +1164,31 @@ if (-not $SkipInstalled) {
 
         $installedAgents = Read-RequiredText (Join-Path $codexHome 'AGENTS.md')
         Assert-OrchestrationPolicy -Label 'installed AGENTS.md' -Text $installedAgents
+        Assert-DeepSeekDaemonRestartAgents -Label 'installed AGENTS.md' -Text $installedAgents
         Assert-McpTemplateRouting -Label 'installed AGENTS.md' -Text $installedAgents
 
         $installedGemini = Read-RequiredText (Join-Path (Join-Path $antigravityHome 'config') 'GEMINI.md')
+        Assert-DeepSeekDaemonRestartGemini -Label 'installed GEMINI.md' -Text $installedGemini
         Assert-McpTemplateRouting -Label 'installed GEMINI.md' -Text $installedGemini
+
+        Assert-DeepSeekDaemonRestartPolicy -SkillText $installedSkillAgents -LifecycleText $installedLifecycleAgents -AgentsText $installedAgents -GeminiText $installedGemini -LabelPrefix 'installed (safe profile)'
     }
+
+    Assert-MirrorTree -Source $workflowSource -Installed $workflowsDest -Label 'workflows skill (agents)'
+    Assert-MirrorTree -Source $evidenceSource -Installed $evidenceDest -Label 'evidence skill (agents)'
+    Assert-MirrorTree -Source $mcpSource -Installed $mcpDest -Label 'mcp-foundation skill (agents)'
+
+    Assert-MirrorTree -Source $workflowSource -Installed $agWorkflows1 -Label 'workflows skill (antigravity 1)'
+    Assert-MirrorTree -Source $evidenceSource -Installed $agEvidence1 -Label 'evidence skill (antigravity 1)'
+    Assert-MirrorTree -Source $mcpSource -Installed $agMcp1 -Label 'mcp-foundation skill (antigravity 1)'
+
+    Assert-MirrorTree -Source $workflowSource -Installed $agWorkflows2 -Label 'workflows skill (antigravity 2)'
+    Assert-MirrorTree -Source $evidenceSource -Installed $agEvidence2 -Label 'evidence skill (antigravity 2)'
+    Assert-MirrorTree -Source $mcpSource -Installed $agMcp2 -Label 'mcp-foundation skill (antigravity 2)'
 }
 
-& (Join-Path $repo 'scripts\test-safe-profile-gate.ps1')
+if (-not $SkipGateTests) {
+    & (Join-Path $repo 'scripts\test-safe-profile-gate.ps1')
+}
 
 Write-Host 'Validation OK.'

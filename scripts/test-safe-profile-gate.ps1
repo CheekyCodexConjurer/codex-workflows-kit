@@ -103,6 +103,33 @@ function Invoke-Doctor {
     }
 }
 
+function Invoke-Validate {
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [switch]$SkipInstalled
+    )
+
+    $validateScript = Join-Path $repo 'scripts\validate.ps1'
+    $argsList = @(
+        '-NoProfile',
+        '-File', $validateScript,
+        '-CodexHome', (Get-CodexHome $Root),
+        '-AgentsHome', (Get-AgentsHome $Root),
+        '-AntigravityHome', (Get-AntigravityHome $Root),
+        '-SkipGateTests'
+    )
+    if ($SkipInstalled) {
+        $argsList += '-SkipInstalled'
+    }
+
+    $output = & pwsh @argsList 2>&1
+    $exitCode = $LASTEXITCODE
+    return [pscustomobject]@{
+        ExitCode = $exitCode
+        Output = ($output | ForEach-Object { $_.ToString() }) -join [Environment]::NewLine
+    }
+}
+
 function Get-FeatureHeaderCount {
     param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
 
@@ -208,6 +235,118 @@ function Test-AgentsOrchestrationSemantics {
     if ([regex]::IsMatch($normalized, '(?i)\b(?:pode|podem|poderia|poderiam|poder[aá]|poder[aã]o|poderao|deve|devem|deveria|deveriam)\b[^.;]*\b(?:reabrir a sess[ãa]o|mesma sess[ãa]o|sess[ãa]o antiga|continuar a sess[ãa]o|abrir nova sess[ãa]o|sess[ãa]o nova)\b')) {
         return $false
     }
+    return $true
+}
+
+function Test-DaemonRestartPolicySemantics {
+    param(
+        [Parameter(Mandatory)][string]$LifecycleText,
+        [Parameter(Mandatory)][string]$SkillText,
+        [Parameter(Mandatory)][string]$AgentsText,
+        [Parameter(Mandatory)][string]$GeminiText
+    )
+
+    $lifecycleNorm = [regex]::Replace($LifecycleText, '\s+', ' ').Trim()
+    $skillNorm = [regex]::Replace($SkillText, '\s+', ' ').Trim()
+    $agentsNorm = [regex]::Replace($AgentsText, '\s+', ' ').Trim()
+    $geminiNorm = [regex]::Replace($GeminiText, '\s+', ' ').Trim()
+
+    # Must contain required gates
+    if (-not [regex]::IsMatch($lifecycleNorm, '(?i)express (?:human|user) authorization|explicit user authorization')) {
+        return $false
+    }
+    if (-not [regex]::IsMatch($lifecycleNorm, '(?i)dist/cli\.js restart --config <known-config> --json')) {
+        return $false
+    }
+    if (-not [regex]::IsMatch($lifecycleNorm, '(?i)GET\s+[`]?/health')) {
+        return $false
+    }
+    if (-not [regex]::IsMatch($lifecycleNorm, '(?i)PID,? command(?: line)?,? and data (?:dir|directory) ownership')) {
+        return $false
+    }
+    if (-not [regex]::IsMatch($lifecycleNorm, '(?i)bridge\.sqlite')) {
+        return $false
+    }
+    if (-not [regex]::IsMatch($lifecycleNorm, '(?i)bounded readiness')) {
+        return $false
+    }
+    if (-not [regex]::IsMatch($lifecycleNorm, '(?i)fail-closed')) {
+        return $false
+    }
+    if (-not [regex]::IsMatch($lifecycleNorm, '(?i)AntigravityProcessError')) {
+        return $false
+    }
+    if (-not [regex]::IsMatch($lifecycleNorm, '(?i)taskkill')) {
+        return $false
+    }
+    if (-not [regex]::IsMatch($lifecycleNorm, '(?i)Stop-Process')) {
+        return $false
+    }
+
+    # Prohibit /v1/health
+    if ([regex]::IsMatch($LifecycleText, '(?i)/v1/health') -or [regex]::IsMatch($SkillText, '(?i)/v1/health') -or [regex]::IsMatch($AgentsText, '(?i)/v1/health') -or [regex]::IsMatch($GeminiText, '(?i)/v1/health')) {
+        return $false
+    }
+
+    # Prohibit un-gated generic restart / kill
+    if ([regex]::IsMatch($lifecycleNorm, '(?i)\b(?:may|can|should|must|authorized to)\b\s+(?!not\b|never\b)[^.;]*\b(?:restart automatically|auto-restart without consent|restart on any error)\b')) {
+        return $false
+    }
+    if ([regex]::IsMatch($lifecycleNorm, '(?i)\b(?:may|can|should|must|authorized to)\b\s+(?!not\b|never\b)[^.;]*\b(?:use taskkill|use Stop-Process|kill-all)\b')) {
+        return $false
+    }
+    if ([regex]::IsMatch($lifecycleNorm, '(?i)\b(?:may|can|should|must|authorized to)\b\s+(?!not\b|never\b)[^.;]*\b(?:restart Serena|restart CodeGraph|restart Context7|restart Codex|restart Antigravity)\b')) {
+        return $false
+    }
+    if ([regex]::IsMatch($lifecycleNorm, '(?i)\b(?:may|can|should|must|authorized to)\b\s+(?!not\b|never\b)[^.;]*\b(?:restart with active jobs|restart when jobs are running|ignore active jobs)\b')) {
+        return $false
+    }
+    if ([regex]::IsMatch($lifecycleNorm, '(?i)\b(?:may|can|should|must|authorized to)\b\s+(?!not\b|never\b)[^.;]*\b(?:trigger on AntigravityProcessError|triggered by agy failure|trigger on HTTP error alone)\b')) {
+        return $false
+    }
+
+    # SKILL.md checks
+    if (-not [regex]::IsMatch($skillNorm, '(?i)DeepSeek (?:Sub-Agent )?Daemon Restart Exception')) {
+        return $false
+    }
+    if (-not [regex]::IsMatch($skillNorm, '(?i)dist/cli\.js restart --config <known-config> --json')) {
+        return $false
+    }
+    if (-not [regex]::IsMatch($skillNorm, '(?i)/health')) {
+        return $false
+    }
+    if (-not [regex]::IsMatch($skillNorm, '(?i)bridge\.sqlite')) {
+        return $false
+    }
+
+    # AGENTS.md checks
+    if (-not [regex]::IsMatch($agentsNorm, '(?i)daemon DeepSeek')) {
+        return $false
+    }
+    if (-not [regex]::IsMatch($agentsNorm, '(?i)dist/cli\.js restart --config <known-config> --json')) {
+        return $false
+    }
+    if (-not [regex]::IsMatch($agentsNorm, '(?i)/health')) {
+        return $false
+    }
+    if (-not [regex]::IsMatch($agentsNorm, '(?i)bridge\.sqlite')) {
+        return $false
+    }
+
+    # GEMINI.md checks
+    if (-not [regex]::IsMatch($geminiNorm, '(?i)daemon DeepSeek')) {
+        return $false
+    }
+    if (-not [regex]::IsMatch($geminiNorm, '(?i)dist/cli\.js restart --config <known-config> --json')) {
+        return $false
+    }
+    if (-not [regex]::IsMatch($geminiNorm, '(?i)/health')) {
+        return $false
+    }
+    if (-not [regex]::IsMatch($geminiNorm, '(?i)bridge\.sqlite')) {
+        return $false
+    }
+
     return $true
 }
 
@@ -543,6 +682,141 @@ multi_agent = true
     Assert-Condition 'S12 doctor passes again after restoring clean managed block' ($docResult3.ExitCode -eq 0 -and $docResult3.Output -match '\[OK\]\s+Installed contract') $docResult3.Output
 
     Invoke-SafeUninstall -Root $root
+
+    $scenario = 13
+    Write-Host 'Scenario 13: safe profile validates DeepSeek daemon restart fail-closed policy and detects tampered carve-outs' -ForegroundColor Cyan
+    $root = New-FixtureHome
+    $fixtures.Add($root)
+    $canonicalLifecycle = Get-Content -LiteralPath (Join-Path $repo 'skills\mcp-foundation\references\lifecycle.md') -Raw -Encoding UTF8
+    $canonicalSkill = Get-Content -LiteralPath (Join-Path $repo 'skills\mcp-foundation\SKILL.md') -Raw -Encoding UTF8
+    $canonicalAgents = Get-Content -LiteralPath (Join-Path $repo 'codex\AGENTS.md') -Raw -Encoding UTF8
+    $canonicalGemini = Get-Content -LiteralPath (Join-Path $repo 'antigravity\GEMINI.md') -Raw -Encoding UTF8
+
+    Assert-Condition 'S13 canonical policies satisfy daemon restart semantics' (Test-DaemonRestartPolicySemantics -LifecycleText $canonicalLifecycle -SkillText $canonicalSkill -AgentsText $canonicalAgents -GeminiText $canonicalGemini) ''
+
+    # Tamper 1: Unconditional auto-restart without user authorization
+    $tamperNoAuth = $canonicalLifecycle + $nl + 'The daemon may restart automatically on error without user consent.'
+    Assert-Condition 'S13 detects un-authorized restart tamper' (-not (Test-DaemonRestartPolicySemantics -LifecycleText $tamperNoAuth -SkillText $canonicalSkill -AgentsText $canonicalAgents -GeminiText $canonicalGemini)) ''
+
+    # Tamper 2: Permitting taskkill / Stop-Process
+    $tamperKill = $canonicalLifecycle + $nl + 'Operators may use taskkill or Stop-Process to restart the daemon.'
+    Assert-Condition 'S13 detects taskkill/Stop-Process tamper' (-not (Test-DaemonRestartPolicySemantics -LifecycleText $tamperKill -SkillText $canonicalSkill -AgentsText $canonicalAgents -GeminiText $canonicalGemini)) ''
+
+    # Tamper 3: Wrong endpoint /v1/health introduced
+    $tamperV1 = $canonicalLifecycle.Replace('/health', '/v1/health')
+    Assert-Condition 'S13 detects /v1/health endpoint tamper' (-not (Test-DaemonRestartPolicySemantics -LifecycleText $tamperV1 -SkillText $canonicalSkill -AgentsText $canonicalAgents -GeminiText $canonicalGemini)) ''
+
+    # Tamper 4: Trigger on AntigravityProcessError alone
+    $tamperAgy = $canonicalLifecycle + $nl + 'May trigger on AntigravityProcessError when the job fails.'
+    Assert-Condition 'S13 detects AntigravityProcessError trigger tamper' (-not (Test-DaemonRestartPolicySemantics -LifecycleText $tamperAgy -SkillText $canonicalSkill -AgentsText $canonicalAgents -GeminiText $canonicalGemini)) ''
+
+    # Tamper 5: Restart other MCPs
+    $tamperOtherMcp = $canonicalLifecycle + $nl + 'May restart Serena and CodeGraph when unresponsive.'
+    Assert-Condition 'S13 detects other MCP restart tamper' (-not (Test-DaemonRestartPolicySemantics -LifecycleText $tamperOtherMcp -SkillText $canonicalSkill -AgentsText $canonicalAgents -GeminiText $canonicalGemini)) ''
+
+    # Tamper 6: Restart with active jobs
+    $tamperActiveJobs = $canonicalLifecycle + $nl + 'May restart with active jobs in flight if urgent.'
+    Assert-Condition 'S13 detects active jobs restart tamper' (-not (Test-DaemonRestartPolicySemantics -LifecycleText $tamperActiveJobs -SkillText $canonicalSkill -AgentsText $canonicalAgents -GeminiText $canonicalGemini)) ''
+
+    # Tamper 7: Missing required canonical command
+    $tamperNoCmd = $canonicalLifecycle.Replace('dist/cli.js restart --config <known-config> --json', 'custom restart script')
+    Assert-Condition 'S13 detects missing canonical command tamper' (-not (Test-DaemonRestartPolicySemantics -LifecycleText $tamperNoCmd -SkillText $canonicalSkill -AgentsText $canonicalAgents -GeminiText $canonicalGemini)) ''
+
+    # Tamper 8: Missing express authorization in lifecycle
+    $tamperNoExpress = $canonicalLifecycle.Replace('authorization', 'detection').Replace('Authorization', 'Detection')
+    Assert-Condition 'S13 detects missing authorization gate tamper' (-not (Test-DaemonRestartPolicySemantics -LifecycleText $tamperNoExpress -SkillText $canonicalSkill -AgentsText $canonicalAgents -GeminiText $canonicalGemini)) ''
+
+    $scenario = 14
+    Write-Host 'Scenario 14: installed DeepSeek restart policy lifecycle verifies installed mirrors, rejects tampered/missing mirrors via validation and doctor, and heals on reinstall' -ForegroundColor Cyan
+    $root = New-FixtureHome
+    $fixtures.Add($root)
+    $originalConfig = '[features]' + $nl + 'multi_agent = false' + $nl + $nl + '[mcp_servers.deepseek-subagent]' + $nl + 'command = "pwsh"' + $nl
+    Write-FixtureFile -Path (Join-Path (Get-CodexHome $root) 'config.toml') -Content $originalConfig
+
+    Invoke-SafeInstall -Root $root
+
+    # Initial clean post-install validation and doctor
+    $val1 = Invoke-Validate -Root $root
+    Assert-Condition 'S14 fresh safe install passes post-install validation' ($val1.ExitCode -eq 0 -and $val1.Output -match 'Validation OK') $val1.Output
+    $doc1 = Invoke-Doctor -Root $root
+    Assert-Condition 'S14 fresh safe install passes doctor' ($doc1.ExitCode -eq 0 -and $doc1.Output -match '\[OK\]\s+Installed contract') $doc1.Output
+
+    $sourceLifecycle = Join-Path $repo 'skills\mcp-foundation\references\lifecycle.md'
+    $sourceSkill = Join-Path $repo 'skills\mcp-foundation\SKILL.md'
+    $installedLifecycleAgents = Join-Path (Get-AgentsHome $root) 'skills\mcp-foundation\references\lifecycle.md'
+    $canonicalLifecycleContent = Get-Content -LiteralPath $sourceLifecycle -Raw -Encoding UTF8
+
+    # Tamper 1: Remove express user authorization from installed agents lifecycle mirror
+    $tamperNoAuth = $canonicalLifecycleContent -replace '(?i)express (?:human|user) authorization|explicit user authorization', 'autonomous self-healing without user authorization'
+    Write-FixtureFile -Path $installedLifecycleAgents -Content $tamperNoAuth
+    $valTamper1 = Invoke-Validate -Root $root
+    Assert-Condition 'S14 validation rejects installed lifecycle mirror missing user authorization' ($valTamper1.ExitCode -ne 0 -and $valTamper1.Output -match 'installed mcp-foundation lifecycle\.md \(agents\) is missing required DeepSeek daemon restart policy pattern') $valTamper1.Output
+    $docTamper1 = Invoke-Doctor -Root $root
+    Assert-Condition 'S14 doctor rejects tampered lifecycle mirror hash' ($docTamper1.ExitCode -ne 0 -and $docTamper1.Output -match '\[FAIL\]\s+Managed artifact') $docTamper1.Output
+
+    # Tamper 2: Add non-trigger carve-out to installed antigravity 1 lifecycle mirror
+    Copy-Item -LiteralPath $sourceLifecycle -Destination $installedLifecycleAgents -Force
+    $installedLifecycleAg1 = Join-Path (Get-AntigravityHome $root) 'antigravity\skills\mcp-foundation\references\lifecycle.md'
+    $tamperNonTrigger = $canonicalLifecycleContent + $nl + 'May trigger on AntigravityProcessError when the subagent fails.'
+    Write-FixtureFile -Path $installedLifecycleAg1 -Content $tamperNonTrigger
+    $valTamper2 = Invoke-Validate -Root $root
+    Assert-Condition 'S14 validation rejects installed antigravity 1 lifecycle mirror with non-trigger carve-out' ($valTamper2.ExitCode -ne 0 -and $valTamper2.Output -match 'permits restarting on non-trigger conditions') $valTamper2.Output
+    $docTamper2 = Invoke-Doctor -Root $root
+    Assert-Condition 'S14 doctor rejects tampered antigravity 1 lifecycle mirror' ($docTamper2.ExitCode -ne 0 -and $docTamper2.Output -match '\[FAIL\]\s+Managed artifact') $docTamper2.Output
+
+    # Tamper 3: Change endpoint to /v1/health in installed antigravity 2 lifecycle mirror
+    Copy-Item -LiteralPath $sourceLifecycle -Destination $installedLifecycleAg1 -Force
+    $installedLifecycleAg2 = Join-Path (Get-AntigravityHome $root) 'config\skills\mcp-foundation\references\lifecycle.md'
+    $tamperV1 = $canonicalLifecycleContent.Replace('/health', '/v1/health')
+    Write-FixtureFile -Path $installedLifecycleAg2 -Content $tamperV1
+    $valTamper3 = Invoke-Validate -Root $root
+    Assert-Condition 'S14 validation rejects installed antigravity 2 lifecycle mirror with /v1/health' ($valTamper3.ExitCode -ne 0 -and $valTamper3.Output -match 'contains forbidden endpoint /v1/health') $valTamper3.Output
+
+    # Tamper 4: Remove DeepSeek daemon restart exception from installed mcp-foundation SKILL.md
+    Copy-Item -LiteralPath $sourceLifecycle -Destination $installedLifecycleAg2 -Force
+    $installedSkillAgents = Join-Path (Get-AgentsHome $root) 'skills\mcp-foundation\SKILL.md'
+    $canonicalSkillContent = Get-Content -LiteralPath $sourceSkill -Raw -Encoding UTF8
+    $tamperSkill = $canonicalSkillContent.Replace('DeepSeek Daemon Restart Exception', 'Generic Restart Exception')
+    Write-FixtureFile -Path $installedSkillAgents -Content $tamperSkill
+    $valTamper4 = Invoke-Validate -Root $root
+    Assert-Condition 'S14 validation rejects installed skill mirror missing DeepSeek restart exception' ($valTamper4.ExitCode -ne 0 -and $valTamper4.Output -match 'installed mcp-foundation SKILL\.md \(agents\) is missing required DeepSeek daemon restart policy pattern') $valTamper4.Output
+
+    # Tamper 5: Remove DeepSeek daemon restart policy from installed AGENTS.md
+    Copy-Item -LiteralPath $sourceSkill -Destination $installedSkillAgents -Force
+    $installedAgentsPath = Join-Path (Get-CodexHome $root) 'AGENTS.md'
+    $canonicalAgentsContent = Get-Content -LiteralPath $installedAgentsPath -Raw -Encoding UTF8
+    $tamperAgents = $canonicalAgentsContent.Replace('daemon DeepSeek', 'daemon Generic').Replace('dist/cli.js restart', 'custom restart')
+    Write-FixtureFile -Path $installedAgentsPath -Content $tamperAgents
+    $valTamper5 = Invoke-Validate -Root $root
+    Assert-Condition 'S14 validation rejects installed AGENTS.md missing DeepSeek restart policy' ($valTamper5.ExitCode -ne 0 -and $valTamper5.Output -match 'installed AGENTS\.md is missing required DeepSeek daemon restart policy pattern') $valTamper5.Output
+
+    # Tamper 6: Add /v1/health to installed GEMINI.md
+    Write-FixtureFile -Path $installedAgentsPath -Content $canonicalAgentsContent
+    $installedGeminiPath = Join-Path (Get-AntigravityHome $root) 'config\GEMINI.md'
+    $canonicalGeminiContent = Get-Content -LiteralPath $installedGeminiPath -Raw -Encoding UTF8
+    $tamperGemini = $canonicalGeminiContent.Replace('/health', '/v1/health')
+    Write-FixtureFile -Path $installedGeminiPath -Content $tamperGemini
+    $valTamper6 = Invoke-Validate -Root $root
+    Assert-Condition 'S14 validation rejects installed GEMINI.md with /v1/health' ($valTamper6.ExitCode -ne 0 -and $valTamper6.Output -match 'installed GEMINI\.md contains forbidden endpoint /v1/health') $valTamper6.Output
+
+    # Missing mirror test: delete installed lifecycle.md in agents home
+    Write-FixtureFile -Path $installedGeminiPath -Content $canonicalGeminiContent
+    Remove-Item -LiteralPath $installedLifecycleAgents -Force
+    $valMissing = Invoke-Validate -Root $root
+    Assert-Condition 'S14 validation fails-closed when an installed policy mirror is missing' ($valMissing.ExitCode -ne 0 -and ($valMissing.Output -match '(?:Required file is missing|Installed.*missing)')) $valMissing.Output
+    $docMissing = Invoke-Doctor -Root $root
+    Assert-Condition 'S14 doctor detects missing installed mirror' ($docMissing.ExitCode -ne 0 -and $docMissing.Output -match '\[FAIL\]\s+Managed artifact:\s+Missing') $docMissing.Output
+
+    # Healing test: reinstall restores all mirrors and passes validation & doctor
+    Invoke-SafeInstall -Root $root
+    $valHealed = Invoke-Validate -Root $root
+    Assert-Condition 'S14 reinstall heals all mirrors and passes post-install validation' ($valHealed.ExitCode -eq 0 -and $valHealed.Output -match 'Validation OK') $valHealed.Output
+    $docHealed = Invoke-Doctor -Root $root
+    Assert-Condition 'S14 reinstall heals all mirrors and passes doctor' ($docHealed.ExitCode -eq 0 -and $docHealed.Output -match '\[OK\]\s+Installed contract') $docHealed.Output
+
+    # Uninstall test
+    Invoke-SafeUninstall -Root $root
+    Assert-Condition 'S14 state is removed after uninstall' (-not (Test-StateExists $root)) ''
 }
 finally {
     foreach ($fixture in $fixtures) {
