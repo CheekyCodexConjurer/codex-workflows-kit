@@ -130,6 +130,81 @@ function Invoke-Validate {
     }
 }
 
+function Invoke-BackendSwitch {
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [Parameter(Mandatory)][ValidateSet('native', 'deepseek')][string]$Backend
+    )
+
+    $switchScript = Join-Path $repo 'scripts\switch-subagent-backend.ps1'
+    $output = & pwsh -NoProfile -File $switchScript -Backend $Backend -CodexHome (Get-CodexHome $Root) 2>&1
+    $exitCode = $LASTEXITCODE
+    return [pscustomobject]@{
+        ExitCode = $exitCode
+        Output = ($output | ForEach-Object { $_.ToString() }) -join [Environment]::NewLine
+    }
+}
+
+function Get-SwitchHosts {
+    $hosts = New-Object System.Collections.Generic.List[object]
+    foreach ($name in @('pwsh.exe', 'powershell.exe')) {
+        $command = Get-Command -Name $name -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($null -ne $command) {
+            $hosts.Add([pscustomobject]@{
+                    Name = if ($name -ceq 'powershell.exe') { 'Windows PowerShell 5.1' } else { 'PowerShell Core' }
+                    Path = [string]$command.Source
+                })
+        }
+    }
+    if ($hosts.Count -lt 2) {
+        throw 'Host regression requires both pwsh.exe and powershell.exe; no host may be silently skipped.'
+    }
+    return @($hosts.ToArray())
+}
+
+function Invoke-BackendSwitchWithHost {
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [Parameter(Mandatory)][ValidateSet('native', 'deepseek')][string]$Backend,
+        [Parameter(Mandatory)][object]$HostInfo
+    )
+
+    $switchScript = Join-Path $repo 'scripts\switch-subagent-backend.ps1'
+    $output = & $HostInfo.Path -NoProfile -File $switchScript -Backend $Backend -CodexHome (Get-CodexHome $Root) 2>&1
+    $exitCode = $LASTEXITCODE
+    return [pscustomobject]@{
+        ExitCode = $exitCode
+        Output = ($output | ForEach-Object { $_.ToString() }) -join [Environment]::NewLine
+    }
+}
+
+function Get-TomlTableBody {
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Text,
+        [Parameter(Mandatory)][string]$Table
+    )
+
+    $normalized = $Text -replace '\r\n', "`n"
+    $escaped = [regex]::Escape($Table)
+    $pattern = '(?ms)^[ \t]*\[' + $escaped + '\][ \t]*(?:#.*)?\n(?<body>.*?)(?=^[ \t]*\[[^\[\]]+\][ \t]*(?:#.*)?$|\z)'
+    $match = [regex]::Match($normalized, $pattern)
+    if (-not $match.Success) {
+        return ''
+    }
+    return $match.Groups['body'].Value
+}
+
+function Get-TomlTableKeyCount {
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Text,
+        [Parameter(Mandatory)][string]$Table,
+        [Parameter(Mandatory)][string]$Key
+    )
+
+    $body = Get-TomlTableBody -Text $Text -Table $Table
+    return @([regex]::Matches($body, '(?m)^[ \t]*' + [regex]::Escape($Key) + '[ \t]*=')).Count
+}
+
 function Get-FeatureHeaderCount {
     param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
 
@@ -817,6 +892,216 @@ multi_agent = true
     # Uninstall test
     Invoke-SafeUninstall -Root $root
     Assert-Condition 'S14 state is removed after uninstall' (-not (Test-StateExists $root)) ''
+
+    $scenario = 15
+    Write-Host 'Scenario 15: native switch creates the exact matrix from missing tables' -ForegroundColor Cyan
+    $root = New-FixtureHome
+    $fixtures.Add($root)
+    $originalNativeFixture = 'model = "top-level-model"
+reasoning_effort = "top-level-reasoning"
+service_tier = "default"
+
+[mcp_servers.sample]
+command = "sample"
+'
+    Write-FixtureFile -Path (Join-Path (Get-CodexHome $root) 'config.toml') -Content $originalNativeFixture
+
+    $nativeResult = Invoke-BackendSwitch -Root $root -Backend native
+    $nativeConfig = Read-Config $root
+    Assert-Condition 'S15 native switch succeeds' ($nativeResult.ExitCode -eq 0) $nativeResult.Output
+    Assert-Condition 'S15 reports selected backend and running-task boundary' ($nativeResult.Output -match '(?i)native' -and $nativeResult.Output -match '(?i)already-running|already running|running tasks.*unchanged') $nativeResult.Output
+    Assert-Condition 'S15 enables native multi-agent matrix' ((Get-MultiAgentValue $nativeConfig) -ceq 'true') $nativeConfig
+    Assert-Condition 'S15 explicitly disables fast mode' ($nativeConfig -match '(?m)^\s*fast_mode\s*=\s*false\s*(?:#.*)?$') $nativeConfig
+    Assert-Condition 'S15 pins native model and max reasoning' ($nativeConfig -match '(?m)^\s*default_subagent_model\s*=\s*"gpt-5\.6-luna"\s*(?:#.*)?$' -and $nativeConfig -match '(?m)^\s*default_subagent_reasoning_effort\s*=\s*"max"\s*(?:#.*)?$') $nativeConfig
+    Assert-Condition 'S15 disables the DeepSeek MCP without deleting its table' ($nativeConfig -match '(?ms)\[mcp_servers\.deepseek-subagent\].*?enabled\s*=\s*false' -and $nativeConfig -match '(?ms)\[mcp_servers\.sample\].*?command\s*=\s*"sample"') $nativeConfig
+    Assert-Condition 'S15 preserves top-level model/reasoning/service tier and unrelated MCP' ($nativeConfig -match 'model = "top-level-model"' -and $nativeConfig -match 'reasoning_effort = "top-level-reasoning"' -and $nativeConfig -match 'service_tier = "default"' -and $nativeConfig -match 'command = "sample"') $nativeConfig
+
+    $scenario = 16
+    Write-Host 'Scenario 16: backend toggles are reversible, idempotent, and retain captured prior values' -ForegroundColor Cyan
+    $root = New-FixtureHome
+    $fixtures.Add($root)
+    $originalToggleFixture = '[features]
+multi_agent = false
+fast_mode = true
+js_repl = false
+
+[agents]
+default_subagent_model = "user-model"
+default_subagent_reasoning_effort = "high"
+max_concurrent_threads_per_session = 3
+
+[mcp_servers.deepseek-subagent]
+command = "bridge-command"
+args = ["--route", "user-route"]
+enabled = true
+
+[mcp_servers.sample]
+command = "sample"
+'
+    Write-FixtureFile -Path (Join-Path (Get-CodexHome $root) 'config.toml') -Content $originalToggleFixture
+
+    $deepseekFirst = Invoke-BackendSwitch -Root $root -Backend deepseek
+    $deepseekConfig = Read-Config $root
+    Assert-Condition 'S16 first DeepSeek selection succeeds' ($deepseekFirst.ExitCode -eq 0 -and $deepseekConfig -match '(?m)^\s*multi_agent\s*=\s*false\s*$') $deepseekFirst.Output
+    $nativeFirst = Invoke-BackendSwitch -Root $root -Backend native
+    $nativeConfig16 = Read-Config $root
+    Assert-Condition 'S16 native selection succeeds after DeepSeek' ($nativeFirst.ExitCode -eq 0 -and $nativeConfig16 -match '(?m)^\s*multi_agent\s*=\s*true\s*$') $nativeFirst.Output
+    $nativeBytes16 = $nativeConfig16
+    $nativeSecond = Invoke-BackendSwitch -Root $root -Backend native
+    Assert-Condition 'S16 repeated native selection is byte-identical' ($nativeSecond.ExitCode -eq 0 -and (Read-Config $root) -ceq $nativeBytes16) $nativeSecond.Output
+
+    $deepseekSecond = Invoke-BackendSwitch -Root $root -Backend deepseek
+    $restoredConfig16 = Read-Config $root
+    $expectedToggleConfig = $originalToggleFixture -replace "`r?`n", "`r`n"
+    Assert-Condition 'S16 DeepSeek restores all captured prior values' ($deepseekSecond.ExitCode -eq 0 -and $restoredConfig16 -ceq $expectedToggleConfig) $restoredConfig16
+    $deepseekBytes16 = $restoredConfig16
+    $deepseekThird = Invoke-BackendSwitch -Root $root -Backend deepseek
+    Assert-Condition 'S16 repeated DeepSeek selection is byte-identical' ($deepseekThird.ExitCode -eq 0 -and (Read-Config $root) -ceq $deepseekBytes16) $deepseekThird.Output
+    $state16 = Get-InstallState $root
+    Assert-Condition 'S16 state retains one captured prior record per managed key' ($null -ne $state16 -and $state16.PSObject.Properties.Name -contains 'codexBackend' -and @($state16.codexBackend.prior).Count -eq 5) ''
+
+    $scenario = 17
+    Write-Host 'Scenario 17: schema-4 migration, safe reinstall preservation, and uninstall restoration' -ForegroundColor Cyan
+    $root = New-FixtureHome
+    $fixtures.Add($root)
+    $originalInstallFixture = '[features]
+multi_agent = false
+fast_mode = true
+
+[agents]
+default_subagent_model = "preinstall-model"
+default_subagent_reasoning_effort = "high"
+
+[mcp_servers.deepseek-subagent]
+command = "preinstall-bridge"
+enabled = true
+'
+    Write-FixtureFile -Path (Join-Path (Get-CodexHome $root) 'config.toml') -Content $originalInstallFixture
+    Invoke-SafeInstall -Root $root
+    $stateBeforeSwitch17 = Get-InstallState $root
+    Assert-Condition 'S17 starts from a schema-4 safe install without a selector' ($null -ne $stateBeforeSwitch17 -and [int]$stateBeforeSwitch17.schemaVersion -eq 4) ''
+
+    $native17 = Invoke-BackendSwitch -Root $root -Backend native
+    $nativeConfig17 = Read-Config $root
+    $stateAfterSwitch17 = Get-InstallState $root
+    Assert-Condition 'S17 native switch migrates the existing schema-4 state' ($native17.ExitCode -eq 0 -and $null -ne $stateAfterSwitch17.codexBackend -and [int]$stateAfterSwitch17.schemaVersion -eq 4) $native17.Output
+    Assert-Condition 'S17 native matrix is active before reinstall' ($nativeConfig17 -match '(?m)^\s*multi_agent\s*=\s*true\s*$' -and $nativeConfig17 -match '(?m)^\s*fast_mode\s*=\s*false\s*$') $nativeConfig17
+
+    Invoke-SafeInstall -Root $root
+    $nativeAfterReinstall17 = Read-Config $root
+    $stateAfterReinstall17 = Get-InstallState $root
+    Assert-Condition 'S17 safe reinstall preserves the selected native backend' ($nativeAfterReinstall17 -match '(?m)^\s*multi_agent\s*=\s*true\s*$' -and $nativeAfterReinstall17 -match '(?m)^\s*fast_mode\s*=\s*false\s*$' -and $nativeAfterReinstall17 -match '(?m)^\s*default_subagent_model\s*=\s*"gpt-5\.6-luna"\s*$' -and [string]$stateAfterReinstall17.codexBackend.selected -ceq 'native') $nativeAfterReinstall17
+
+    $deepseek17 = Invoke-BackendSwitch -Root $root -Backend deepseek
+    Assert-Condition 'S17 deepseek switch succeeds after reinstall' ($deepseek17.ExitCode -eq 0 -and (Read-Config $root) -match '(?m)^\s*multi_agent\s*=\s*false\s*$') $deepseek17.Output
+    Invoke-SafeUninstall -Root $root
+    $restoredAfterUninstall17 = Read-Config $root
+    $expectedInstallConfig17 = $originalInstallFixture -replace "`r?`n", "`r`n"
+    Assert-Condition 'S17 uninstall restores every captured prior value' ($restoredAfterUninstall17 -ceq $expectedInstallConfig17) $restoredAfterUninstall17
+
+    $scenario = 18
+    Write-Host 'Scenario 18: drift, tamper, doctor, and validator fail closed for both backends' -ForegroundColor Cyan
+    $root = New-FixtureHome
+    $fixtures.Add($root)
+    $originalSafetyFixture = '[features]
+multi_agent = false
+fast_mode = true
+
+[agents]
+default_subagent_model = "safe-model"
+default_subagent_reasoning_effort = "high"
+
+[mcp_servers.deepseek-subagent]
+command = "safe-bridge"
+enabled = true
+'
+    Write-FixtureFile -Path (Join-Path (Get-CodexHome $root) 'config.toml') -Content $originalSafetyFixture
+    Invoke-SafeInstall -Root $root
+    $nativeSafety = Invoke-BackendSwitch -Root $root -Backend native
+    Assert-Condition 'S18 native switch succeeds before safety checks' ($nativeSafety.ExitCode -eq 0) $nativeSafety.Output
+
+    $configPath18 = Join-Path (Get-CodexHome $root) 'config.toml'
+    $nativeTampered = (Read-Config $root).Replace('default_subagent_model = "gpt-5.6-luna"', 'default_subagent_model = "user-tampered-model"')
+    Write-FixtureFile -Path $configPath18 -Content $nativeTampered
+    $driftResult18 = Invoke-BackendSwitch -Root $root -Backend deepseek
+    Assert-Condition 'S18 user config drift blocks switching' ($driftResult18.ExitCode -ne 0 -and $driftResult18.Output -match '(?i)drift') $driftResult18.Output
+    Assert-Condition 'S18 drift block leaves config untouched' ((Read-Config $root) -ceq $nativeTampered) ''
+
+    Write-FixtureFile -Path $configPath18 -Content (Read-Config $root).Replace('user-tampered-model', 'gpt-5.6-luna')
+    $statePath18 = Join-Path (Get-CodexHome $root) 'codex-workflows-kit\install-state.json'
+    $tamperedState18 = Get-InstallState $root
+    $tamperedState18.codexBackend.selected = 'deepseek'
+    Write-FixtureFile -Path $statePath18 -Content (($tamperedState18 | ConvertTo-Json -Depth 8) + $nl)
+    $inconsistentResult18 = Invoke-BackendSwitch -Root $root -Backend native
+    Assert-Condition 'S18 inconsistent selected matrix blocks switching' ($inconsistentResult18.ExitCode -ne 0 -and $inconsistentResult18.Output -match '(?i)inconsistent|matrix') $inconsistentResult18.Output
+
+    Write-FixtureFile -Path $statePath18 -Content ((Get-InstallState $root | ForEach-Object { $_.codexBackend.selected = 'native'; $_ }) | ConvertTo-Json -Depth 8)
+    $doctorNative18 = Invoke-Doctor -Root $root
+    $validateNative18 = Invoke-Validate -Root $root
+    Assert-Condition 'S18 doctor reports the native backend matrix' ($doctorNative18.ExitCode -eq 0 -and $doctorNative18.Output -match '(?i)Backend.*native' -and $doctorNative18.Output -match '(?i)matrix') $doctorNative18.Output
+    Assert-Condition 'S18 validator reports the native backend matrix' ($validateNative18.ExitCode -eq 0 -and $validateNative18.Output -match '(?i)native' -and $validateNative18.Output -match 'Validation OK') $validateNative18.Output
+
+    $deepseekSafety = Invoke-BackendSwitch -Root $root -Backend deepseek
+    $doctorDeepseek18 = Invoke-Doctor -Root $root
+    $validateDeepseek18 = Invoke-Validate -Root $root
+    Assert-Condition 'S18 doctor reports the DeepSeek backend matrix' ($deepseekSafety.ExitCode -eq 0 -and $doctorDeepseek18.ExitCode -eq 0 -and $doctorDeepseek18.Output -match '(?i)Backend.*deepseek' -and $doctorDeepseek18.Output -match '(?i)matrix') $doctorDeepseek18.Output
+    Assert-Condition 'S18 validator reports the DeepSeek backend matrix' ($validateDeepseek18.ExitCode -eq 0 -and $validateDeepseek18.Output -match '(?i)deepseek' -and $validateDeepseek18.Output -match 'Validation OK') $validateDeepseek18.Output
+
+    $scenario = 19
+    Write-Host 'Scenario 19: public switch regression across PowerShell hosts and multi-table ranges' -ForegroundColor Cyan
+    foreach ($hostInfo in (Get-SwitchHosts)) {
+        $root = New-FixtureHome
+        $fixtures.Add($root)
+        $hostLabel = $hostInfo.Name
+        $originalHostFixture = 'model = "top-level-model"
+reasoning_effort = "top-level-reasoning"
+service_tier = "default"
+
+[features]
+multi_agent = false
+fast_mode = true
+js_repl = false
+
+[agents]
+default_subagent_model = "prior-model"
+default_subagent_reasoning_effort = "high"
+max_concurrent_threads_per_session = 3
+
+[mcp_servers.deepseek-subagent]
+command = "prior-bridge"
+args = ["--route", "prior-route"]
+enabled = true
+'
+        Write-FixtureFile -Path (Join-Path (Get-CodexHome $root) 'config.toml') -Content $originalHostFixture
+
+        $nativeHostFirst = Invoke-BackendSwitchWithHost -Root $root -Backend native -HostInfo $hostInfo
+        $nativeHostConfig = Read-Config $root
+        $featuresHostBody = Get-TomlTableBody -Text $nativeHostConfig -Table 'features'
+        $agentsHostBody = Get-TomlTableBody -Text $nativeHostConfig -Table 'agents'
+        $deepseekHostBody = Get-TomlTableBody -Text $nativeHostConfig -Table 'mcp_servers.deepseek-subagent'
+        $nativeExact = $nativeHostFirst.ExitCode -eq 0 -and
+            (Get-TomlTableKeyCount -Text $nativeHostConfig -Table 'features' -Key 'multi_agent') -eq 1 -and $featuresHostBody -match '(?m)^\s*multi_agent\s*=\s*true\s*$' -and
+            (Get-TomlTableKeyCount -Text $nativeHostConfig -Table 'features' -Key 'fast_mode') -eq 1 -and $featuresHostBody -match '(?m)^\s*fast_mode\s*=\s*false\s*$' -and
+            (Get-TomlTableKeyCount -Text $nativeHostConfig -Table 'agents' -Key 'default_subagent_model') -eq 1 -and $agentsHostBody -match '(?m)^\s*default_subagent_model\s*=\s*"gpt-5\.6-luna"\s*$' -and
+            (Get-TomlTableKeyCount -Text $nativeHostConfig -Table 'agents' -Key 'default_subagent_reasoning_effort') -eq 1 -and $agentsHostBody -match '(?m)^\s*default_subagent_reasoning_effort\s*=\s*"max"\s*$' -and
+            (Get-TomlTableKeyCount -Text $nativeHostConfig -Table 'mcp_servers.deepseek-subagent' -Key 'enabled') -eq 1 -and $deepseekHostBody -match '(?m)^\s*enabled\s*=\s*false\s*$'
+        Assert-Condition "S19 $hostLabel first native switch has exact five-key matrix and one managed key each" $nativeExact $nativeHostFirst.Output
+        Assert-Condition "S19 $hostLabel retains the DeepSeek MCP table and unrelated values" ($deepseekHostBody -match '(?m)^\s*command\s*=\s*"prior-bridge"\s*$' -and $nativeHostConfig -match 'model = "top-level-model"' -and $nativeHostConfig -match 'service_tier = "default"') $nativeHostConfig
+
+        $nativeHostBytes = $nativeHostConfig
+        $nativeHostSecond = Invoke-BackendSwitchWithHost -Root $root -Backend native -HostInfo $hostInfo
+        Assert-Condition "S19 $hostLabel immediate native rerun succeeds and is byte-idempotent" ($nativeHostSecond.ExitCode -eq 0 -and (Read-Config $root) -ceq $nativeHostBytes) $nativeHostSecond.Output
+
+        $deepseekHostFirst = Invoke-BackendSwitchWithHost -Root $root -Backend deepseek -HostInfo $hostInfo
+        $restoredHostConfig = Read-Config $root
+        $expectedHostConfig = $originalHostFixture -replace "`r?`n", "`r`n"
+        $restoreDetail = if ($restoredHostConfig -ceq $expectedHostConfig) { $deepseekHostFirst.Output } else { "actualLength=$($restoredHostConfig.Length), expectedLength=$($expectedHostConfig.Length), actualTail=$($restoredHostConfig.Substring([Math]::Max(0, $restoredHostConfig.Length - 40))), expectedTail=$($expectedHostConfig.Substring([Math]::Max(0, $expectedHostConfig.Length - 40)))" }
+        Assert-Condition "S19 $hostLabel DeepSeek restores exact prior values and presence" ($deepseekHostFirst.ExitCode -eq 0 -and $restoredHostConfig -ceq $expectedHostConfig) $restoreDetail
+
+        $deepseekHostBytes = $restoredHostConfig
+        $deepseekHostSecond = Invoke-BackendSwitchWithHost -Root $root -Backend deepseek -HostInfo $hostInfo
+        Assert-Condition "S19 $hostLabel repeated DeepSeek rerun succeeds and is byte-idempotent" ($deepseekHostSecond.ExitCode -eq 0 -and (Read-Config $root) -ceq $deepseekHostBytes) $deepseekHostSecond.Output
+    }
 }
 finally {
     foreach ($fixture in $fixtures) {

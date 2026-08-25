@@ -10,6 +10,8 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $nl = [Environment]::NewLine
+$repo = [IO.Path]::GetFullPath((Split-Path -Parent (Split-Path -Parent $PSCommandPath)))
+Import-Module (Join-Path $repo 'scripts\backend-routing.psm1') -Force
 
 function Confirm-UninstallAction {
     param(
@@ -138,6 +140,9 @@ function Assert-InstallState {
         }
         if (-not [bool]$featureRecord.present -and $null -ne $featureRecord.value) {
             throw 'Schema 4 install state has an absent multi_agent record with a value.'
+        }
+        if ($State.PSObject.Properties.Name -contains 'codexBackend') {
+            Assert-CodexBackendState -BackendState $State.codexBackend
         }
     }
 
@@ -410,6 +415,37 @@ function Remove-ManagedConfigBlocks {
     }
 }
 
+function Restore-BackendManagedConfig {
+    if (-not ($state.PSObject.Properties.Name -contains 'codexBackend')) {
+        return
+    }
+    Assert-CodexBackendState -BackendState $state.codexBackend
+    if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) {
+        return
+    }
+
+    $fullConfigPath = [IO.Path]::GetFullPath($configPath)
+    $allowWrite = $script:ConfigModified -or $Force
+    if (-not $allowWrite -and $script:StateEntries.ContainsKey($fullConfigPath)) {
+        $allowWrite = (Get-RequiredFileHash -Path $configPath) -eq [string]$script:StateEntries[$fullConfigPath].sha256
+    }
+    if (-not $allowWrite) {
+        $script:Skipped = $true
+        Write-Warning "Backend configuration was modified; leaving native/deepseek managed values as-is: $configPath"
+        return
+    }
+
+    $existing = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8
+    $restored = Restore-CodexBackendConfigText -Text $existing -BackendState $state.codexBackend
+    if ($restored -cne $existing -and (Confirm-UninstallAction -Target $configPath -Action 'restore prior backend configuration values')) {
+        if ($Force) {
+            Backup-ForcedFile -Path $configPath
+        }
+        Write-Utf8NoBom -Path $configPath -Content $restored
+        $script:ConfigModified = $true
+    }
+}
+
 function Test-TomlTableHeader {
     param([AllowEmptyString()][string]$Line)
 
@@ -527,7 +563,10 @@ Remove-ManagedConfigBlocks
 Remove-ManagedAgentsBlock
 Remove-ManagedGeminiBlock
 
-if ($stateSchema -ge 4 -and ($state.PSObject.Properties.Name -contains 'codexFeaturesPrior')) {
+if ($stateSchema -ge 4 -and ($state.PSObject.Properties.Name -contains 'codexBackend')) {
+    Restore-BackendManagedConfig
+}
+elseif ($stateSchema -ge 4 -and ($state.PSObject.Properties.Name -contains 'codexFeaturesPrior')) {
     $fullConfigPath = [IO.Path]::GetFullPath($configPath)
     $isTracked = $script:StateEntries.ContainsKey($fullConfigPath)
     if ($isTracked -or $script:ConfigModified) {

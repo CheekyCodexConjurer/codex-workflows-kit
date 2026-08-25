@@ -17,6 +17,8 @@ $ErrorActionPreference = 'Stop'
 $nl = [Environment]::NewLine
 
 $repo = [IO.Path]::GetFullPath((Split-Path -Parent (Split-Path -Parent $PSCommandPath)))
+$backendRoutingModule = Join-Path $repo 'scripts\backend-routing.psm1'
+Import-Module $backendRoutingModule -Force
 
 function Confirm-InstallAction {
     param(
@@ -147,6 +149,7 @@ $script:PriorPaths = New-Object System.Collections.Generic.List[string]
 $script:PendingFiles = @{}
 $script:RemovedParents = New-Object System.Collections.Generic.List[string]
 $script:PriorFeaturesRecord = $null
+$script:PriorBackendState = $null
 $script:FeaturesGateApplied = $false
 $script:FeaturesPrior = [ordered]@{ present = $false; value = $null }
 $script:ConfigModified = $false
@@ -204,6 +207,9 @@ function Assert-InstallState {
         if (-not [bool]$featureRecord.present -and $null -ne $featureRecord.value) {
             throw 'Schema 4 install state has an absent multi_agent record with a value.'
         }
+        if ($State.PSObject.Properties.Name -contains 'codexBackend') {
+            Assert-CodexBackendState -BackendState $State.codexBackend
+        }
     }
 
     $seenPaths = @{}
@@ -259,6 +265,17 @@ function Initialize-PriorState {
         }
         if ($schema -eq 4 -and ($state.PSObject.Properties.Name -contains 'codexFeaturesPrior')) {
             $script:PriorFeaturesRecord = $state.codexFeaturesPrior
+        }
+        if ($schema -eq 4 -and ($state.PSObject.Properties.Name -contains 'codexBackend')) {
+            Assert-CodexBackendState -BackendState $state.codexBackend
+            $script:PriorBackendState = $state.codexBackend
+            $configFullPath = [IO.Path]::GetFullPath($configPath)
+            if ($script:PriorHashes.ContainsKey($configFullPath) -and (Test-Path -LiteralPath $configPath -PathType Leaf)) {
+                $actualConfigHash = Get-BackendFileHash -Path $configPath
+                if ($actualConfigHash -cne [string]$script:PriorHashes[$configFullPath]) {
+                    throw "Backend configuration drift detected; safe install is blocked until $configPath is reviewed."
+                }
+            }
         }
     }
     catch {
@@ -637,7 +654,13 @@ function Install-SafeConfig {
     }
 
     $content = Remove-KitBlocks -Text $existing
-    $content = Set-FeaturesMultiAgentGate -Text $content
+    if ($null -ne $script:PriorBackendState) {
+        $content = Set-CodexBackendConfigText -Text $content -Backend ([string]$script:PriorBackendState.selected) -BackendState $script:PriorBackendState
+        $script:FeaturesGateApplied = $true
+    }
+    else {
+        $content = Set-FeaturesMultiAgentGate -Text $content
+    }
 
     Install-ManagedContent -Destination $configPath -Content ($content.Trim() + $nl)
 }
@@ -883,6 +906,9 @@ function Save-InstallState {
         files = $entries
         pendingFiles = $pendingEntries
         codexFeaturesPrior = $featuresPrior
+    }
+    if ($null -ne $script:PriorBackendState) {
+        $state.codexBackend = $script:PriorBackendState
     }
 
     Install-ManagedContent -Destination $statePath -Content (($state | ConvertTo-Json -Depth 5) + $nl)

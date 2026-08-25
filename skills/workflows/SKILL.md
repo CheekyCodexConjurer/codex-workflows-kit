@@ -1,6 +1,6 @@
 ---
 name: workflows
-description: Canonical `$workflows` router: lifecycle, MCP tool semantics, mode contract, and final audit.
+description: Canonical `$workflows` router: backend-aware lifecycle, MCP/native tool semantics, mode contract, and final audit.
 ---
 
 # Workflows
@@ -21,15 +21,23 @@ selected mode or an open gate requires it.
   series; never push.
 - Material current, external, or high-impact claims use the `evidence-first`
   skill.
+- The selected global backend matrix is authoritative for new Codex tasks and
+  sessions. An ambiguous or unavailable matrix blocks; there is no silent
+  model, provider, or route fallback.
 
 ## Division of work
 
 - The parent GPT is the brain, not the repository workforce: decompose,
   route, prioritize, synthesize, integrate, validate, and decide.
-- DeepSeek Sub-Agent MCP is the primary executor: every material bounded
-  front is delegated — read, research, write, test, and review work — one
-  agent per front, never duplicate a front, never repeat a delegated front
-  locally.
+- Native mode uses native Codex subagents for every material bounded front;
+  each native spawn passes `model="gpt-5.6-luna"` and
+  `reasoning_effort="max"` explicitly, states normal/default mode, and never
+  selects Flash/Fast.
+- DeepSeek mode uses `deepseek_spawn`/`deepseek_continue`/`deepseek_follow`
+  for every material bounded front — read, research, write, test, and review
+  work — one agent per front, never duplicate a front, never repeat a
+  delegated front locally. DeepSeek-specific daemon recovery is allowed only
+  in this selected mode and only under the MCP foundation exception.
 - The parent owns vision: inspect the image yourself and pass a concise
   `visual_context` to the delegated agent (direct observations, visible
   text, interpretation, uncertainty). Do not delegate blind image
@@ -60,30 +68,23 @@ FRAME -> FANOUT -> COLLECT -> ACT -> VERIFY -> REVIEW -> DONE
 - DONE: run the final audit and close the local commit series before the
   final response.
 
-## MCP tool semantics
+## Backend tool semantics
 
-- `deepseek_spawn`: open one independent front.
-- `deepseek_continue`: follow up the same front after a result, correction,
-  or review; never spawn a replacement for it. After a premature close with
-  a terminal result, a correction strictly within the same request/scope/cwd/
-  ownership/model route resumes automatically with `allow_respawn=true` — no
-  new consent prompt; recovery creates a new session/agent with lineage, never
-  a fake continuation of the original session, and never applies to running
-  jobs, missing final responses, explicitly aborted fronts, divergent
-  scope/cwd/ownership/model routes, or material changes beyond the original
-  request; provider fallback stays forbidden.
-- `deepseek_follow`: consume a result when a gate depends on it, or before
-  the final response for every still-needed job; normal close of a required
-  job.
-- `deepseek_consult`: exceptional snapshot of a running agent; never poll.
-- `deepseek_abort`: stop a front only when it is obsolete or the stop is
-  explicit; consume the obligation as `aborted`.
-- `deepseek_close`: retire an agent after its result is consumed; a write
-  front closes only after the independent review and the proven corrections,
-  and a premature close stays recoverable only through `deepseek_continue`
-  with `allow_respawn=true` as described above.
-- `deepseek_recover_result`: delivery recovery only; never re-open or re-run
-  a finished front.
+- In DeepSeek mode, `deepseek_spawn` opens one independent front;
+  `deepseek_continue` follows the same front after a result, correction, or
+  review; and `deepseek_follow` consumes a result when a gate depends on it.
+- In DeepSeek mode, `deepseek_consult` is an exceptional snapshot of a
+  running agent and never a poll; `deepseek_abort` is only for an obsolete or
+  explicitly stopped front; `deepseek_close` retires an agent after its result
+  is consumed; and `deepseek_recover_result` is delivery recovery only.
+- A DeepSeek correction after a premature close is limited to
+  `allow_respawn=true` for the same request/scope/cwd/ownership/model
+  route, with a new session/agent with lineage, no new consent prompt, and never a
+  fake continuation. A terminal result is required; never recover running
+  jobs, missing final responses, explicitly aborted fronts/jobs, divergent scope, or
+  material changes; provider fallback stays forbidden.
+- In native mode, use the native task lifecycle with the same completion,
+  review, and no-fallback rules; do not contact the DeepSeek MCP.
 
 ## Completion contract
 

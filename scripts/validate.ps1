@@ -11,6 +11,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $repo = [IO.Path]::GetFullPath((Split-Path -Parent (Split-Path -Parent $PSCommandPath)))
+Import-Module (Join-Path $repo 'scripts\backend-routing.psm1') -Force
 $defaultCodexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE '.codex' }
 $defaultAgentsHome = if ($env:AGENTS_HOME) { $env:AGENTS_HOME } else { Join-Path $env:USERPROFILE '.agents' }
 $defaultAntigravityHome = if ($env:ANTIGRAVITY_HOME) { $env:ANTIGRAVITY_HOME } else { Join-Path $env:USERPROFILE '.gemini' }
@@ -348,11 +349,11 @@ function Test-OrchestrationPolicy {
     $normalized = [regex]::Replace($Text, '\s+', ' ').Trim()
 
     $requiredPatterns = @(
-        '(?i)sem `?\$?workflows`?,? a delega[cç][aã]o continua usando o deepseek',
-        '(?i)mas n[aã]o [eé] condi[cç][aã]o para selecionar o mcp',
-        '(?i)mesmo quando o usu[aá]rio n[aã]o (?:menciona|pede|invoca)',
-        '(?i)trabalho material (?:de|em) leitura, investiga[cç][aã]o, teste, escrita e revis[aã]o [eé] delegado',
-        '(?i)delegado ao deepseek mcp por padr[aã]o',
+        '(?i)seletor global de backend.{0,100}autorit(?:[aá]rio|ativa|ativo)',
+        '(?i)matriz ausente,? inv[aá]lida ou inconsistente bloqueia.{0,80}fallback silencioso',
+        '(?i)native.{0,140}gpt-5\.6-luna.{0,100}reasoning_effort.{0,80}normal/default',
+        '(?i)deepseek.{0,100}deepseek_spawn.{0,100}deepseek_continue.{0,100}deepseek_follow',
+        '(?i)trabalho material passa pela rota do backend selecionado',
         '(?i)trabalho local do parent [eé] at[oóô]mico',
         '(?i)nunca refazer localmente uma frente material delegada',
         '(?i)consuma todo job aceito antes de um gate dependente ou da resposta final',
@@ -362,8 +363,6 @@ function Test-OrchestrationPolicy {
         '(?i)defeitos provados voltam [aáà] mesma frente',
         '(?i)feche s[oó] depois',
         '(?i)n[aã]o est[aá] terminado antes de revis[aã]o e corre[cç][oõ]es conclu[ií]das',
-        '(?i)exceto quando o usu[aá]rio pedir explicitamente sub-agentes nativos do codex',
-        '(?i)agentes de supervis[aã]o do sistema.{0,60}isentos',
         '(?i)a isen[cç][aã]o nunca autoriza o parent a invocar ferramentas nativas',
         '(?i)falha fechado',
         '(?i)visual_context',
@@ -463,15 +462,15 @@ function Assert-OrchestrationPolicySelfCheck {
         }
         [pscustomobject]@{
             Name = 'fail-closed behavior removed'
-            Text = (New-TamperedText -Text $normalized -Old 'e o parent falha fechado — inclusive quando os tools DeepSeek estão indisponíveis — em vez de outra rota silenciosa.')
+            Text = $normalized.Replace('falha fechado', 'rota aberta')
         }
         [pscustomobject]@{
             Name = 'user-mention default-delegation clause removed'
-            Text = (New-TamperedText -Text $normalized -Old 'e vale mesmo quando o usuário não menciona `$workflows`, sub-agentes ou delegação')
+            Text = (New-TamperedText -Text $normalized -Old 'O seletor global de backend é autoritativo' -New 'O seletor local')
         }
         [pscustomobject]@{
             Name = '$workflows made a condition for MCP selection'
-            Text = (New-TamperedText -Text $normalized -Old 'mas não é condição para selecionar o MCP' -New 'mas é condição para selecionar o MCP')
+            Text = (New-TamperedText -Text $normalized -Old 'matriz ausente, inválida ou inconsistente bloqueia' -New 'matriz ausente, inválida ou inconsistente permite')
         }
         [pscustomobject]@{
             Name = 'writer close-before-review exemption added'
@@ -846,6 +845,9 @@ function Assert-InstalledState {
         if (-not [bool]$featureRecord.present -and $null -ne $featureRecord.value) {
             throw 'Schema 4 installed state has an absent multi_agent record with a value.'
         }
+        if ($State.PSObject.Properties.Name -contains 'codexBackend') {
+            Assert-CodexBackendState -BackendState $State.codexBackend
+        }
     }
 
     $seenPaths = @{}
@@ -930,8 +932,6 @@ if (-not $implAutoRow.Success -or $implAutoRow.Value -notmatch '\| write \|') {
 Assert-Forbidden -Label 'workflow skill' -Text $skill -Tokens @(
     'AGENTS.md',
     'subagents=',
-    'backend',
-    'native',
     'sidecar',
     'read-only',
     'scout',
@@ -942,12 +942,6 @@ Assert-Forbidden -Label 'workflow skill' -Text $skill -Tokens @(
 )
 Assert-Forbidden -Label 'codex AGENTS.md' -Text $agentsText -Tokens @(
     'subagents=',
-    'backend',
-    'sidecar',
-    'read-only',
-    'FRAME',
-    'mode matrix',
-    'lifecycle',
     'scout',
     'researcher'
 )
@@ -1035,8 +1029,6 @@ $legacyTokens = @(
 )
 $contractTokens = @(
     'subagents=',
-    '\bnative\b',
-    '\bbackend\b',
     '\bsidecar\b'
 )
 foreach ($relativePath in @(git -C $repo ls-files)) {
@@ -1131,6 +1123,11 @@ if (-not $SkipInstalled) {
     if ([string]$state.profile -notin @('minimal', 'safe')) {
         throw "Installed state has an unsupported profile: $statePath"
     }
+    if ($state.PSObject.Properties.Name -contains 'codexBackend') {
+        $installedBackendText = Read-RequiredText (Join-Path $codexHome 'config.toml')
+        Assert-CodexBackendMatrix -Text $installedBackendText -Backend ([string]$state.codexBackend.selected) -BackendState $state.codexBackend | Out-Null
+        Write-Host ("Installed backend matrix: {0}" -f [string]$state.codexBackend.selected)
+    }
 
     $workflowsDest = Join-Path $agentsHome 'skills\workflows'
     $evidenceDest = Join-Path $agentsHome 'skills\evidence-first'
@@ -1160,7 +1157,9 @@ if (-not $SkipInstalled) {
 
     if ([string]$state.profile -eq 'safe') {
         Assert-NoManagedAgentsBlock -Path (Join-Path $codexHome 'config.toml')
-        Assert-FeaturesMultiAgentDisabled -Path (Join-Path $codexHome 'config.toml')
+        if (-not ($state.PSObject.Properties.Name -contains 'codexBackend')) {
+            Assert-FeaturesMultiAgentDisabled -Path (Join-Path $codexHome 'config.toml')
+        }
 
         $installedAgents = Read-RequiredText (Join-Path $codexHome 'AGENTS.md')
         Assert-OrchestrationPolicy -Label 'installed AGENTS.md' -Text $installedAgents

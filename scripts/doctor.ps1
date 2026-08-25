@@ -327,6 +327,7 @@ $CodexHome = Resolve-HomePath -Requested $CodexHome -Fallback $defaultCodexHome
 $AgentsHome = Resolve-HomePath -Requested $AgentsHome -Fallback $defaultAgentsHome
 $AntigravityHome = Resolve-HomePath -Requested $AntigravityHome -Fallback $defaultAntigravityHome
 $repoRoot = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
+Import-Module (Join-Path $repoRoot 'scripts\backend-routing.psm1') -Force
 $statePath = Join-Path $CodexHome 'codex-workflows-kit\install-state.json'
 $configPath = Join-Path $CodexHome 'config.toml'
 $agentsMdPath = Join-Path $CodexHome 'AGENTS.md'
@@ -374,6 +375,9 @@ if (Test-Path -LiteralPath $statePath -PathType Leaf) {
         else {
             Write-Check -Name 'Install profile' -Passed $false -Detail 'profile is missing from install state'
         }
+        if ($state.PSObject.Properties.Name -contains 'codexBackend') {
+            Assert-CodexBackendState -BackendState $state.codexBackend
+        }
     }
     catch {
         Write-Check -Name 'Install state' -Passed $false -Detail $_.Exception.Message
@@ -400,7 +404,22 @@ foreach ($path in $coreFiles) {
 if ($installedProfile -eq 'safe') {
     Write-Check -Name 'No managed agents defaults' -Passed (Test-NoManagedAgentsBlock -Path $configPath) -Detail $configPath
 
-    Write-Check -Name 'Multi-agent route disabled' -Passed (Test-FeaturesMultiAgentDisabled -Path $configPath) -Detail $configPath
+    if ($null -ne $state -and ($state.PSObject.Properties.Name -contains 'codexBackend')) {
+        try {
+            $selectedBackend = [string]$state.codexBackend.selected
+            $backendText = Read-SurfaceText -Path $configPath
+            Assert-CodexBackendMatrix -Text $backendText -Backend $selectedBackend -BackendState $state.codexBackend | Out-Null
+            Write-Check -Name 'Selected backend' -Passed $true -Detail $selectedBackend
+            Write-Check -Name 'Backend matrix' -Passed $true -Detail "Exact $selectedBackend matrix is active"
+        }
+        catch {
+            Write-Check -Name 'Selected backend' -Passed $false -Detail $_.Exception.Message
+            Write-Check -Name 'Backend matrix' -Passed $false -Detail $configPath
+        }
+    }
+    else {
+        Write-Check -Name 'Multi-agent route disabled' -Passed (Test-FeaturesMultiAgentDisabled -Path $configPath) -Detail $configPath
+    }
 
     $agentsMdContent = Read-SurfaceText -Path $agentsMdPath
     $managedBlockCount = @([regex]::Matches($agentsMdContent, '# BEGIN CODEX-WORKFLOWS-KIT')).Count
@@ -459,8 +478,6 @@ if ($null -ne $state) {
 
 $contractPatterns = @(
     [regex]::Escape($tokSubagentsEq),
-    ('\b' + $tokNative + '\b'),
-    ('\b' + $tokBackend + '\b'),
     ('\b' + $tokSidecar + '\b'),
     'read-only',
     'PromptPadNative',
@@ -652,7 +669,10 @@ if ($null -eq $currentMcp) {
 else {
     $mcStatus = Get-McpEntryStatus -Body $currentMcp.Body
     if ($mcStatus.Present) {
+        $enabledMatch = [regex]::Match([string]$currentMcp.Body, '(?m)^\s*enabled\s*=\s*(true|false)\s*(?:#.*)?$')
+        $enabledDetail = if ($enabledMatch.Success) { "; enabled=$($enabledMatch.Groups[1].Value)" } else { '; enabled=default' }
         $detail = if ([string]::IsNullOrWhiteSpace($mcStatus.Entry)) { 'Configured' } else { "Configured; entry script present: $($mcStatus.Entry)" }
+        $detail += $enabledDetail
         Write-Check -Name 'DeepSeek Sub-Agent MCP' -Passed $true -Detail $detail
     }
     else {
