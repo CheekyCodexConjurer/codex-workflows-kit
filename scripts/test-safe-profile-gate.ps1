@@ -93,25 +93,100 @@ function Invoke-SafeUninstall {
     & $uninstaller -CodexHome (Get-CodexHome $Root) -AgentsHome (Get-AgentsHome $Root) -AntigravityHome (Get-AntigravityHome $Root) *>&1 | Out-Host
 }
 
+function Normalize-CapturedOutput {
+    param(
+        [AllowEmptyString()][string]$Text = ''
+    )
+
+    if ([string]::IsNullOrEmpty($Text)) {
+        return ''
+    }
+
+    $unwrapped = $Text -replace '(?:\r\n|\r|\n)(?:\x1b\[[0-9;?]*[a-zA-Z])*?\x1b\[[0-9;]*[Hf]|\x1b\[[0-9;]*[Hf](?:\x1b\[[0-9;?]*[a-zA-Z])*?(?:\r\n|\r|\n)', ''
+    $stripped = $unwrapped -replace '\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\))', ''
+    return $stripped
+}
+
 function Invoke-ProcessCapture {
     param(
         [Parameter(Mandatory)][string]$FilePath,
         [Parameter(Mandatory)][string[]]$ArgumentList
     )
 
+    $resolvedPath = $FilePath
+    if (-not [IO.Path]::IsPathRooted($FilePath)) {
+        $cmd = Get-Command -Name $FilePath -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($null -ne $cmd -and -not [string]::IsNullOrEmpty($cmd.Source)) {
+            $resolvedPath = $cmd.Source
+        }
+    }
+
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $resolvedPath
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.CreateNoWindow = $true
+
+    if ($resolvedPath -like '*powershell.exe' -or $resolvedPath -like '*powershell') {
+        $machinePsModule = [Environment]::GetEnvironmentVariable('PSModulePath', 'Machine')
+        $userPsModule = [Environment]::GetEnvironmentVariable('PSModulePath', 'User')
+        $parts = New-Object System.Collections.Generic.List[string]
+        if (-not [string]::IsNullOrEmpty($userPsModule)) { $parts.Add($userPsModule) }
+        if (-not [string]::IsNullOrEmpty($machinePsModule)) { $parts.Add($machinePsModule) }
+        if ($parts.Count -gt 0) {
+            $psi.Environment['PSModulePath'] = ($parts -join [IO.Path]::PathSeparator)
+        }
+    }
+
+    foreach ($arg in $ArgumentList) {
+        $psi.ArgumentList.Add([string]$arg)
+    }
+
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $psi
+
     $prev = $ErrorActionPreference
     $prevGlobal = $global:ErrorActionPreference
     try {
         $ErrorActionPreference = 'Continue'
         $global:ErrorActionPreference = 'Continue'
-        $output = & $FilePath @ArgumentList 2>&1
-        $exitCode = $LASTEXITCODE
+
+        $null = $process.Start()
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+
+        $process.WaitForExit()
+        $stdout = $stdoutTask.GetAwaiter().GetResult()
+        $stderr = $stderrTask.GetAwaiter().GetResult()
+        $exitCode = $process.ExitCode
+
+        $rawOutput = if ([string]::IsNullOrEmpty($stdout)) {
+            $stderr
+        }
+        elseif ([string]::IsNullOrEmpty($stderr)) {
+            $stdout
+        }
+        else {
+            if ($stdout.EndsWith("`r`n") -or $stdout.EndsWith("`n")) {
+                $stdout + $stderr
+            }
+            else {
+                $stdout + [Environment]::NewLine + $stderr
+            }
+        }
+
+        $normalizedOutput = Normalize-CapturedOutput -Text $rawOutput
         return [pscustomobject]@{
-            ExitCode = $exitCode
-            Output = ($output | ForEach-Object { $_.ToString() }) -join [Environment]::NewLine
+            ExitCode  = $exitCode
+            Output    = $normalizedOutput
+            RawOutput = $rawOutput
         }
     }
     finally {
+        if ($null -ne $process) {
+            $process.Dispose()
+        }
         $ErrorActionPreference = $prev
         $global:ErrorActionPreference = $prevGlobal
     }
@@ -2245,6 +2320,18 @@ enabled = true
     # Requirement 5: Verify real environment was untouched (root paths were confined to $root33 in temp)
     Assert-Condition 'S33 fixture root is inside temp directory' ($root33.StartsWith([IO.Path]::GetTempPath(), [StringComparison]::OrdinalIgnoreCase)) $root33
     Assert-Condition 'S33 consumer repo AGENTS.md remains pristine after all toggles and updates' ((Get-Content -LiteralPath $consumerAgentsPath -Raw -Encoding UTF8) -ceq ($consumerAgentsContent -replace "`r?`n", "`r`n")) ''
+
+    $scenario = 34
+    Write-Host 'Scenario 34: Invoke-ProcessCapture normalizes PTY/ConPTY cursor-position wraps and ANSI codes while preserving raw output and semantic newlines' -ForegroundColor Cyan
+    $escChar = [char]27
+    $syntheticCommand = "[Console]::Out.Write(`"${escChar}[31minstalled mcp-foundation lifecy`r`n${escChar}[23;80Hcle.md (agents) is missing required DeepSeek daemon restart policy pattern${escChar}[0m`r`n[OK] Semantic second line`n[OK] Semantic third line`"); [Console]::Error.Write(`"`n[STDERR] Stderr message line`"); exit 42"
+    $captureResult34 = Invoke-ProcessCapture -FilePath 'pwsh' -ArgumentList @('-NoProfile', '-Command', $syntheticCommand)
+
+    Assert-Condition 'S34 preserves exit code' ($captureResult34.ExitCode -eq 42) ("ExitCode: " + $captureResult34.ExitCode)
+    Assert-Condition 'S34 RawOutput contains raw CSI sequences' ($null -ne $captureResult34.PSObject.Properties['RawOutput'] -and $captureResult34.RawOutput.Contains("${escChar}[23;80H")) ($captureResult34.RawOutput)
+    Assert-Condition 'S34 normalizes artificial hard-wrap and strips ANSI color from Output' ($captureResult34.Output -match 'installed mcp-foundation lifecycle\.md \(agents\) is missing required DeepSeek daemon restart policy pattern') ("Normalized Output:`n" + $captureResult34.Output + "`nRaw Output:`n" + $captureResult34.RawOutput)
+    Assert-Condition 'S34 preserves distinct semantic newlines in Output' ($captureResult34.Output -match '\[OK\] Semantic second line' -and $captureResult34.Output -match '\[OK\] Semantic third line' -and ($captureResult34.Output -split '\r?\n').Count -ge 3) $captureResult34.Output
+    Assert-Condition 'S34 preserves both stdout and stderr streams in output' ($captureResult34.Output -match '\[STDERR\] Stderr message line' -and $captureResult34.RawOutput -match '\[STDERR\] Stderr message line') ("Output:`n" + $captureResult34.Output)
 }
 finally {
     foreach ($fixture in $fixtures) {
