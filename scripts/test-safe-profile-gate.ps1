@@ -99,8 +99,10 @@ function Invoke-ProcessCapture {
         [Parameter(Mandatory)][string[]]$ArgumentList
     )
 
-    $prev = $global:ErrorActionPreference
+    $prev = $ErrorActionPreference
+    $prevGlobal = $global:ErrorActionPreference
     try {
+        $ErrorActionPreference = 'Continue'
         $global:ErrorActionPreference = 'Continue'
         $output = & $FilePath @ArgumentList 2>&1
         $exitCode = $LASTEXITCODE
@@ -110,7 +112,79 @@ function Invoke-ProcessCapture {
         }
     }
     finally {
-        $global:ErrorActionPreference = $prev
+        $ErrorActionPreference = $prev
+        $global:ErrorActionPreference = $prevGlobal
+    }
+}
+
+function Invoke-GitCapture {
+    param(
+        [Parameter(Mandatory)][string]$RepoDir,
+        [Parameter(Mandatory)][string[]]$ArgumentList,
+        [int[]]$ExpectedExitCodes = @(0)
+    )
+
+    $prev = $ErrorActionPreference
+    $prevGlobal = $global:ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $global:ErrorActionPreference = 'Continue'
+        $allArgs = @('-C', $RepoDir) + $ArgumentList
+        $output = & git @allArgs 2>&1
+        $exitCode = $LASTEXITCODE
+        $outputText = ($output | ForEach-Object { $_.ToString() }) -join [Environment]::NewLine
+        if ($ExpectedExitCodes -notcontains $exitCode) {
+            throw "git $(($allArgs) -join ' ') failed with exit code $exitCode. Output:`n$outputText"
+        }
+        return [pscustomobject]@{
+            ExitCode = $exitCode
+            Output   = $outputText
+        }
+    }
+    finally {
+        $ErrorActionPreference = $prev
+        $global:ErrorActionPreference = $prevGlobal
+    }
+}
+
+function Invoke-DeliveryTargetIdentityCapture {
+    param(
+        [Parameter(Mandatory)][string]$RepoPath,
+        [Parameter(Mandatory)][string[]]$OwnedPaths,
+        [string]$Baseline = ''
+    )
+
+    $prev = $ErrorActionPreference
+    $prevGlobal = $global:ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $global:ErrorActionPreference = 'Continue'
+        return Get-CodexDeliveryTargetIdentity -RepoPath $RepoPath -OwnedPaths $OwnedPaths -Baseline $Baseline
+    }
+    finally {
+        $ErrorActionPreference = $prev
+        $global:ErrorActionPreference = $prevGlobal
+    }
+}
+
+function Invoke-CommitGateCapture {
+    param(
+        [Parameter(Mandatory)][string]$RepoPath,
+        [Parameter(Mandatory)][string]$ApprovedTargetId,
+        [Parameter(Mandatory)][string[]]$ApprovedOwnedPaths,
+        [string]$Baseline = ''
+    )
+
+    $prev = $ErrorActionPreference
+    $prevGlobal = $global:ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $global:ErrorActionPreference = 'Continue'
+        return Test-CodexCommitGate -RepoPath $RepoPath -ApprovedTargetId $ApprovedTargetId -ApprovedOwnedPaths $ApprovedOwnedPaths -Baseline $Baseline
+    }
+    finally {
+        $ErrorActionPreference = $prev
+        $global:ErrorActionPreference = $prevGlobal
     }
 }
 
@@ -1921,20 +1995,20 @@ enabled = true
     New-Item -ItemType Directory -Path $gitRepoDir -Force | Out-Null
 
     # Initialize test git repo with initial baseline commit
-    & git -C $gitRepoDir init -b main | Out-Null
-    & git -C $gitRepoDir config user.name 'Test User' | Out-Null
-    & git -C $gitRepoDir config user.email 'test@example.com' | Out-Null
-    & git -C $gitRepoDir config commit.gpgsign false | Out-Null
-    & git -C $gitRepoDir config core.autocrlf true | Out-Null
-    & git -C $gitRepoDir config core.safecrlf warn | Out-Null
+    $null = Invoke-GitCapture -RepoDir $gitRepoDir -ArgumentList @('init', '-b', 'main')
+    $null = Invoke-GitCapture -RepoDir $gitRepoDir -ArgumentList @('config', 'user.name', 'Test User')
+    $null = Invoke-GitCapture -RepoDir $gitRepoDir -ArgumentList @('config', 'user.email', 'test@example.com')
+    $null = Invoke-GitCapture -RepoDir $gitRepoDir -ArgumentList @('config', 'commit.gpgsign', 'false')
+    $null = Invoke-GitCapture -RepoDir $gitRepoDir -ArgumentList @('config', 'core.autocrlf', 'true')
+    $null = Invoke-GitCapture -RepoDir $gitRepoDir -ArgumentList @('config', 'core.safecrlf', 'warn')
 
     $initFilePath = Join-Path $gitRepoDir 'baseline.txt'
     Write-FixtureFile -Path $initFilePath -Content 'initial baseline content'
     $existingTracked = Join-Path $gitRepoDir 'src\app.txt'
     Write-FixtureFile -Path $existingTracked -Content 'initial app content'
-    & git -C $gitRepoDir add baseline.txt src/app.txt | Out-Null
-    & git -C $gitRepoDir commit -m "initial commit" | Out-Null
-    $baselineCommit = (& git -C $gitRepoDir rev-parse HEAD).Trim()
+    $null = Invoke-GitCapture -RepoDir $gitRepoDir -ArgumentList @('add', 'baseline.txt', 'src/app.txt')
+    $null = Invoke-GitCapture -RepoDir $gitRepoDir -ArgumentList @('commit', '-m', 'initial commit')
+    $baselineCommit = (Invoke-GitCapture -RepoDir $gitRepoDir -ArgumentList @('rev-parse', 'HEAD')).Output.Trim()
 
     # Step 32.1: Make changes in worktree (modify tracked file, add new file, untracked unowned file)
     $lfNoBom = New-Object -TypeName System.Text.UTF8Encoding -ArgumentList $false
@@ -1949,11 +2023,11 @@ enabled = true
 
     $ownedPaths = @('src/app.txt', 'src/feature.txt')
 
-    $gitDiffWithDiagnostic = (& git -C $gitRepoDir diff $baselineCommit -- src/app.txt 2>&1) -join "`n"
+    $gitDiffWithDiagnostic = (Invoke-GitCapture -RepoDir $gitRepoDir -ArgumentList @('diff', $baselineCommit, '--', 'src/app.txt')).Output
     Assert-Condition 'S32 fixture emits a Git EOL diagnostic on stderr before staging' ($gitDiffWithDiagnostic -match '(?im)^warning:.*(?:LF|CRLF)') $gitDiffWithDiagnostic
 
     # S32.1: Compute delivery target identity before staging
-    $targetBeforeStaging = Get-CodexDeliveryTargetIdentity -RepoPath $gitRepoDir -OwnedPaths $ownedPaths
+    $targetBeforeStaging = Invoke-DeliveryTargetIdentityCapture -RepoPath $gitRepoDir -OwnedPaths $ownedPaths
     Assert-Condition 'S32 returns non-empty TargetId before staging' ($null -ne $targetBeforeStaging -and -not [string]::IsNullOrWhiteSpace($targetBeforeStaging.TargetId)) ''
     Assert-Condition 'S32 records baseline commit in target identity' ($targetBeforeStaging.Baseline -ceq $baselineCommit) ''
     Assert-Condition 'S32 records HEAD-relative status for owned paths' ($targetBeforeStaging.HeadStatus['src/app.txt'] -ceq 'M' -and $targetBeforeStaging.HeadStatus['src/feature.txt'] -ceq 'A') ''
@@ -1962,9 +2036,9 @@ enabled = true
     $originalConsoleOutputEncoding = [Console]::OutputEncoding
     try {
         [Console]::OutputEncoding = [Text.Encoding]::GetEncoding(850)
-        $targetCp850 = Get-CodexDeliveryTargetIdentity -RepoPath $gitRepoDir -OwnedPaths $ownedPaths
+        $targetCp850 = Invoke-DeliveryTargetIdentityCapture -RepoPath $gitRepoDir -OwnedPaths $ownedPaths
         [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding -ArgumentList $false
-        $targetUtf8 = Get-CodexDeliveryTargetIdentity -RepoPath $gitRepoDir -OwnedPaths $ownedPaths
+        $targetUtf8 = Invoke-DeliveryTargetIdentityCapture -RepoPath $gitRepoDir -OwnedPaths $ownedPaths
     }
     finally {
         [Console]::OutputEncoding = $originalConsoleOutputEncoding
@@ -1975,7 +2049,7 @@ enabled = true
     $invalidBaselineRejected = $false
     $invalidBaselineDetail = ''
     try {
-        $null = Get-CodexDeliveryTargetIdentity -RepoPath $gitRepoDir -OwnedPaths $ownedPaths -Baseline 'definitely-not-a-valid-commit'
+        $null = Invoke-DeliveryTargetIdentityCapture -RepoPath $gitRepoDir -OwnedPaths $ownedPaths -Baseline 'definitely-not-a-valid-commit'
     }
     catch {
         $invalidBaselineRejected = $true
@@ -1986,7 +2060,7 @@ enabled = true
     $escapingPathRejected = $false
     $escapingPathDetail = ''
     try {
-        $null = Get-CodexDeliveryTargetIdentity -RepoPath $gitRepoDir -OwnedPaths @('../outside.txt')
+        $null = Invoke-DeliveryTargetIdentityCapture -RepoPath $gitRepoDir -OwnedPaths @('../outside.txt')
     }
     catch {
         $escapingPathRejected = $true
@@ -1995,12 +2069,12 @@ enabled = true
     Assert-Condition 'S32 rejects owned paths that escape the repository' $escapingPathRejected $escapingPathDetail
 
     # S32.2: Stage the owned files (git add) -> changes porcelain state from ' M'/'??' to 'M '/'A '
-    & git -C $gitRepoDir add src/app.txt src/feature.txt | Out-Null
-    $porcelainAfterAdd = (& git -C $gitRepoDir status --porcelain) -join "`n"
+    $null = Invoke-GitCapture -RepoDir $gitRepoDir -ArgumentList @('add', 'src/app.txt', 'src/feature.txt')
+    $porcelainAfterAdd = (Invoke-GitCapture -RepoDir $gitRepoDir -ArgumentList @('status', '--porcelain')).Output
     Assert-Condition 'S32 porcelain reflects staged state' ($porcelainAfterAdd -match 'M\s+src/app\.txt' -and $porcelainAfterAdd -match 'A\s+src/feature\.txt') $porcelainAfterAdd
 
     # Compute delivery target identity after staging
-    $targetAfterStaging = Get-CodexDeliveryTargetIdentity -RepoPath $gitRepoDir -OwnedPaths $ownedPaths
+    $targetAfterStaging = Invoke-DeliveryTargetIdentityCapture -RepoPath $gitRepoDir -OwnedPaths $ownedPaths
 
     # S32.3: STAGING-INVARIANCE ASSERTION
     Assert-Condition 'S32 TargetId is strictly staging-invariant (before staging == after staging)' ($targetBeforeStaging.TargetId -ceq $targetAfterStaging.TargetId) ("Before: " + $targetBeforeStaging.TargetId + " After: " + $targetAfterStaging.TargetId)
@@ -2009,38 +2083,168 @@ enabled = true
     Assert-Condition 'S32 HeadStatus is strictly staging-invariant' ($targetBeforeStaging.HeadStatus['src/app.txt'] -ceq $targetAfterStaging.HeadStatus['src/app.txt'] -and $targetBeforeStaging.HeadStatus['src/feature.txt'] -ceq $targetAfterStaging.HeadStatus['src/feature.txt']) ''
 
     # S32.4: Commit gate passes with approved TargetId and matching staged paths
-    $gatePassResult = Test-CodexCommitGate -RepoPath $gitRepoDir -ApprovedTargetId $targetBeforeStaging.TargetId -ApprovedOwnedPaths $ownedPaths
+    $gatePassResult = Invoke-CommitGateCapture -RepoPath $gitRepoDir -ApprovedTargetId $targetBeforeStaging.TargetId -ApprovedOwnedPaths $ownedPaths
     Assert-Condition 'S32 commit gate succeeds on exact approved target and exact staged paths' ($gatePassResult.Pass -eq $true) $gatePassResult.Detail
 
     # S32.5: Commit gate fails if unapproved path is staged
-    & git -C $gitRepoDir add scratch/notes.txt | Out-Null
-    $gateUnapprovedResult = Test-CodexCommitGate -RepoPath $gitRepoDir -ApprovedTargetId $targetBeforeStaging.TargetId -ApprovedOwnedPaths $ownedPaths
+    $null = Invoke-GitCapture -RepoDir $gitRepoDir -ArgumentList @('add', 'scratch/notes.txt')
+    $gateUnapprovedResult = Invoke-CommitGateCapture -RepoPath $gitRepoDir -ApprovedTargetId $targetBeforeStaging.TargetId -ApprovedOwnedPaths $ownedPaths
     Assert-Condition 'S32 commit gate rejects when unapproved path is staged' ($gateUnapprovedResult.Pass -eq $false -and $gateUnapprovedResult.Detail -match '(?i)unapproved|mismatch|staged') $gateUnapprovedResult.Detail
-    & git -C $gitRepoDir reset HEAD -- scratch/notes.txt | Out-Null
+    $null = Invoke-GitCapture -RepoDir $gitRepoDir -ArgumentList @('reset', 'HEAD', '--', 'scratch/notes.txt')
 
     # S32.6: The index content itself must match the approved working-tree content.
     # Stage a tampered blob, then restore the approved working tree to reproduce a
     # path-set/target-id bypass that would otherwise commit unreviewed content.
     [IO.File]::WriteAllText($existingTracked, "tampered staged blob`nsecond line", $lfNoBom)
-    & git -C $gitRepoDir add src/app.txt | Out-Null
+    $null = Invoke-GitCapture -RepoDir $gitRepoDir -ArgumentList @('add', 'src/app.txt')
     [IO.File]::WriteAllText($existingTracked, $approvedAppContent, $lfNoBom)
-    $targetWithRestoredWorktree = Get-CodexDeliveryTargetIdentity -RepoPath $gitRepoDir -OwnedPaths $ownedPaths
+    $targetWithRestoredWorktree = Invoke-DeliveryTargetIdentityCapture -RepoPath $gitRepoDir -OwnedPaths $ownedPaths
     Assert-Condition 'S32 restored working tree still matches approved TargetId while index is tampered' ($targetWithRestoredWorktree.TargetId -ceq $targetBeforeStaging.TargetId) ''
 
-    $gateIndexMismatchResult = Test-CodexCommitGate -RepoPath $gitRepoDir -ApprovedTargetId $targetBeforeStaging.TargetId -ApprovedOwnedPaths $ownedPaths
+    $gateIndexMismatchResult = Invoke-CommitGateCapture -RepoPath $gitRepoDir -ApprovedTargetId $targetBeforeStaging.TargetId -ApprovedOwnedPaths $ownedPaths
     Assert-Condition 'S32 commit gate rejects staged blob content that differs from approved working tree' ($gateIndexMismatchResult.Pass -eq $false -and $gateIndexMismatchResult.Detail -match '(?i)index|blob|content|staged') $gateIndexMismatchResult.Detail
 
-    & git -C $gitRepoDir add src/app.txt | Out-Null
-    $gateIndexRestoredResult = Test-CodexCommitGate -RepoPath $gitRepoDir -ApprovedTargetId $targetBeforeStaging.TargetId -ApprovedOwnedPaths $ownedPaths
+    $null = Invoke-GitCapture -RepoDir $gitRepoDir -ArgumentList @('add', 'src/app.txt')
+    $gateIndexRestoredResult = Invoke-CommitGateCapture -RepoPath $gitRepoDir -ApprovedTargetId $targetBeforeStaging.TargetId -ApprovedOwnedPaths $ownedPaths
     Assert-Condition 'S32 commit gate passes after staged blob is restored to approved content' ($gateIndexRestoredResult.Pass -eq $true) $gateIndexRestoredResult.Detail
 
     # S32.7: CONTENT-SENSITIVITY ASSERTION (content change after staging alters TargetId and causes commit gate to fail)
     Write-FixtureFile -Path $existingTracked -Content 'tampered content modified after review'
-    $targetTampered = Get-CodexDeliveryTargetIdentity -RepoPath $gitRepoDir -OwnedPaths $ownedPaths
+    $targetTampered = Invoke-DeliveryTargetIdentityCapture -RepoPath $gitRepoDir -OwnedPaths $ownedPaths
     Assert-Condition 'S32 TargetId is strictly content-sensitive (content change alters TargetId)' ($targetTampered.TargetId -cne $targetBeforeStaging.TargetId) ("Original: " + $targetBeforeStaging.TargetId + " Tampered: " + $targetTampered.TargetId)
 
-    $gateTamperedResult = Test-CodexCommitGate -RepoPath $gitRepoDir -ApprovedTargetId $targetBeforeStaging.TargetId -ApprovedOwnedPaths $ownedPaths
+    $gateTamperedResult = Invoke-CommitGateCapture -RepoPath $gitRepoDir -ApprovedTargetId $targetBeforeStaging.TargetId -ApprovedOwnedPaths $ownedPaths
     Assert-Condition 'S32 commit gate rejects when post-staging recomputed identity differs from approved target' ($gateTamperedResult.Pass -eq $false -and $gateTamperedResult.Detail -match '(?i)target_id|mismatch|identity') $gateTamperedResult.Detail
+
+    $scenario = 33
+    Write-Host 'Scenario 33: global installer preserves selected aggressive delegation and backend across updates, updates global kit artifacts, leaves consumer repo AGENTS.md untouched, and keeps toggles functional' -ForegroundColor Cyan
+    $root33 = New-FixtureHome
+    $fixtures.Add($root33)
+    $configPath33 = Join-Path (Get-CodexHome $root33) 'config.toml'
+    $agentsPath33 = Join-Path (Get-CodexHome $root33) 'AGENTS.md'
+    $statePath33 = Join-Path (Get-CodexHome $root33) 'codex-workflows-kit\install-state.json'
+
+    # Set up mock consumer repository with its own AGENTS.md outside CodexHome
+    $consumerRepoDir = Join-Path $root33 'consumer-repo'
+    New-Item -ItemType Directory -Path $consumerRepoDir -Force | Out-Null
+    $consumerAgentsPath = Join-Path $consumerRepoDir 'AGENTS.md'
+    $consumerAgentsContent = '# Consumer Repository Rules' + $nl +
+        '- Always write clean and modular code.' + $nl +
+        '- Never commit secrets or api keys.' + $nl
+    Write-FixtureFile -Path $consumerAgentsPath -Content $consumerAgentsContent
+
+    # Initial config fixture
+    $initialConfig33 = '[features]' + $nl +
+        'multi_agent = false' + $nl +
+        'fast_mode = true' + $nl +
+        $nl +
+        '[agents]' + $nl +
+        'default_subagent_model = "test-model"' + $nl +
+        'default_subagent_reasoning_effort = "high"' + $nl +
+        $nl +
+        '[mcp_servers.deepseek-subagent]' + $nl +
+        'command = "bridge-cmd"' + $nl +
+        'enabled = true' + $nl
+    Write-FixtureFile -Path $configPath33 -Content $initialConfig33
+
+    # Step 33.1: Initial safe install
+    $install1_33 = Invoke-InstallCapture -Root $root33 -Profile safe
+    Assert-Condition 'S33 initial safe install succeeds' ($install1_33.ExitCode -eq 0) $install1_33.Output
+
+    # Step 33.2: Switch delegation policy to aggressive and backend to native
+    $polAggResult33 = Invoke-PolicySwitch -Root $root33 -Policy aggressive
+    $backNatResult33 = Invoke-BackendSwitch -Root $root33 -Backend native
+    Assert-Condition 'S33 switch policy to aggressive succeeds' ($polAggResult33.ExitCode -eq 0) $polAggResult33.Output
+    Assert-Condition 'S33 switch backend to native succeeds' ($backNatResult33.ExitCode -eq 0) $backNatResult33.Output
+
+    $stateBeforeUpdate33 = Get-InstallState $root33
+    $agentsBeforeUpdate33 = Get-Content -LiteralPath $agentsPath33 -Raw -Encoding UTF8
+    $rtBeforeUpdate33 = Get-AgentsRuntimeBlock -Text $agentsBeforeUpdate33
+    Assert-Condition 'S33 state records aggressive delegation before update' ($stateBeforeUpdate33.codexDelegation.selected -ceq 'aggressive') ''
+    Assert-Condition 'S33 state records native backend before update' ($stateBeforeUpdate33.codexBackend.selected -ceq 'native') ''
+    Assert-Condition 'S33 global AGENTS.md has aggressive policy before update' ($rtBeforeUpdate33.Policy -ceq 'aggressive') $agentsBeforeUpdate33
+    Assert-Condition 'S33 global AGENTS.md has native backend before update' ($rtBeforeUpdate33.Backend -ceq 'native') $agentsBeforeUpdate33
+
+    # Step 33.3: Re-install / update kit over the aggressive + native installation
+    $updateResult33 = Invoke-InstallCapture -Root $root33 -Profile safe
+    Assert-Condition 'S33 kit update/reinstall succeeds' ($updateResult33.ExitCode -eq 0) $updateResult33.Output
+
+    $stateAfterUpdate33 = Get-InstallState $root33
+    $agentsAfterUpdate33 = Get-Content -LiteralPath $agentsPath33 -Raw -Encoding UTF8
+    $configAfterUpdate33 = Read-Config $root33
+    $rtAfterUpdate33 = Get-AgentsRuntimeBlock -Text $agentsAfterUpdate33
+
+    # Requirement 1: delegation_policy=aggressive continues aggressive after install/update
+    Assert-Condition 'S33 update preserves selected aggressive delegation in state' ($stateAfterUpdate33.codexDelegation.selected -ceq 'aggressive') ''
+    Assert-Condition 'S33 update preserves delegation_policy = aggressive in global AGENTS.md' ($rtAfterUpdate33.Policy -ceq 'aggressive') $agentsAfterUpdate33
+
+    # Requirement 2: subagent_backend selected (native) is also preserved
+    Assert-Condition 'S33 update preserves selected native backend in state' ($stateAfterUpdate33.codexBackend.selected -ceq 'native') ''
+    Assert-Condition 'S33 update preserves subagent_backend = native in global AGENTS.md' ($rtAfterUpdate33.Backend -ceq 'native') $agentsAfterUpdate33
+    Assert-Condition 'S33 update preserves native backend matrix in config.toml' ($configAfterUpdate33 -match '(?m)^\s*multi_agent\s*=\s*true\s*$' -and $configAfterUpdate33 -match '(?m)^\s*fast_mode\s*=\s*false\s*$' -and $configAfterUpdate33 -match '(?m)^\s*default_subagent_model\s*=\s*"gpt-5\.6-luna"\s*$') $configAfterUpdate33
+
+    # Requirement 3: Global kit artifacts are updated/present, and consumer repo AGENTS.md has NO runtime flags
+    $wfSkillAgents33 = Join-Path (Get-AgentsHome $root33) 'skills\workflows\SKILL.md'
+    $mcpSkillAgents33 = Join-Path (Get-AgentsHome $root33) 'skills\mcp-foundation\SKILL.md'
+    $efSkillAgents33 = Join-Path (Get-AgentsHome $root33) 'skills\evidence-first\SKILL.md'
+    $wfSkillAg1_33 = Join-Path (Get-AntigravityHome $root33) 'antigravity\skills\workflows\SKILL.md'
+    $mcpSkillAg1_33 = Join-Path (Get-AntigravityHome $root33) 'antigravity\skills\mcp-foundation\SKILL.md'
+    $wfSkillAg2_33 = Join-Path (Get-AntigravityHome $root33) 'config\skills\workflows\SKILL.md'
+    $mcpSkillAg2_33 = Join-Path (Get-AntigravityHome $root33) 'config\skills\mcp-foundation\SKILL.md'
+    $geminiAg33 = Join-Path (Get-AntigravityHome $root33) 'config\GEMINI.md'
+
+    Assert-Condition 'S33 workflows skill installed in agents' (Test-Path -LiteralPath $wfSkillAgents33 -PathType Leaf) $wfSkillAgents33
+    Assert-Condition 'S33 mcp-foundation skill installed in agents' (Test-Path -LiteralPath $mcpSkillAgents33 -PathType Leaf) $mcpSkillAgents33
+    Assert-Condition 'S33 evidence-first skill installed in agents' (Test-Path -LiteralPath $efSkillAgents33 -PathType Leaf) $efSkillAgents33
+    Assert-Condition 'S33 workflows skill installed in antigravity 1' (Test-Path -LiteralPath $wfSkillAg1_33 -PathType Leaf) $wfSkillAg1_33
+    Assert-Condition 'S33 mcp-foundation skill installed in antigravity 1' (Test-Path -LiteralPath $mcpSkillAg1_33 -PathType Leaf) $mcpSkillAg1_33
+    Assert-Condition 'S33 workflows skill installed in antigravity 2' (Test-Path -LiteralPath $wfSkillAg2_33 -PathType Leaf) $wfSkillAg2_33
+    Assert-Condition 'S33 mcp-foundation skill installed in antigravity 2' (Test-Path -LiteralPath $mcpSkillAg2_33 -PathType Leaf) $mcpSkillAg2_33
+    Assert-Condition 'S33 GEMINI.md installed in antigravity config' (Test-Path -LiteralPath $geminiAg33 -PathType Leaf) $geminiAg33
+
+    $consumerAgentsAfterInstall = Get-Content -LiteralPath $consumerAgentsPath -Raw -Encoding UTF8
+    Assert-Condition 'S33 consumer repo AGENTS.md is strictly untouched' ($consumerAgentsAfterInstall -ceq ($consumerAgentsContent -replace "`r?`n", "`r`n")) $consumerAgentsAfterInstall
+    Assert-Condition 'S33 consumer repo AGENTS.md contains no kit runtime block' ($consumerAgentsAfterInstall.IndexOf('# BEGIN CODEX-WORKFLOWS-KIT: runtime', [StringComparison]::Ordinal) -lt 0) $consumerAgentsAfterInstall
+    Assert-Condition 'S33 consumer repo AGENTS.md contains no subagent_backend flag' ($consumerAgentsAfterInstall.IndexOf('subagent_backend', [StringComparison]::Ordinal) -lt 0) $consumerAgentsAfterInstall
+    Assert-Condition 'S33 consumer repo AGENTS.md contains no delegation_policy flag' ($consumerAgentsAfterInstall.IndexOf('delegation_policy', [StringComparison]::Ordinal) -lt 0) $consumerAgentsAfterInstall
+
+    # Step 33.4: Switch policy to balanced, re-install, verify balanced is preserved; switch to aggressive, re-install, verify aggressive is preserved
+    $polBalResult33 = Invoke-PolicySwitch -Root $root33 -Policy balanced
+    Assert-Condition 'S33 switch policy to balanced succeeds' ($polBalResult33.ExitCode -eq 0) $polBalResult33.Output
+    $stateBal33 = Get-InstallState $root33
+    $rtBal33 = Get-AgentsRuntimeBlock -Text (Get-Content -LiteralPath $agentsPath33 -Raw -Encoding UTF8)
+    Assert-Condition 'S33 policy is balanced in state and AGENTS.md before reinstall' ($stateBal33.codexDelegation.selected -ceq 'balanced' -and $rtBal33.Policy -ceq 'balanced') ''
+
+    $reinstallBal33 = Invoke-InstallCapture -Root $root33 -Profile safe
+    Assert-Condition 'S33 reinstall with balanced policy succeeds' ($reinstallBal33.ExitCode -eq 0) $reinstallBal33.Output
+    $stateAfterReinstallBal33 = Get-InstallState $root33
+    $rtAfterReinstallBal33 = Get-AgentsRuntimeBlock -Text (Get-Content -LiteralPath $agentsPath33 -Raw -Encoding UTF8)
+    Assert-Condition 'S33 reinstall preserves active balanced policy' ($stateAfterReinstallBal33.codexDelegation.selected -ceq 'balanced' -and $rtAfterReinstallBal33.Policy -ceq 'balanced') ''
+
+    # Switch back to deepseek backend, then to aggressive policy, reinstall, verify preservation
+    $backDeepResult33 = Invoke-BackendSwitch -Root $root33 -Backend deepseek
+    $polAggResult33_2 = Invoke-PolicySwitch -Root $root33 -Policy aggressive
+    Assert-Condition 'S33 switch backend to deepseek succeeds' ($backDeepResult33.ExitCode -eq 0) $backDeepResult33.Output
+    Assert-Condition 'S33 switch policy to aggressive succeeds again' ($polAggResult33_2.ExitCode -eq 0) $polAggResult33_2.Output
+
+    $reinstallAgg33 = Invoke-InstallCapture -Root $root33 -Profile safe
+    Assert-Condition 'S33 reinstall with deepseek + aggressive succeeds' ($reinstallAgg33.ExitCode -eq 0) $reinstallAgg33.Output
+    $stateAfterReinstallAgg33 = Get-InstallState $root33
+    $rtAfterReinstallAgg33 = Get-AgentsRuntimeBlock -Text (Get-Content -LiteralPath $agentsPath33 -Raw -Encoding UTF8)
+    $configAfterReinstallAgg33 = Read-Config $root33
+    Assert-Condition 'S33 reinstall preserves active aggressive policy with deepseek' ($stateAfterReinstallAgg33.codexDelegation.selected -ceq 'aggressive' -and $rtAfterReinstallAgg33.Policy -ceq 'aggressive') ''
+    Assert-Condition 'S33 reinstall preserves active deepseek backend with aggressive policy' ($stateAfterReinstallAgg33.codexBackend.selected -ceq 'deepseek' -and $rtAfterReinstallAgg33.Backend -ceq 'deepseek') ''
+    Assert-Condition 'S33 config.toml reflects deepseek matrix' ($configAfterReinstallAgg33 -match '(?m)^\s*multi_agent\s*=\s*false\s*$') $configAfterReinstallAgg33
+
+    # Status checks report consistent state
+    $statusPol33 = Invoke-PolicyStatus -Root $root33
+    $statusBack33 = Invoke-BackendStatus -Root $root33
+    Assert-Condition 'S33 policy status reports deepseek and aggressive' ($statusPol33.ExitCode -eq 0 -and $statusPol33.Output -match '(?i)backend:\s*deepseek' -and $statusPol33.Output -match '(?i)policy:\s*aggressive') $statusPol33.Output
+    Assert-Condition 'S33 backend status reports deepseek and aggressive' ($statusBack33.ExitCode -eq 0 -and $statusBack33.Output -match '(?i)backend:\s*deepseek' -and $statusBack33.Output -match '(?i)policy:\s*aggressive') $statusBack33.Output
+
+    # Requirement 5: Verify real environment was untouched (root paths were confined to $root33 in temp)
+    Assert-Condition 'S33 fixture root is inside temp directory' ($root33.StartsWith([IO.Path]::GetTempPath(), [StringComparison]::OrdinalIgnoreCase)) $root33
+    Assert-Condition 'S33 consumer repo AGENTS.md remains pristine after all toggles and updates' ((Get-Content -LiteralPath $consumerAgentsPath -Raw -Encoding UTF8) -ceq ($consumerAgentsContent -replace "`r?`n", "`r`n")) ''
 }
 finally {
     foreach ($fixture in $fixtures) {

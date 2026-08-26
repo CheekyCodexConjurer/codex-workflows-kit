@@ -34,9 +34,12 @@ selected mode or an open gate requires it.
   cohesive, sequential, critical-path material work when delegation round-trip
   would not help; delegates for concrete independent parallelism, specialization,
   risk isolation, or large-context compression. No mandatory fan-out.
-- Under `aggressive` (parent-token offload): delegate all material read, research,
-  write, test, and review work; maintain one persistent agent per cohesive lane
-  and parallelize genuinely independent fronts.
+- Under `aggressive` (parent-token offload): parent acts as architect, decider,
+  integrator, and gatekeeper; delegates material bulk without redoing delegated
+  work locally; consumes a decision evidence packet (frozen target/diff, critical
+  regions, test/review evidence, conflicts). Maintains one persistent track per
+  cohesive front; no microdelegation; new track only for an independently
+  acceptable deliverable.
 - Native mode uses native Codex subagents for delegated material fronts; each
   native spawn passes `model="gpt-5.6-luna"` and `reasoning_effort="max"`
   explicitly, states normal/default mode, and never selects Flash/Fast. Forbids
@@ -92,7 +95,9 @@ FRAME -> FANOUT -> COLLECT -> ACT -> VERIFY -> REVIEW -> DONE
   no new consent prompt, and never a fake continuation. A terminal result is
   required; never recover running jobs, missing final responses, explicitly
   aborted fronts/jobs, divergent scope, or material changes; provider fallback
-  stays forbidden; never use `allow_respawn` as routine persistence.
+  stays forbidden; never use `allow_respawn` as routine persistence; active jobs
+  only allow recovery when all have proven durable spool/recovery; stale-running
+  with absent daemon reconciles only with installed durable capacity.
 - In native mode, use native subagents with the same completion,
   review, and no-fallback rules; do not contact the DeepSeek MCP.
 
@@ -103,6 +108,12 @@ Completion contract: for every required job, the parent must wait for a
 do not send an `interruptive follow-up` or `replace` it. `interrupted`,
 `errored`, `timed out`, or `missing final response` means unavailable: keep
 the gate `open/BLOCKED`; do not use a `silent fallback`.
+
+Slices are designed to close terminally within the window. Upon timeout or
+missing closure (ausência de fechamento), continue on the same track (mesma trilha):
+request a minimal inventory (inventário mínimo) and then execute small closure
+slices (closure slices pequenos). Proibido repetir integralmente a frente; proibido
+abrir novo agente / substituto.
 
 Normative contract:
 `completion_policy = { required = "final_response", running = "no_interrupt_or_replace", missing = "gate_open_blocked", fallback = "forbidden" }`

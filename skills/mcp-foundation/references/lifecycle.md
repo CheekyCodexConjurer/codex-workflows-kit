@@ -17,32 +17,38 @@ When an explicit manual request is received to terminate or cycle a Serena proce
 4. **Absence of Jobs**: Confirm all parent orchestration jobs and sub-agent fronts are completed and closed.
 5. **No Generic Kill**: Never run `taskkill` or wildcard process sweeps.
 
-## DeepSeek Sub-Agent Daemon Restart Policy (Fail-Closed Exception)
+## DeepSeek Sub-Agent Daemon Operational Recovery Matrix (Fail-Closed)
 
-Automatic restarts, kill operations, and process recycling remain strictly forbidden by default. A tightly scoped, fail-closed exception is permitted only when all of the following gates pass:
+Operating policy for the local owned DeepSeek Sub-Agent daemon under standing explicit user authorization on this host. Maintenance across other MCP servers remains read-only.
 
-### 1. Preconditions & Boundaries
-- **Express Human Authorization**: The current user must provide explicit user authorization for recovery of the local owned DeepSeek Sub-Agent daemon. Never initiate recovery autonomously.
-- **Non-Triggers (Strictly Prohibited)**:
-  - Never trigger on `AntigravityProcessError` or `agy` job failures.
-  - Never trigger on generic provider, model, or tool execution errors.
-  - Never trigger on an HTTP error response alone without executing the health probe gate.
-- **Strict Scope Boundaries**:
-  - Never restart Codex, Antigravity, Serena, CodeGraph, Context7, or any other MCP servers.
-  - Never run `taskkill`, `Stop-Process`, `kill-all`, or generic process sweep commands.
-  - Never create provider fallback, automatic retries, or warm-up/replay logic.
+### Absolute Boundaries & Non-Triggers
 
-### 2. Required Fail-Closed Gates (All Must Pass)
-1. **Pre-Restart Probe Failure**: A fresh GET `/health` probe (the canonical bridge endpoint is `/health`) demonstrably fails (connection refused, timeout, or unhealthy status).
-2. **Canonical Lifecycle Command**: The daemon is launched strictly from a validated canonical `deepseek-subagent` installation using the official lifecycle command:
-   `dist/cli.js restart --config <known-config> --json`
-3. **Ownership Verification**: Verified PID, command line, and data directory ownership matching the current user session and configuration.
-4. **Zero Active Jobs in SQLite**: A read-only query against `bridge.sqlite` confirms there are no active or pending jobs.
-5. **Bounded Readiness Wait**: After executing the canonical command, perform a bounded readiness wait with GET `/health` until the daemon returns healthy.
-6. **Fail-Closed Abort**: If any gate fails, is uncertain, or cannot be verified, do NOT restart; report the failure cleanly.
+- **Antigravity Protection**: Never restart, close, login, or logout Antigravity desktop. Never touch auth, profile, cookies, or cache.
+- **Strict Scope**: Never restart Codex, Serena, CodeGraph, Context7, or any other MCP servers. Never run generic kill commands (`taskkill`, `Stop-Process`, `kill-all`).
+- **Non-Triggers**: Never trigger on `AntigravityProcessError`, agy job failures, HTTP errors alone, provider/model timeouts, or quota errors. No provider/model fallback.
+- **Budget**: Bounded single attempt per incident. If recovery fails, report blocked status with evidence; never loop or retry indefinitely.
+- **Job Preservation**: Active jobs only allow recovery when all have proven durable spool/recovery in `bridge.sqlite`. Stale-running with absent daemon reconciles only with installed durable capacity; do not assume database status alone indicates live activity. Fail closed if unproven.
+- **Lineage**: After ready, resume, follow, or recover the original job via the same lineage; never duplicate front, agent, or logical job.
+
+### Operational Decision Matrix
+
+| Observed State | Probe / Evidence Gate | Required Action | Boundary / Verification |
+|---|---|---|---|
+| Transport closed + health ready | MCP transport fails or closes, but `GET /health` probe is ready | Reconnect / retry MCP call | Never restart daemon or Antigravity; no process kill |
+| `recovering` | `GET /health` returns starting or recovering status | Await bounded readiness | Poll `GET /health` until ready or timeout; no duplicate start or restart |
+| `absent` | Daemon process missing; `GET /health` probe unreachable | Canonical start: `dist/cli.js start --config <known-config> --json` | Verify PID, command line, and data directory ownership; await bounded readiness on `GET /health`; stale-running jobs require proven durable capacity |
+| `owned-unhealthy` | Daemon process alive, PID/command/data-dir ownership verified, but `GET /health` fails | Canonical restart: `dist/cli.js restart --config <known-config> --json` | Restart only if PID, command line, and data directory ownership are verified and `GET /health` fails; await bounded readiness; active jobs require proven durable spool |
+
+### Required Fail-Closed Gates (All Must Pass)
+
+1. **Explicit Authorization**: Standing explicit user authorization on this host allows diagnosing and recovering the owned local DeepSeek daemon without per-incident prompts.
+2. **Probe Check**: Diagnostic `GET /health` probe determines state (`ready`, `recovering`, `absent`, or `owned-unhealthy`).
+3. **Ownership Verification**: Verified PID, command line, and data directory ownership matching current user configuration.
+4. **Active Jobs Gate**: Query `bridge.sqlite`: active jobs only allow recovery when all have proven durable spool/recovery; otherwise fail-closed.
+5. **Bounded Single Attempt**: Execute at most one canonical start/restart/reconnect attempt with bounded readiness on `GET /health`. Fail-closed on error.
 
 ## Automation Prohibitions
 
 - Auto-init: Never initialize indexes or workspace databases automatically when markers (such as `.codegraph`) are missing.
-- Auto-restart: Never restart MCP processes automatically on transient errors outside the explicitly authorized fail-closed DeepSeek daemon exception; report the status cleanly.
+- Auto-restart: Never restart MCP processes automatically outside the explicitly authorized fail-closed DeepSeek daemon exception; report the status cleanly.
 - Auto-upgrade: Upgrades to MCP packages or binaries must be performed manually by the operator.

@@ -6,7 +6,9 @@ Este documento define o módulo invariante de qualidade de entrega (*delivery re
 
 ## 1. Escopo e Invariância
 
-O módulo de qualidade de entrega é um portão de qualidade embutido e invariante, operando de forma completamente independente do backend (`native` | `deepseek`) e da política de delegação (`balanced` | `aggressive`) ativos.
+O módulo de qualidade de entrega é um portão de qualidade embutido e invariante, sendo estritamente **ortogonal às flags** de backend (`subagent_backend`) e de delegação (`delegation_policy`), operando de forma invariável independentemente da configuração ativa.
+
+Exige exatamente um revisor independente único por alvo congelado (*single independent reviewer* por *frozen target*). Reparos bloqueantes geram um lote de reparo consolidado no mesmo writer. Revalidações subsequentes realizam uma closure review de delta sobre as correções e o blast radius afetado, revalidando a integridade e target_id. O processo ocorre sem R.A.F.V. automático; o modo `R.A.F.V` permanece estritamente manual sob demanda, nunca automático.
 
 ### Modos Aplicáveis:
 - `IMPL.AUTO`
@@ -132,12 +134,12 @@ O revisor emite formalmente um pacote de revisão estruturado contendo:
 
 ## 6. Ciclo de Reparo Consolidado (quando `BLOCKED`)
 
-- **Lote Único Consolidado**: Todos os bloqueios identificados no pacote de revisão são consolidados em um único lote e enviados ao executor original da frente de implementação.
+- **Lote Único Consolidado no Writer**: Todos os bloqueios identificados no pacote de revisão são consolidados em um lote de reparo consolidado no mesmo writer que executou a implementação original.
 - **Correção Mínima**: O executor aplica apenas as correções necessárias para sanar os bloqueios relatados.
 - **Revalidação Determinística**: Toda a suíte de validação relevante e checagens determinísticas são reexecutadas.
 - **Novo Alvo Congelado**: Um novo alvo congelado com `target_id` determinístico invariante a staging e hashes SHA256 atualizados é gerado.
-- **Re-Revisão Delta Abrangente**: Uma nova revisão independente foca nos bloqueios corrigidos e no raio de impacto afetado (*affected blast radius*), enquanto re-checa e revalida a identidade completa do alvo (`target_id`) e todos os invariantes de integração para evitar regressões (sem restringir a análise exclusivamente ao delta).
-- **Limite Estrito de Rodadas**: É permitido um máximo de **duas rodadas de reparo**. Se persistirem bloqueios após a segunda rodada, a operação falha fechado (*fail closed*), interrompendo o pipeline e reportando o status ao usuário.
+- **Closure Review de Delta**: Uma nova revisão independente (closure review de delta) foca nos bloqueios corrigidos e no raio de impacto afetado (*affected blast radius*), enquanto re-checa e revalida a identidade completa do alvo (`target_id`) e todos os invariantes de integração para evitar regressões (sem restringir a análise exclusivamente ao delta).
+- **Limite Estrito de Rodadas**: É permitido um máximo de **duas rodadas de reparo** (máximo 2 rodadas). Se persistirem bloqueios após a segunda rodada, a operação falha fechado (*fail closed*), interrompendo o pipeline e reportando o status ao usuário.
 
 ---
 

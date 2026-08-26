@@ -44,8 +44,13 @@ Canonical routing, usage constraints, and operational maintenance for allowliste
    - Process ownership (verifying PID and process owner).
    - Server idleness (no active requests or locks).
    - Zero pending or running jobs across the session.
-4. No Unsafe Automation: NEVER automate kill, restart, upgrade, or initialization (auto-init) of MCP servers or background tooling.
-5. DeepSeek Daemon Restart Exception: A tightly scoped, fail-closed restart exception applies ONLY to the local DeepSeek Sub-Agent daemon when expressly authorized by the current user and executed via canonical `dist/cli.js restart --config <known-config> --json`. All gates must pass: failing GET `/health` probe, verified PID/command/data-dir ownership, zero active/pending jobs in `bridge.sqlite`, and bounded readiness wait. Never trigger on `AntigravityProcessError`, `agy` failures, or HTTP errors alone; never restart Codex, Antigravity, Serena, CodeGraph, Context7, or use generic kill/process commands (`taskkill`, `Stop-Process`).
+4. No Unsafe Automation & Antigravity Protection: NEVER automate kill, restart, upgrade, or initialization (auto-init) of MCP servers or background tooling. Never restart, close, login, or logout Antigravity desktop; never touch auth, profile, cookies, or cache.
+5. DeepSeek Daemon Restart Exception: A tightly scoped, fail-closed operational recovery exception applies ONLY to the local owned DeepSeek Sub-Agent daemon under standing user authorization on this host. Recovery routes by observed state:
+   - Transport closed + health ready: reconnect MCP transport; never restart daemon or Antigravity.
+   - recovering: await bounded readiness without duplicate restart.
+   - absent: canonical start (`dist/cli.js start --config <known-config> --json`) with verified PID/command/data-dir ownership and GET `/health` readiness.
+   - owned-unhealthy: canonical restart (`dist/cli.js restart --config <known-config> --json`) only if ownership is verified and GET `/health` fails.
+   - Fail-closed gates: bounded single attempt per incident; active jobs only allow recovery when all have proven durable spool/recovery (check `bridge.sqlite`); stale-running with absent daemon reconciles only with installed durable capacity; never trigger on `AntigravityProcessError`, provider/model timeout, or quota; no provider/model fallback; resume existing lineage after ready. Never restart, close, login, or logout Antigravity; never touch auth, profile, cookies, or cache; never use generic kill commands (`taskkill`, `Stop-Process`).
 
 ## References
 

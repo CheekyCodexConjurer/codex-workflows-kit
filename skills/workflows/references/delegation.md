@@ -46,12 +46,14 @@ Existem dois seletores globais ortogonais e independentes:
 **Foco Principal**: Desoneração máxima de tokens e carga cognitiva do Parent GPT (*token offload*).
 
 - **Comportamento do Parent GPT**:
-  - Atua estritamente como orquestrador, arquiteto e tomador de decisões.
-  - Não executa trabalho material de leitura extensa, pesquisa, escrita de código, execução de testes ou revisão no contexto principal.
+  - Sob `aggressive`, o parent atua como arquiteto, decisor, integrador e gatekeeper (architect, decider, integrator, and gatekeeper).
+  - Consome um pacote pequeno de evidência decisória (*decision evidence packet*: target/diff congelado, regiões críticas, evidências de testes/revisão, conflitos), sem refazer bulk delegado (*never redo delegated bulk*) nem duplicar trabalho material no contexto principal.
 - **Estratégia de Execução**:
   - Todo trabalho material é delegado ao backend de subagentes selecionado.
-  - **Trilhas Coesas e Persistentes**: Mantém um subagente persistente por trilha coesa de trabalho continuando a mesma sessão aberta via `deepseek_continue` (ou controle de sessão nativo), sem `allow_respawn`.
+  - **Trilhas Coesas e Persistentes**: Mantém uma trilha persistente por frente coesa (*one persistent track per cohesive front*) continuando a mesma sessão aberta via `deepseek_continue` (ou controle de sessão nativo), sem `allow_respawn`.
+  - **Sem Microdelegação**: Proibida microdelegação (*no microdelegation*); abre nova trilha apenas para deliverable independentemente aceitável (*new track only for independently acceptable deliverable*) ou rejeitável.
   - **Fan-Out Antecipado em Lote**: Mapeia todas as frentes materiais independentes e as lança em lote (*batch spawn*) antes do primeiro comando de espera (`follow`/`wait`), maximizando a taxa de transferência.
+  - **Fechamento e Timeouts**: Fatias são desenhadas para fechar terminalmente dentro da janela; após timeout ou ausência de fechamento, continua na mesma trilha pedindo inventário mínimo e fatias pequenas de fechamento (*closure slices pequenos*), sendo proibido repetir integralmente a frente ou abrir novo agente substituto.
   - O parent recebe e sintetiza apenas os resultados terminais estruturados para validar e tomar as decisões de roteamento e aceitação.
 
 ---
@@ -68,14 +70,22 @@ Existem dois seletores globais ortogonais e independentes:
 
 ---
 
-## 5. Matriz de Decisão Rápida
+## 5. Instalação e Escopo de Configuração
+
+- A instalação global preserva/instala a flag selecionada como aggressive (ou balanced) na configuração de usuário (`~/.codex/config.toml`).
+- Não injeta flags em repos consumidores: repositórios de trabalho e projetos dos usuários nunca recebem flags injetadas ou arquivos de configuração no workspace.
+
+---
+
+## 6. Matriz de Decisão Rápida
 
 | Critério | `balanced` (Padrão) | `aggressive` |
 | :--- | :--- | :--- |
 | **Meta Principal** | Menor tempo total de entrega (*wall-clock time*) | Menor consumo de tokens do parent GPT (*token offload*) |
-| **Trabalho Sequencial/Coeso** | Executado diretamente pelo Parent GPT se eficiente | Delegado a subagente |
+| **Papel do Parent** | Executor direto no caminho crítico e integrador | Arquiteto, decisor, integrador e gatekeeper |
+| **Trabalho Sequencial/Coeso** | Executado diretamente pelo Parent GPT se eficiente | Delegado a subagente persistente por frente coesa |
 | **Pesquisa e Exploração** | Híbrida: direta se concisa, delegada se ampla/volumosa | Sempre delegada |
-| **Escrita e Edição** | Direta se linear/crítica, delegada se paralelizável | Sempre delegada |
+| **Escrita e Edição** | Direta se linear/crítica, delegada se paralelizável | Sempre delegada (sem refazer bulk delegado) |
 | **Revisão e Validação** | Validação determinística direta + revisão por modo | Validação e revisão via subagentes dedicados |
 | **Backend de Execução** | Determinado por `subagent_backend` | Determinado por `subagent_backend` |
 | **Fan-Out de Delegação** | Condicional (paralelismo real / risco / contexto) | Exaustivo em lote para frentes independentes |

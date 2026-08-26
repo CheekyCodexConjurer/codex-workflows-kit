@@ -73,7 +73,12 @@ function Assert-CompletionPolicy {
     $requiredPatterns = @(
         '(?i)for every required job,? the parent must wait for a `?final response`? before `?synthesis or advancement`?',
         '(?i)while a job is `?running`?,? do not send an `?interruptive follow-up`? or `?replace`? it',
-        '(?i)`?interrupted`?,? `?errored`?,? `?timed out`?,? or `?missing final response`? means unavailable: keep `?the gate`? `?open/BLOCKED`?; do not use a `?silent fallback`?'
+        '(?i)`?interrupted`?,? `?errored`?,? `?timed out`?,? or `?missing final response`? means unavailable: keep `?the gate`? `?open/BLOCKED`?; do not use a `?silent fallback`?',
+        '(?i)(?:ap[o\u00f3]s timeout|aus[e\u00ea]ncia de fechamento|missing closure|timed? out).{0,120}(?:mesma trilha|same track)',
+        '(?i)invent[a\u00e1]rio m[i\u00ed]nimo|minimal inventory',
+        '(?i)closure slices pequenos|fatias pequenas de fechamento|small closure slices',
+        '(?i)(?:proibid[oa]|nunca|never).{0,60}(?:repetir integralmente|repeat integrally|reabrir do zero)',
+        '(?i)(?:proibid[oa]|nunca|never).{0,60}(?:abrir novo agente|open new agent|novo sub-agente)'
     )
 
     foreach ($pattern in $requiredPatterns) {
@@ -86,7 +91,8 @@ function Assert-CompletionPolicy {
         '(?i)\b(?:may|can|should|must|authorized to|authorised to|has permission to|is permitted to|is allowed to|is free to)\b\s+(?!not\b|never\b)[^.;]*\b(?:interrupt|cancel|terminate|stop)\w*\b',
         '(?i)\b(?:may|can|should|must|authorized to|authorised to|has permission to|is permitted to|is allowed to|is free to)\b\s+(?!not\b|never\b)[^.;]*\b(?:replace|substitute|switch|delegate|assign)\b',
         '(?i)\b(?:may|can|should|must|authorized to|authorised to|has permission to|is permitted to|is allowed to|is free to)\b\s+(?!not\b|never\b)[^.;]*\b(?:use|allow|permit|select|choose|switch to|fall back|fallback|backup|alternate worker|backup worker|another worker|another agent)\b',
-        '(?i)(?:synthesis|advancement|synthesize|advance|proceed|continue)[^.;]*(?:before|prior to|without|in the absence of)[^.;]*(?:final response|response|reply|answer|return)'
+        '(?i)(?:synthesis|advancement|synthesize|advance|proceed|continue)[^.;]*(?:before|prior to|without|in the absence of)[^.;]*(?:final response|response|reply|answer|return)',
+        '(?i)\b(?:may|can|should|must|authorized to|authorised to|pode|deve)\b[^.;]*\b(?:repetir integralmente|repeat integrally|abrir novo agente ap[o\u00f3]s timeout|open new agent on timeout)\b'
     )
     foreach ($pattern in $forbiddenPatterns) {
         if ([regex]::IsMatch($normalized, $pattern)) {
@@ -112,7 +118,9 @@ function Assert-RecoveryPolicy {
         '(?i)never a fake continuation',
         '(?i)running jobs',
         '(?i)explicitly aborted fronts',
-        '(?i)provider fallback stays forbidden'
+        '(?i)provider fallback stays forbidden',
+        '(?i)jobs ativos s[o\u00f3] permitem recovery quando todos t[e\u00ea]m durable spool/recovery comprovado|active jobs only allow recovery when all have proven durable spool/recovery',
+        '(?i)stale-running com daemon ausente (?:pode reconciliar|s[o\u00f3] reconcilia) apenas com capacidade durable instalada|stale-running with absent daemon reconciles only with installed durable capacity'
     )
 
     foreach ($pattern in $requiredPatterns) {
@@ -125,7 +133,8 @@ function Assert-RecoveryPolicy {
         '(?i)\b(?:may|can|should|must)\b[^.;]*\b(?:ask|request|prompt)\b[^.;]*\b(?:permission|consent)\b',
         '(?i)\b(?:may|can|should|must)\b[^.;]*\b(?:reuse|reopen|same session|original session)\b[^.;]*(?:continue|resume|recover)',
         '(?i)\b(?:may|can|should|must)\b[^.;]*\b(?:continue|resume|reopen|recover|allow_respawn)\b[^.;]*(?:running|aborted|in flight|in-flight|ongoing|missing final|without a final|divergent|different scope|new scope|beyond|outside|another|cwd|switch(?:ing)?|swap(?:ping)?|chang(?:e|ing|ed)|substitut\w*|provider|model)',
-        '(?i)\b(?:may|can|should|must)\b[^.;]*\b(?:open a new session|new session)\b[^.;]*(?:new front|another front|different front|other front)'
+        '(?i)\b(?:may|can|should|must)\b[^.;]*\b(?:open a new session|new session)\b[^.;]*(?:new front|another front|different front|other front)',
+        '(?i)\b(?:may|can|should|must|pode|deve)\b[^.;]*\b(?:repetir integralmente|repeat integrally|abrir novo agente ap[o\u00f3]s timeout)\b'
     )
 
     foreach ($pattern in $forbiddenPatterns) {
@@ -155,7 +164,9 @@ function Assert-McpFoundationSkill {
         '(?i)doctor',
         '(?i)read-only|somente leitura',
         '(?i)taskkill',
-        '(?i)auto-init|auto_init'
+        '(?i)auto-init|auto_init',
+        '(?i)nunca (?:restart|close|login|logout) Antigravity|proibido reiniciar,? fechar,? logar ou deslogar Antigravity|never restart,? close,? login,? or logout Antigravity',
+        '(?i)nunca tocar auth,? profile,? cookies ou cache|proibido tocar auth,? profile,? cookies,? cache|never touch auth,? profile,? cookies,? or cache'
     )
     foreach ($pattern in $requiredPatterns) {
         if (-not [regex]::IsMatch($Text, $pattern)) {
@@ -165,7 +176,8 @@ function Assert-McpFoundationSkill {
 
     $forbiddenAutomations = @(
         '(?i)\b(?:may|can|should|must|authorized to)\b\s+(?!not\b|never\b)[^.;]*\b(?:automate|auto-kill|auto-restart|auto-upgrade|auto-init)\b',
-        '(?i)\b(?:permite|autoriza|deve|pode)\b\s+(?!n[a\u00e3]o\b|nunca\b)[^.;]*\b(?:automatizar|auto-kill|auto-restart|auto-upgrade|auto-init)\b'
+        '(?i)\b(?:permite|autoriza|deve|pode)\b\s+(?!n[a\u00e3]o\b|nunca\b)[^.;]*\b(?:automatizar|auto-kill|auto-restart|auto-upgrade|auto-init)\b',
+        '(?i)\b(?:may|can|should|must|authorized to|pode|deve)\b\s+(?!not\b|never\b|n[a\u00e3]o\b|nunca\b)[^.;]*\b(?:reiniciar Antigravity|fechar Antigravity|restart Antigravity|close Antigravity|alterar cookies|limpar cache do antigravity|modificar auth|touch auth|touch profile|touch cookies|touch cache)\b'
     )
     foreach ($pattern in $forbiddenAutomations) {
         if ([regex]::IsMatch($normalized, $pattern)) {
@@ -195,7 +207,17 @@ function Assert-DeepSeekDaemonRestartLifecycle {
         '(?i)fail-closed',
         '(?i)AntigravityProcessError',
         '(?i)taskkill',
-        '(?i)Stop-Process'
+        '(?i)Stop-Process',
+        '(?i)Transport closed\s*\+\s*health ready|Transport closed e health ready',
+        '(?i)\brecovering\b',
+        '(?i)\babsent\b',
+        '(?i)\bowned-unhealthy\b',
+        '(?i)uma tentativa bounded|bounded single attempt|uma [u\u00fa]nica tentativa delimitada',
+        '(?i)sem provider/model fallback|sem fallback de provedor ou modelo|no provider/model fallback',
+        '(?i)nunca (?:restart|close|login|logout) Antigravity|proibido reiniciar,? fechar,? logar ou deslogar Antigravity|never restart,? close,? login,? or logout Antigravity',
+        '(?i)nunca tocar auth,? profile,? cookies ou cache|proibido tocar auth,? profile,? cookies,? cache|never touch auth,? profile,? cookies,? or cache',
+        '(?i)jobs ativos s[o\u00f3] permitem recovery quando todos t[e\u00ea]m durable spool/recovery comprovado|active jobs only allow recovery when all have proven durable spool/recovery',
+        '(?i)stale-running com daemon ausente (?:pode reconciliar|s[o\u00f3] reconcilia) apenas com capacidade durable instalada|stale-running with absent daemon reconciles only with installed durable capacity'
     )
     foreach ($pattern in $lifecycleRequired) {
         if (-not [regex]::IsMatch($lifecycleNormalized, $pattern)) {
@@ -219,6 +241,15 @@ function Assert-DeepSeekDaemonRestartLifecycle {
     if ([regex]::IsMatch($lifecycleNormalized, '(?i)\b(?:may|can|should|must|authorized to)\b\s+(?!not\b|never\b)[^.;]*\b(?:trigger on AntigravityProcessError|triggered by agy failure|trigger on HTTP error alone)\b')) {
         throw "$Label permits restarting on non-trigger conditions"
     }
+    if ([regex]::IsMatch($lifecycleNormalized, '(?i)\b(?:may|can|should|must|authorized to|pode|deve)\b\s+(?!not\b|never\b|n[a\u00e3]o\b|nunca\b)[^.;]*\b(?:reiniciar Antigravity|fechar Antigravity|restart Antigravity|close Antigravity|alterar cookies|limpar cache do antigravity|modificar auth|touch auth|touch profile|touch cookies|touch cache)\b')) {
+        throw "$Label permits touching Antigravity lifecycle or auth/cookies/cache"
+    }
+    if ([regex]::IsMatch($lifecycleNormalized, '(?i)\b(?:may|can|should|must|authorized to|pode|deve)\b\s+(?!not\b|never\b|n[a\u00e3]o\b|nunca\b)[^.;]*\b(?:recovery com jobs sem spool|reconciliar stale-running sem capacidade durable|recover active jobs without durable spool)\b')) {
+        throw "$Label permits recovery without proven durable spool or durable reconciliation capacity"
+    }
+    if ([regex]::IsMatch($lifecycleNormalized, '(?i)\b(?:m[u\u00fa]ltiplas tentativas de restart|tentativas infinitas|fallback para outro modelo na falha do daemon)\b')) {
+        throw "$Label permits unbounded restart attempts or provider fallback"
+    }
 }
 
 function Assert-DeepSeekDaemonRestartSkill {
@@ -238,7 +269,17 @@ function Assert-DeepSeekDaemonRestartSkill {
         '(?i)/health',
         '(?i)bridge\.sqlite',
         '(?i)bounded readiness',
-        '(?i)AntigravityProcessError'
+        '(?i)AntigravityProcessError',
+        '(?i)Transport closed\s*\+\s*health ready|Transport closed e health ready',
+        '(?i)\brecovering\b',
+        '(?i)\babsent\b',
+        '(?i)\bowned-unhealthy\b',
+        '(?i)uma tentativa bounded|bounded single attempt|uma [u\u00fa]nica tentativa delimitada',
+        '(?i)sem provider/model fallback|sem fallback de provedor ou modelo|no provider/model fallback',
+        '(?i)nunca (?:restart|close|login|logout) Antigravity|never restart,? close,? login,? or logout Antigravity',
+        '(?i)nunca tocar auth,? profile,? cookies ou cache|never touch auth,? profile,? cookies,? or cache',
+        '(?i)jobs ativos s[o\u00f3] permitem recovery quando todos t[e\u00ea]m durable spool/recovery comprovado|active jobs only allow recovery when all have proven durable spool/recovery',
+        '(?i)stale-running com daemon ausente (?:pode reconciliar|s[o\u00f3] reconcilia) apenas com capacidade durable instalada|stale-running with absent daemon reconciles only with installed durable capacity'
     )
     foreach ($pattern in $skillRequired) {
         if (-not [regex]::IsMatch($skillNormalized, $pattern)) {
@@ -397,7 +438,12 @@ function Assert-DeliveryReviewContract {
         '(?i)head_status|relativo ao HEAD|HEAD-relative',
         '(?i)raw_porcelain|fora do digest|outside the digest|outside digest',
         '(?i)staged path set|conjunto de (?:arquivos|caminhos) no stage',
-        '(?i)staged blob|conte[uú]do.{0,60}(?:aprovado|approved).{0,60}(?:index|stage)|(?:index|stage).{0,60}conte[uú]do.{0,60}(?:aprovado|approved)'
+        '(?i)staged blob|conte[uú]do.{0,60}(?:aprovado|approved).{0,60}(?:index|stage)|(?:index|stage).{0,60}conte[uú]do.{0,60}(?:aprovado|approved)',
+        '(?i)ortogonal [a\u00e0]s flags|orthogonal to flags',
+        '(?i)(?:revisor independente [u\u00fa]nico|reviewer independente [u\u00fa]nico|single independent reviewer).{0,60}(?:alvo congelado|target congelado|frozen target)',
+        '(?i)reparo consolidado no mesmo writer|consolidated repair in same writer',
+        '(?i)closure review de delta|re-revis[a\u00e3]o de delta|delta closure review',
+        '(?i)sem R\.A\.F\.V\. autom[a\u00e1]tico|never auto-run R\.A\.F\.V\.|never automatic R\.A\.F\.V\.'
     )
 
     foreach ($pattern in $requiredPatterns) {
@@ -413,7 +459,10 @@ function Assert-DeliveryReviewContract {
         'Review and Fix',
         'target-<hash-ou-timestamp>',
         'focada estritamente nos apontamentos',
-        'exclusively delta'
+        'exclusively delta',
+        'auto-run RAFV',
+        'RAFV automático',
+        'múltiplos revisores independentes para o mesmo target'
     )
     foreach ($token in $forbidden) {
         if ($Text.IndexOf($token, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
@@ -439,7 +488,15 @@ function Assert-DelegationContract {
         '(?i)token offload|desonera[c\u00e7][a\u00e3]o de tokens',
         '(?i)deepseek_continue',
         '(?i)allow_respawn\s*=\s*true',
-        '(?i)terminal result|resultado terminal'
+        '(?i)terminal result|resultado terminal',
+        '(?i)aggressive.{0,80}(?:parent|orquestrador).{0,60}(?:arquiteto|decisor|integrador|gatekeeper|architect|decider|integrator|gatekeeper)',
+        '(?i)pacote pequeno de evid[e\u00ea]ncia decis[o\u00f3]ria|decision evidence packet',
+        '(?i)sem refazer bulk delegado|never redo delegated bulk|sem refazer trabalho delegado',
+        '(?i)uma trilha persistente por frente coesa|trilha persistente por frente coesa|one persistent track per cohesive front',
+        '(?i)sem microdelega[c\u00e7][a\u00e3]o|proibida microdelega[c\u00e7][a\u00e3]o|no microdelegation',
+        '(?i)nova trilha apenas para deliverable independentemente aceit[a\u00e1]vel|new track only for independently acceptable deliverable',
+        '(?i)instala[c\u00e7][a\u00e3]o global preserva/instala a flag selecionada como aggressive|global installation preserves/installs selected flag as aggressive',
+        '(?i)n[a\u00e3]o injeta flags em repos consumidores|never inject flags into consumer repos|sem inje[c\u00e7][a\u00e3]o de flags em reposit[oó]rios consumidores'
     )
     foreach ($pattern in $requiredPatterns) {
         if (-not [regex]::IsMatch($normalized, $pattern)) {
@@ -450,7 +507,10 @@ function Assert-DelegationContract {
     $forbiddenPatterns = @(
         '(?i)Review-And-Fix-Vigorously',
         '(?i)\b(?:not the repository workforce|n[a\u00e3]o a for[c\u00e7]a de trabalho)\b',
-        '(?i)allow_respawn\s*=\s*true[^.;]*(?:rotineir|rotina|normalmente|routine|habitual)'
+        '(?i)allow_respawn\s*=\s*true[^.;]*(?:rotineir|rotina|normalmente|routine|habitual)',
+        '(?i)\b(?:pode|deve|autorizado a|is allowed to|may)\b[^.;]*\b(?:refazer bulk|refazer trabalho delegado|redo delegated bulk)\b',
+        '(?i)\b(?:pode|deve|autorizado a|is allowed to|may)\b[^.;]*\b(?:microdelegar|micro-delegar|microdelegation)\b',
+        '(?i)\b(?:injetar flags em reposit[o\u00f3]rios|gravar flags no workspace do consumidor|inject flags into consumer repos)\b'
     )
     foreach ($pattern in $forbiddenPatterns) {
         if ([regex]::IsMatch($normalized, $pattern)) {
@@ -741,7 +801,16 @@ function Test-OrchestrationPolicy {
         '(?i)nunca recupere job running',
         '(?i)abortad[oa] explicitamente',
         '(?i)sem fallback',
-        '(?i)fora do pedido original'
+        '(?i)fora do pedido original',
+        '(?i)aggressive.{0,100}(?:parent|orquestrador).{0,60}(?:arquiteto|decisor|integrador|gatekeeper)',
+        '(?i)pacote pequeno de evid[e\u00ea]ncia decis[o\u00f3]ria|evid[e\u00ea]ncia decis[o\u00f3]ria',
+        '(?i)sem refazer bulk delegado|nunca refazer bulk delegado',
+        '(?i)uma trilha persistente por frente coesa|trilha persistente por frente coesa',
+        '(?i)sem microdelega[c\u00e7][a\u00e3]o',
+        '(?i)nova trilha apenas para deliverable independentemente aceit[a\u00e1]vel',
+        '(?i)mesma trilha.{0,40}invent[a\u00e1]rio m[i\u00ed]nimo.{0,40}closure slices pequenos',
+        '(?i)proibido repetir integralmente',
+        '(?i)proibido abrir novo agente'
     )
 
     foreach ($pattern in $requiredPatterns) {
@@ -760,7 +829,10 @@ function Test-OrchestrationPolicy {
         '(?i)\b(?:pode|poderia|poder[a\u00e1]|deve|deveria)\b[^.;]*\b(?:refazer|repetir|duplicar)\b',
         '(?i)(?:n[a\u00e3]o precisa|sem precisar|sem a necessidade)\b[^.;]*\bdelegar\b',
         '(?i)\b(?:pode|poderia|poder[a\u00e1]|deve|deveria)\b[^.;]*\b(?:fechar|encerrar)\b[^.;]*(?:writer|agente|frente)',
-        '(?i)\b(?=[^.;]*\b(?:pode|podem|poderia|poderiam|poder[a\u00e1]|poder[a\u00e3]o|poderao|deve|devem|deveria|deveriam|s[a\u00e3]o autorizad[ao]s? a|est[a\u00e3]o autorizad[ao]s? a|usam)\b)(?=[^.;]*\b(?:spawn_agent|wait_agent|multi_agent_v1__spawn_agent)\b)(?=[^.;]*\b(?:supervis[a\u00e3]o|guardian)\b)[^.;]+'
+        '(?i)\b(?=[^.;]*\b(?:pode|podem|poderia|poderiam|poder[a\u00e1]|poder[a\u00e3]o|poderao|deve|devem|deveria|deveriam|s[a\u00e3]o autorizad[ao]s? a|est[a\u00e3]o autorizad[ao]s? a|usam)\b)(?=[^.;]*\b(?:spawn_agent|wait_agent|multi_agent_v1__spawn_agent)\b)(?=[^.;]*\b(?:supervis[a\u00e3]o|guardian)\b)[^.;]+',
+        '(?i)\b(?:pode|deve|autorizado a)\b[^.;]*\b(?:refazer bulk|refazer trabalho delegado)\b',
+        '(?i)\b(?:pode|deve|autorizado a)\b[^.;]*\b(?:microdelegar|micro-delegar)\b',
+        '(?i)\b(?:pode|deve|autorizado a)\b[^.;]*\b(?:repetir integralmente|abrir novo agente ap[o\u00f3]s timeout)\b'
     )
 
     foreach ($pattern in $forbiddenPatterns) {
@@ -930,6 +1002,18 @@ function Assert-OrchestrationPolicySelfCheck {
         [pscustomobject]@{
             Name = 'unconditional atomic local work tamper'
             Text = ($normalized + ' O trabalho local do parent e atomico.')
+        }
+        [pscustomobject]@{
+            Name = 'parent permitted to redo bulk delegated work tamper'
+            Text = ($normalized + ' O parent pode refazer bulk delegado localmente.')
+        }
+        [pscustomobject]@{
+            Name = 'microdelegation allowed tamper'
+            Text = ($normalized + ' O parent pode microdelegar tarefas pequenas.')
+        }
+        [pscustomobject]@{
+            Name = 'timeout repeat integrally tamper'
+            Text = ($normalized + ' O parent pode repetir integralmente a tarefa apos timeout.')
         }
     )
 
@@ -1393,43 +1477,47 @@ if ($agentsText.IndexOf('# BEGIN CODEX-WORKFLOWS-KIT: runtime', [StringCompariso
     throw 'Source template codex/AGENTS.md must not contain active runtime block values.'
 }
 
-Assert-CompletionPolicy -Label 'workflow skill' -Text $skill
+function Assert-AllContractRules {
+    param(
+        [Parameter(Mandatory)][scriptblock[]]$Checks
+    )
 
-Assert-RecoveryPolicy -Label 'workflow skill' -Text $skill
+    $failures = New-Object System.Collections.Generic.List[string]
+    foreach ($check in $Checks) {
+        try {
+            & $check
+        }
+        catch {
+            $failures.Add($_.Exception.Message)
+        }
+    }
 
-Assert-OrchestrationPolicy -Label 'codex AGENTS.md' -Text $agentsText
+    if ($failures.Count -gt 0) {
+        throw ("Contract validation failures ({0}):`n- {1}" -f $failures.Count, ($failures -join "`n- "))
+    }
+}
 
-Assert-DelegationContract -Label 'delegation reference' -Text $delegationRef
-
-Assert-DeliveryReviewContract -Label 'delivery-review reference' -Text $deliveryReviewRef
-
-Assert-DeliveryGateWiring -Label 'validation reference' -Text $validationRef
-
-Assert-DeliveryGateWiring -Label 'commit reference' -Text $commitRef
-
-Assert-DesignSpecContract -Label 'design spec' -Text $designSpec
-
-Assert-PlanContract -Label 'implementation plan' -Text $implPlan
-
-Assert-ReadmeContract -Label 'README.md' -Text $readmeText
-
-Assert-SecurityDocContract -Label 'docs/security.md' -Text $securityDoc
-
-Assert-OpenAiAgentContract -Label 'skills/workflows/agents/openai.yaml' -Text $openaiYaml
-
-Assert-InstallerOutputContract -Label 'scripts/install.ps1' -Text $installer
-
-Assert-DoctorOutputContract -Label 'scripts/doctor.ps1' -Text $doctorText
-
-Assert-SupersededSpecContract -Label 'docs/superpowers/specs/2026-08-19-promptpad-superpowers-compatibility-design.md' -Text $supersededSpec
-
-Assert-McpFoundationSkill -Label 'mcp-foundation skill' -Text $mcpSkill
-
-Assert-DeepSeekDaemonRestartPolicy -SkillText $mcpSkill -LifecycleText $mcpLifecycle -AgentsText $agentsText -GeminiText $geminiText
-
-Assert-McpTemplateRouting -Label 'codex AGENTS.md' -Text $agentsText
-
-Assert-McpTemplateRouting -Label 'antigravity GEMINI.md' -Text $geminiText
+Assert-AllContractRules -Checks @(
+    { Assert-CompletionPolicy -Label 'workflow skill' -Text $skill },
+    { Assert-RecoveryPolicy -Label 'workflow skill' -Text $skill },
+    { Assert-OrchestrationPolicy -Label 'codex AGENTS.md' -Text $agentsText },
+    { Assert-DelegationContract -Label 'delegation reference' -Text $delegationRef },
+    { Assert-DeliveryReviewContract -Label 'delivery-review reference' -Text $deliveryReviewRef },
+    { Assert-DeliveryGateWiring -Label 'validation reference' -Text $validationRef },
+    { Assert-DeliveryGateWiring -Label 'commit reference' -Text $commitRef },
+    { Assert-DesignSpecContract -Label 'design spec' -Text $designSpec },
+    { Assert-PlanContract -Label 'implementation plan' -Text $implPlan },
+    { Assert-ReadmeContract -Label 'README.md' -Text $readmeText },
+    { Assert-SecurityDocContract -Label 'docs/security.md' -Text $securityDoc },
+    { Assert-OpenAiAgentContract -Label 'skills/workflows/agents/openai.yaml' -Text $openaiYaml },
+    { Assert-InstallerOutputContract -Label 'scripts/install.ps1' -Text $installer },
+    { Assert-DoctorOutputContract -Label 'scripts/doctor.ps1' -Text $doctorText },
+    { Assert-SupersededSpecContract -Label 'docs/superpowers/specs/2026-08-19-promptpad-superpowers-compatibility-design.md' -Text $supersededSpec },
+    { Assert-McpFoundationSkill -Label 'mcp-foundation skill' -Text $mcpSkill },
+    { Assert-DeepSeekDaemonRestartPolicy -SkillText $mcpSkill -LifecycleText $mcpLifecycle -AgentsText $agentsText -GeminiText $geminiText },
+    { Assert-McpTemplateRouting -Label 'codex AGENTS.md' -Text $agentsText },
+    { Assert-McpTemplateRouting -Label 'antigravity GEMINI.md' -Text $geminiText }
+)
 
 $legacyPaths = @(
     'scripts\native-profile-contract.ps1',
@@ -1478,7 +1566,7 @@ foreach ($relativePath in @(git -C $repo ls-files)) {
 
     if ($relativePath -ne 'CHANGELOG.md' -and $relativePath -ne 'scripts/validate.ps1') {
         foreach ($token in $legacyTokens) {
-            if ($relativePath -eq 'codex/AGENTS.md' -and $token -in @('writer', 'reviewer', 'worker')) {
+            if (($relativePath -eq 'codex/AGENTS.md' -or $relativePath -eq 'skills/workflows/references/delivery-review.md') -and $token -in @('writer', 'reviewer', 'worker')) {
                 continue
             }
             if ($text.IndexOf($token, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
