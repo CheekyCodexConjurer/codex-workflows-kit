@@ -27,23 +27,30 @@ selected mode or an open gate requires it.
 
 ## Division of work
 
-- The parent GPT is the brain, not the repository workforce: decompose,
-  route, prioritize, synthesize, integrate, validate, and decide.
-- Native mode uses native Codex subagents for every material bounded front;
-  each native spawn passes `model="gpt-5.6-luna"` and
-  `reasoning_effort="max"` explicitly, states normal/default mode, and never
-  selects Flash/Fast.
-- DeepSeek mode uses `deepseek_spawn`/`deepseek_continue`/`deepseek_follow`
-  for every material bounded front — read, research, write, test, and review
-  work — one agent per front, never duplicate a front, never repeat a
-  delegated front locally. DeepSeek-specific daemon recovery is allowed only
-  in this selected mode and only under the MCP foundation exception.
+- Decompose, route, prioritize, synthesize, integrate, validate, and decide.
+  Delegation is governed by the two orthogonal selectors (`subagent_backend` and
+  `delegation_policy`); see `references/delegation.md`.
+- Under `balanced` (default; wall-clock optimization): parent directly performs
+  cohesive, sequential, critical-path material work when delegation round-trip
+  would not help; delegates for concrete independent parallelism, specialization,
+  risk isolation, or large-context compression. No mandatory fan-out.
+- Under `aggressive` (parent-token offload): delegate all material read, research,
+  write, test, and review work; maintain one persistent agent per cohesive lane
+  and parallelize genuinely independent fronts.
+- Native mode uses native Codex subagents for delegated material fronts; each
+  native spawn passes `model="gpt-5.6-luna"` and `reasoning_effort="max"`
+  explicitly, states normal/default mode, and never selects Flash/Fast. Forbids
+  DeepSeek MCP.
+- DeepSeek mode uses `deepseek_spawn`/`deepseek_continue`/`deepseek_follow` for
+  delegated material fronts — one agent per front, never duplicate a front, never
+  repeat a delegated front locally. DeepSeek-specific daemon recovery is allowed
+  only in this selected mode and only under the MCP foundation exception.
+  Forbids native work tools.
 - The parent owns vision: inspect the image yourself and pass a concise
   `visual_context` to the delegated agent (direct observations, visible
   text, interpretation, uncertainty). Do not delegate blind image
   interpretation.
-- Local work is atomic only: to formulate a delegation, to integrate a
-  result, or to spot-check a claim.
+- Never redo a delegated material front locally.
 
 ## Lifecycle
 
@@ -52,38 +59,41 @@ FRAME -> FANOUT -> COLLECT -> ACT -> VERIFY -> REVIEW -> DONE
 ```
 
 - FRAME: goal, expected behavior, validation, and done gate before acting.
-- FANOUT: map independent fronts, dependencies, and exclusive/shared
-  resources before waiting; launch every independent material front as a batch
-  before the first follow, keeping only real dependency or shared-resource
-  lanes serial; keep a stable request_id ledger (front, agent, job, state,
-  consumed, closed); spawn one MCP agent per independent front and continue
-  only genuine orchestration while they run.
+- FANOUT: policy-aware delegation. In `balanced`, fan out conditionally for
+  concrete independent parallelism, specialization, risk isolation, or
+  large-context compression. In `aggressive`, map all independent fronts,
+  dependencies, and exclusive/shared resources before waiting; launch every
+  independent material front in batch before the first follow. Keep a stable
+  request_id ledger (front, agent, job, state, consumed, closed).
 - COLLECT: consume a result when a gate depends on it or no useful work
   remains; consume every job and close each agent after integration.
 - ACT: decide from collected evidence; route defects back to the same front
-  via `deepseek_continue`, re-plan, or stop.
-- VERIFY: prove the affected behavior with the mode's validation; inspect the
+  via `deepseek_continue` (or native follow-up), re-plan, or stop.
+- VERIFY: prove the affected behavior with deterministic validation; inspect the
   integrated diff.
-- REVIEW: after material write output, ask an independent agent to review it.
+- REVIEW: after material write output in write modes, run independent review
+  over the frozen target (`references/delivery-review.md`).
 - DONE: run the final audit and close the local commit series before the
   final response.
 
 ## Backend tool semantics
 
 - In DeepSeek mode, `deepseek_spawn` opens one independent front;
-  `deepseek_continue` follows the same front after a result, correction, or
+  `deepseek_continue` follows the same open front after a result, correction, or
   review; and `deepseek_follow` consumes a result when a gate depends on it.
 - In DeepSeek mode, `deepseek_consult` is an exceptional snapshot of a
   running agent and never a poll; `deepseek_abort` is only for an obsolete or
   explicitly stopped front; `deepseek_close` retires an agent after its result
   is consumed; and `deepseek_recover_result` is delivery recovery only.
-- A DeepSeek correction after a premature close is limited to
-  `allow_respawn=true` for the same request/scope/cwd/ownership/model
-  route, with a new session/agent with lineage, no new consent prompt, and never a
-  fake continuation. A terminal result is required; never recover running
-  jobs, missing final responses, explicitly aborted fronts/jobs, divergent scope, or
-  material changes; provider fallback stays forbidden.
-- In native mode, use the native task lifecycle with the same completion,
+- A persistent DeepSeek lane normally continues the same open agent with
+  `deepseek_continue`, without `allow_respawn`. A DeepSeek correction after a
+  premature close is limited to `allow_respawn=true` for the same
+  request/scope/cwd/ownership/model route, with a new session/agent with lineage,
+  no new consent prompt, and never a fake continuation. A terminal result is
+  required; never recover running jobs, missing final responses, explicitly
+  aborted fronts/jobs, divergent scope, or material changes; provider fallback
+  stays forbidden; never use `allow_respawn` as routine persistence.
+- In native mode, use native subagents with the same completion,
   review, and no-fallback rules; do not contact the DeepSeek MCP.
 
 ## Completion contract
@@ -133,35 +143,48 @@ without an explicit request.
 
 ## Delivery commit gate
 
-Write modes — `IMPL.AUTO`, `IMPL`, `IMPL.PHASE`, `DELIVER.AUTO`, `BUG.FIX`,
-`DEBUG`, `R.A.F.V` — end with a validated, reviewed, scoped local commit
-series; never push. `references/commit.md` owns the gate details:
+Write modes (`IMPL.AUTO`, `IMPL`, `IMPL.PHASE`, `DELIVER.AUTO`, `BUG.FIX`,
+`DEBUG`) and manual `R.A.F.V` end with a validated, reviewed, scoped local
+commit series; never push. `references/delivery-review.md` and
+`references/commit.md` own the gate details:
 
 - Record the baseline and claim-map/path ownership before work; the series
   commits only owned changes — never pre-existing, staged, or other-front
   changes.
+- Freeze target with staging- and host-code-page-invariant identity (baseline, owned HEAD-relative
+  content status, integrated diff against HEAD, per-file hashes; raw porcelain
+  captured as evidence outside digest), run structured review, and issue
+  APPROVED/BLOCKED verdict; blocked verdicts use at most 2 consolidated repair
+  rounds and fail closed if blockers persist.
 - Block without changing the index on ambiguous overlap, secrets, or
   generated/cache/local/ignored candidates.
 - Build a coherent commit-map with separate commits; run targeted and
   integrated validation plus `git diff --check`.
-- Independent review before commit; follow-up fixes are new commits — no
-  amend or rewrite.
+- Commit only after APPROVED review with zero blockers on matching frozen target:
+  verify exact target_id before staging; after staging and immediately before commit,
+  recompute staging- and host-code-page-invariant target_id, require exact equality, verify the staged
+  path set matches the approved owned set, and verify every staged blob matches the
+  Git-normalized approved content; follow-up fixes are new commits — no amend or rewrite.
 - `COMMIT` stays git-only for pre-existing or exceptional dirty worktrees;
-  `REWORK` stays no-write: roadmap only, never implementation.
+  `REWORK` stays no-write: roadmap only, never implementation; `R.A.F.V` is
+  an explicitly requested separate mode, never auto-run.
 
 ## Final audit
 
 Before the final response, prove and report: every required job consumed
 (`completed`, `completed_partial`, `failed`, `timed_out`, `aborted`, or
-`explicitly unavailable-blocked`), validation run, integrated diff inspected,
-independent review requested after material write output, local commit series
-closed without push, and remaining risks. Never declare success with an open
-required gate.
+`explicitly unavailable-blocked`), deterministic validation run, exact frozen
+target (staging- and host-code-page-invariant identity: baseline, HEAD-relative status, diff, hashes),
+approved delivery review with zero blockers, repaired findings revalidated, local
+commit series closed without push, and remaining risks. Never declare success with
+an open required gate.
 
 ## References
 
 Open only when the mode or a gate requires it:
 
+- `references/delegation.md` — `balanced` vs `aggressive` delegation policies
+- `references/delivery-review.md` — delivery quality review gate and repair loop
 - `references/research.md` — `RESEARCH.DEEP`
 - `references/observability.md` — logging decisions
 - `references/validation.md` — delivery gate and installed mirrors

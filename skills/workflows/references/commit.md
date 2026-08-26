@@ -7,8 +7,9 @@ unrelated worktree into one commit.
 ## Delivery commit gate
 
 Write modes (`IMPL.AUTO`, `IMPL`, `IMPL.PHASE`, `DELIVER.AUTO`, `BUG.FIX`,
-`DEBUG`, `R.A.F.V`) close with a validated, reviewed, scoped local commit
-series; never push.
+`DEBUG`) and manual `R.A.F.V` close with a validated, reviewed, scoped local
+commit series; never push. `R.A.F.V` is an explicitly requested separate
+mode, never run automatically.
 
 - Record the baseline (status, staged and unstaged diffs, untracked files,
   merge/rebase state, branch, remotes, upstream) and the claim-map/path
@@ -16,11 +17,14 @@ series; never push.
 - The series contains only owned changes: never pre-existing, staged, or
   other-front changes. Block without changing the index on ambiguous
   overlap, secrets, or generated/cache/local/ignored candidates.
-- Build a coherent commit-map with separate, reversible commits; run
-  targeted and integrated validation plus `git diff --check` before
-  committing.
-- Independent review before commit; follow-up fixes are new commits — no
-  amend, reset, rebase, or rewrite; never push.
+- Register the formal frozen target with staging- and host-code-page-invariant deterministic identity (`target_id`: baseline, owned HEAD-relative content status, integrated diff against HEAD with Git stdout normalized as UTF-8, and per-file SHA256 hashes; raw porcelain/index placement excluded from digest; validation evidence).
+- An independent review (`references/delivery-review.md`) must yield an
+  `APPROVED` verdict with zero blockers (`zero blockers`) on the matching
+  frozen target before the first commit.
+- Commit gate: verify exact `target_id` before staging; after staging and immediately before commit, recompute the staging-invariant identity (`target_id`) and require equality, verify the staged path set is exactly the approved owned set, and verify every staged blob equals the Git-normalized approved content.
+- Blocked reviews use a consolidated repair cycle (maximum 2 rounds, then fail
+  closed). Follow-up fixes are new commits — no amend, reset, rebase, or
+  rewrite; never push.
 - `COMMIT` covers pre-existing or exceptional dirty worktrees and remains
   git-only; `REWORK` stays no-write.
 

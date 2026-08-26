@@ -1,8 +1,11 @@
 # Especificação de Design: Compatibilidade Superpowers no Codex Workflows PromptPad
 
+> [!WARNING]
+> **SUPERSEDED / DOCUMENTO HISTÓRICO**: Esta especificação preliminar de 2026-08-19 foi superada pela arquitetura de 2026-08-26 ([`docs/superpowers/specs/2026-08-26-workflow-rearchitecture-design.md`](2026-08-26-workflow-rearchitecture-design.md)). Ela é retida exclusivamente como contexto histórico e não reflete a arquitetura de seletores ortogonais (`subagent_backend` e `delegation_policy`) nem a revisão independente de entrega com alvo congelado.
+
 - **Data**: 2026-08-19
-- **Status**: Proposta em Revisão (Aguardando Aprovação do Usuário)
-- **Autoridade**: Codex Workflows Kit Architecture
+- **Status**: Superseded (Superado pela arquitetura de 2026-08-26)
+- **Autoridade**: Codex Workflows Kit Architecture (Histórico)
 - **Alvo**: `codex-workflows-prompt-pad` (Codex & Antigravity)
 
 ---

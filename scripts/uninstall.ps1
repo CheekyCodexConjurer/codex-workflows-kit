@@ -99,7 +99,7 @@ function Assert-InstallState {
     }
 
     $schemaText = [string]$State.schemaVersion
-    if ($schemaText -notin @('1', '2', '3', '4')) {
+    if ($schemaText -notin @('1', '2', '3', '4', '5')) {
         throw "Install state has an unsupported schema: $schemaText"
     }
     $schema = [int]$schemaText
@@ -121,29 +121,50 @@ function Assert-InstallState {
         throw 'Only schema 3 and later install state may contain pendingFiles.'
     }
 
-    if ($schema -eq 4) {
+    if ($schema -ge 4) {
         if (-not ($State.PSObject.Properties.Name -contains 'codexFeaturesPrior') -or $null -eq $State.codexFeaturesPrior) {
-            throw 'Schema 4 install state is missing codexFeaturesPrior.'
+            throw "Schema $schema install state is missing codexFeaturesPrior."
         }
         if (-not ($State.codexFeaturesPrior.PSObject.Properties.Name -contains 'multi_agent')) {
-            throw 'Schema 4 install state is missing the multi_agent feature record.'
+            throw "Schema $schema install state is missing the multi_agent feature record."
         }
         $featureRecord = $State.codexFeaturesPrior.multi_agent
         if ($null -eq $featureRecord -or -not ($featureRecord.PSObject.Properties.Name -contains 'present') -or -not ($featureRecord.PSObject.Properties.Name -contains 'value')) {
-            throw 'Schema 4 install state contains an invalid multi_agent feature record.'
+            throw "Schema $schema install state contains an invalid multi_agent feature record."
         }
         if ($featureRecord.present -notin @($true, $false)) {
-            throw 'Schema 4 install state has an invalid multi_agent presence flag.'
+            throw "Schema $schema install state has an invalid multi_agent presence flag."
         }
         if ([bool]$featureRecord.present -and $null -eq $featureRecord.value) {
-            throw 'Schema 4 install state has a present multi_agent record without a value.'
+            throw "Schema $schema install state has a present multi_agent record without a value."
         }
         if (-not [bool]$featureRecord.present -and $null -ne $featureRecord.value) {
-            throw 'Schema 4 install state has an absent multi_agent record with a value.'
+            throw "Schema $schema install state has an absent multi_agent record with a value."
         }
-        if ($State.PSObject.Properties.Name -contains 'codexBackend') {
-            Assert-CodexBackendState -BackendState $State.codexBackend
+    }
+
+    if ($State.PSObject.Properties.Name -contains 'codexBackend') {
+        if ($null -eq $State.codexBackend) {
+            throw "Install state contains an invalid codexBackend property."
         }
+        Assert-CodexBackendState -BackendState $State.codexBackend
+    }
+    if ($State.PSObject.Properties.Name -contains 'codexDelegation') {
+        if ($null -eq $State.codexDelegation) {
+            throw "Install state contains an invalid codexDelegation property."
+        }
+        Assert-CodexDelegationState -DelegationState $State.codexDelegation
+    }
+
+    if ($schema -ge 5) {
+        if (-not ($State.PSObject.Properties.Name -contains 'codexBackend') -or $null -eq $State.codexBackend) {
+            throw "Schema $schema install state is missing required codexBackend."
+        }
+        Assert-CodexBackendState -BackendState $State.codexBackend
+        if (-not ($State.PSObject.Properties.Name -contains 'codexDelegation') -or $null -eq $State.codexDelegation) {
+            throw "Schema $schema install state is missing required codexDelegation."
+        }
+        Assert-CodexDelegationState -DelegationState $State.codexDelegation
     }
 
     $seenPaths = @{}
@@ -337,22 +358,20 @@ function Remove-ManagedAgentsBlock {
         return
     }
 
-    $begin = '# BEGIN CODEX-WORKFLOWS-KIT'
-    $end = '# END CODEX-WORKFLOWS-KIT'
     $content = Get-Content -LiteralPath $agentsMdPath -Raw -Encoding UTF8
-    $start = $content.IndexOf($begin, [StringComparison]::Ordinal)
-    if ($start -lt 0) {
+    $blockRegex = '(?ms)^# BEGIN CODEX-WORKFLOWS-KIT\s*\r?\n.*?^# END CODEX-WORKFLOWS-KIT\s*(?:\r?\n|$)'
+    $match = [regex]::Match($content, $blockRegex)
+    if (-not $match.Success) {
+        if ($content.IndexOf('# BEGIN CODEX-WORKFLOWS-KIT', [StringComparison]::Ordinal) -ge 0) {
+            throw "Managed AGENTS.md block is incomplete: $agentsMdPath"
+        }
         return
-    }
-    $endStart = $content.IndexOf($end, $start, [StringComparison]::Ordinal)
-    if ($endStart -lt 0) {
-        throw "Managed AGENTS.md block is incomplete: $agentsMdPath"
     }
     if (-not (Test-CanRemoveRecordedFile -Path $agentsMdPath)) {
         return
     }
 
-    $result = ($content.Substring(0, $start) + $content.Substring($endStart + $end.Length)).Trim()
+    $result = ($content.Substring(0, $match.Index) + $content.Substring($match.Index + $match.Length)).Trim()
     if (Confirm-UninstallAction -Target $agentsMdPath -Action 'remove managed AGENTS.md block') {
         Backup-ForcedFile -Path $agentsMdPath
         if ([string]::IsNullOrWhiteSpace($result)) {
@@ -563,7 +582,7 @@ Remove-ManagedConfigBlocks
 Remove-ManagedAgentsBlock
 Remove-ManagedGeminiBlock
 
-if ($stateSchema -ge 4 -and ($state.PSObject.Properties.Name -contains 'codexBackend')) {
+if ($state.PSObject.Properties.Name -contains 'codexBackend') {
     Restore-BackendManagedConfig
 }
 elseif ($stateSchema -ge 4 -and ($state.PSObject.Properties.Name -contains 'codexFeaturesPrior')) {

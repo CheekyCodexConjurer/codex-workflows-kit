@@ -2,17 +2,13 @@
 
 Kit local, Windows-first, para instalar uma única interface de workflow:
 $workflows. Ele inclui a skill condicional evidence-first e um prompt pad
-AutoHotkey opcional. O executor principal é o DeepSeek Sub-Agent MCP; o
-parent GPT é o maestro que delega, integra e valida. Tudo parte de uma
-worktree versionada, com backup antes de sobrescrever, dry-run, diagnóstico e
-remoção segura.
+AutoHotkey opcional. Possui dois seletores globais ortogonais para novas tarefas/sessões:
+`subagent_backend` (`native` | `deepseek`) e `delegation_policy` (`balanced` | `aggressive`).
+O parent GPT é o maestro que delega, integra, valida e decide. Tudo parte de uma
+worktree versionada, com backup antes de sobrescrever, alternâncias transacionais com rollback,
+diagnóstico e remoção segura.
 
-Todo pedido não qualificado de sub-agentes, agentes ou delegação — com ou sem
-`$workflows` — usa as ferramentas `deepseek_spawn`/`deepseek_continue`/
-`deepseek_follow` do DeepSeek Sub-Agent MCP. As ferramentas nativas de
-sub-agentes do Codex (`multi_agent_v1__spawn_agent`/`spawn_agent`/`wait_agent`)
-são proibidas, exceto quando o usuário pedir explicitamente sub-agentes
-nativos do Codex.
+O seletor global de backend define o executor de sub-agentes (`native` com `gpt-5.6-luna` ou `deepseek` via DeepSeek Sub-Agent MCP). A política de delegação define o equilíbrio operacional (`balanced` otimizando wall-clock time ou `aggressive` otimizando desoneração de tokens). Em modos de escrita, o módulo invariante de qualidade de entrega congela o alvo e exige revisão estruturada independente com veredito APPROVED antes do commit local fechado.
 
 > **Segurança primeiro.** Nunca instale por pipeline remoto. Clone ou baixe o
 > repositório, revise os scripts em scripts/ e execute-os do seu próprio
@@ -28,24 +24,23 @@ Documentação: [Segurança](docs/security.md) ·
 | skill workflows | ~/.agents/skills/workflows, ~/.gemini/antigravity/skills/workflows, ~/.gemini/config/skills/workflows | única interface para os modos $workflows |
 | skill evidence-first | ~/.agents/skills/evidence-first, ~/.gemini/antigravity/skills/evidence-first, ~/.gemini/config/skills/evidence-first | verificação de claims materiais |
 | skill mcp-foundation | ~/.agents/skills/mcp-foundation, ~/.gemini/antigravity/skills/mcp-foundation, ~/.gemini/config/skills/mcp-foundation | roteamento, uso e manutenção segura de Context7, CodeGraph e Serena |
-| codex/AGENTS.md | ~/.codex/AGENTS.md | regras globais universais (Codex) |
+| codex/AGENTS.md | ~/.codex/AGENTS.md | regras globais universais e bloco de runtime ativo (Codex) |
 | antigravity/GEMINI.md | ~/.gemini/config/GEMINI.md | regras globais universais (Antigravity) |
-| feature multi_agent | config.toml ([features]) | desliga a rota multi-agente embutida no perfil safe; reativável manualmente |
-| prompt pad opcional | caminho escolhido pelo usuário | atalhos NUM para $workflows; atalho no Startup com -InstallAhk |
-| scripts locais | checkout | instalação, validação, diagnóstico e remoção |
+| matriz de backend | config.toml | impõe o backend de subagentes selecionado |
+| prompt pad opcional | caminho escolhido pelo usuário | atalhos NUM para $workflows e controle de seletores; atalho no Startup com -InstallAhk |
+| scripts locais | checkout | instalação, alternância de backend/política, validação, diagnóstico e remoção |
 
 O contrato único e detalhado é skills/workflows/SKILL.md (ciclo de vida,
-semântica das ferramentas MCP, modos pela tripla capacidades | permissão |
+semântica das ferramentas MCP/nativas, modos pela tripla capacidades | permissão |
 gate de pronto e auditoria final); skills/workflows/references/ contém apenas
-referências especializadas abertas sob demanda (research, observability,
+referências especializadas abertas sob demanda (delegation, delivery-review, research, observability,
 validation, commit e quality-ratchet).
 
 ## Requisitos
 
 - Windows 10 ou 11;
 - PowerShell 5.1+ ou PowerShell 7+;
-- Codex (o perfil safe define `multi_agent = false` para orquestração
-  exclusivamente via DeepSeek Sub-Agent MCP);
+- Codex (o perfil safe gerencia o seletor `subagent_backend` — `native` com `gpt-5.6-luna` ou `deepseek` via DeepSeek Sub-Agent MCP);
 - opcionalmente, AutoHotkey v2 para o prompt pad.
 
 Se a política de execução exigir, permita apenas o escopo do usuário depois de
@@ -69,7 +64,7 @@ docs/                     Documentação pública
 | Perfil | Escopo |
 |---|---|
 | minimal | skills workflows e evidence-first |
-| safe (padrão) | skills, regras globais (AGENTS.md, GEMINI.md) e o gate `multi_agent = false` |
+| safe (padrão) | skills, regras globais (AGENTS.md, GEMINI.md) e a imposição do backend selecionado |
 
 ~~~powershell
 .\scripts\install.ps1 -Profile safe
@@ -96,17 +91,16 @@ faz backup antes de sobrescrever e preserva arquivos fora do seu estado.
 O perfil safe não instala mais defaults gerenciados em `[agents]` do
 config.toml do Codex: uma seção `[agents]` existente não gerenciada é
 preservada, e blocos gerenciados antigos do kit são removidos na reexecução.
-O perfil safe também define `multi_agent = false` na tabela `[features]` do
-config.toml do Codex, preservando as demais chaves e comentários: a
-orquestração passa a ser exclusivamente via DeepSeek Sub-Agent MCP, e a rota
-multi-agente embutida fica desligada. Você pode reativá-la manualmente quando
-quiser; o valor anterior é registrado no estado de instalação e restaurado no
-uninstall — somente se `multi_agent` ainda for `false`. Esse valor registrado
-é o observado antes da primeira instalação do kit: reexecuções não o
-sobrescrevem, para que o uninstall sempre restaure o estado pré-kit. Se você
-o alterou, o kit avisa e preserva sua escolha. Estados de schema 3 existentes
-continuam legíveis; execute `install.ps1 -Profile safe` uma vez para registrar
-o gate.
+O perfil safe também gerencia o backend de subagentes na tabela `[features]` do
+config.toml do Codex: impõe o backend selecionado (`native` ou `deepseek`) e
+configura a matriz apropriada de 5 chaves no config.toml. Divergências ou drift na
+projeção gerenciada de 5 chaves falham fechado; campos de configuração não relacionados
+(fora da projeção gerenciada de backend) são preservados e reconciliados no ledger de
+instalação. Você pode alternar os seletores a qualquer momento via scripts; o valor
+anterior é registrado no estado de instalação e restaurado no uninstall. Se você o
+alterou externamente, o kit avisa e preserva sua escolha. Estados de schema 3 e 4
+existentes continuam legíveis; execute `install.ps1 -Profile safe` para atualizar o
+estado ao schema 5.
 
 ### Migração segura
 
@@ -127,16 +121,51 @@ flowchart LR
     USER["Usuário"] --> WF["$workflows mode=<MODE>"]
     PAD["Prompt pad"] --> WF
     WF --> RULES["SKILL.md (política única)"]
-    RULES --> MCP["DeepSeek Sub-Agent MCP"]
-    MCP --> PARENT["parent GPT (maestro)"]
-    PARENT --> GATE["diff + validação"]
+    RULES --> BACKEND["Backend Selecionado (native | deepseek)"]
+    BACKEND --> PARENT["parent GPT (maestro)"]
+    PARENT --> GATE["diff + validação + frozen target"]
 ~~~
 
 O único prefixo de workflow é $workflows. Consulte skills/workflows/SKILL.md
 para os 16 modos (tripla capacidades | permissão | gate de pronto) e o ciclo
-de vida; referências especializadas são abertas sob demanda. O executor
-principal é o DeepSeek Sub-Agent MCP; o parent GPT interpreta imagens,
-integra, valida e decide.
+de vida; referências especializadas são abertas sob demanda. O executor de
+sub-agentes é governado pelo seletor `subagent_backend` (`native` com `gpt-5.6-luna` ou
+`deepseek` via DeepSeek Sub-Agent MCP), sob a estratégia de `delegation_policy` (`balanced`
+ou `aggressive`); o parent GPT interpreta imagens, integra, valida e decide.
+
+## Alternância de Backend e Política
+
+O kit oferece comandos transacionais com verificação de drift (divergências na projeção gerenciada falham fechado; campos de configuração não relacionados são preservados e reconciliados), backups automáticos e rollback em caso de falha:
+
+~~~powershell
+# Alternar backend de subagentes (native ou deepseek)
+.\scripts\switch-subagent-backend.ps1 -Backend native
+.\scripts\switch-subagent-backend.ps1 -Backend deepseek
+
+# Alternar política de delegação (balanced ou aggressive)
+.\scripts\switch-subagent-policy.ps1 -Policy balanced
+.\scripts\switch-subagent-policy.ps1 -Policy aggressive
+
+# Consultar status ativo
+.\scripts\switch-subagent-backend.ps1 -Status
+.\scripts\switch-subagent-policy.ps1 -Status
+~~~
+
+### Prompt Pad (AutoHotkey)
+
+Com o Prompt Pad ativado (`ScrollLock`), o teclado numérico oferece atalhos diretos para workflows e atalhos com modificador `Ctrl` para controle dos seletores:
+
+| Atalho | Ação / Comando Injetado |
+|---|---|
+| `Numpad0` .. `Numpad9` | `$workflows mode=<MODE>` (Workflows canônicos) |
+| `Ctrl + Numpad1` (`^Numpad1`) | `.\scripts\switch-subagent-backend.ps1 -Backend native` |
+| `Ctrl + Numpad2` (`^Numpad2`) | `.\scripts\switch-subagent-backend.ps1 -Backend deepseek` |
+| `Ctrl + Numpad4` (`^Numpad4`) | `.\scripts\switch-subagent-policy.ps1 -Policy balanced` |
+| `Ctrl + Numpad5` (`^Numpad5`) | `.\scripts\switch-subagent-policy.ps1 -Policy aggressive` |
+| `Ctrl + Numpad0` (`^Numpad0`) | `.\scripts\switch-subagent-backend.ps1 -Status` |
+
+> [!NOTE]
+> Os comandos de controle injetados pelo Prompt Pad assumem que o shell ativo está posicionado no diretório raiz do repositório (`checkout root`).
 
 ## Primeiros passos
 
@@ -149,8 +178,8 @@ $workflows mode=PLAN.AUTO
 ~~~
 
 O contrato do modo define as capacidades, a permissão de mudança, a validação
-e o gate de pronto; o executor é o DeepSeek Sub-Agent MCP e o parent GPT
-integra, valida e decide.
+e o gate de pronto; o executor de subagentes é governado pelo backend selecionado
+e o parent GPT integra, valida e decide.
 
 ## Validação
 

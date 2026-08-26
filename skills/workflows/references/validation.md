@@ -10,21 +10,28 @@
 
 ## During delivery
 
-- Run targeted validation first; broaden it only when the contract or blast
-  radius demands it.
+- Run targeted deterministic validation first; broaden it to integrated
+  regression as required by the blast radius.
 - Inspect the integrated diff, including unintended paths and generated files.
-- Use an independent review of the frozen result when the selected mode
-  or risk requires it.
+- Freeze the target with staging- and host-code-page-invariant deterministic identity (`target_id`: baseline, owned HEAD-relative content status, integrated diff against HEAD with Git stdout normalized as UTF-8, per-file SHA256 hashes, excluding index placement; raw porcelain captured as evidence outside digest; validation evidence) and execute an independent review covering the 5 explicit pillars
+  (`references/delivery-review.md`).
 
 ## Delivery commit gate
 
-Write modes end with a validated, reviewed, scoped local commit series and
-never push. Record the baseline and claim-map/path ownership before work;
-block on pre-existing, staged, or other-front changes and on
-generated/cache/local/ignored candidates. Run `git diff --check` plus
-targeted and integrated validation before committing. Independent review
-before the first commit; follow-up fixes are new commits — no amend or
-rewrite.
+Write modes (`IMPL.AUTO`, `IMPL`, `IMPL.PHASE`, `DELIVER.AUTO`, `BUG.FIX`,
+`DEBUG`) and manual `R.A.F.V` end with a validated, reviewed, scoped local
+commit series and never push. `R.A.F.V` remains a separate explicitly
+requested mode, never run automatically.
+
+- Record the baseline and claim-map/path ownership before work; block on
+  pre-existing, staged, or other-front changes and on generated/cache/local/ignored
+  candidates.
+- Run `git diff --check` plus targeted and integrated deterministic validation.
+- An independent review must yield an `APPROVED` verdict with zero blockers
+  (`zero blockers`) against the matching frozen target before committing.
+- Commit gate: verify exact `target_id` before staging; after staging and immediately before commit, recompute the staging-invariant identity (`target_id`) and require equality, verify the staged path set is exactly the approved owned set, and verify every staged blob equals the Git-normalized approved content.
+- Blocked reviews use a consolidated repair cycle (maximum 2 rounds, then fail
+  closed). Follow-up fixes are new commits — no amend or rewrite.
 
 ## Repository and installed mirrors
 

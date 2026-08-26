@@ -54,4 +54,15 @@ Numpad8::PastePrompt("$workflows mode=REWORK")
 
 Numpad9::PastePrompt("$workflows mode=RESEARCH.DEEP")
 
+; --- Control Commands (Ctrl + Numpad) ---
+^Numpad1::PastePrompt(".\scripts\switch-subagent-backend.ps1 -Backend native")
+
+^Numpad2::PastePrompt(".\scripts\switch-subagent-backend.ps1 -Backend deepseek")
+
+^Numpad4::PastePrompt(".\scripts\switch-subagent-policy.ps1 -Policy balanced")
+
+^Numpad5::PastePrompt(".\scripts\switch-subagent-policy.ps1 -Policy aggressive")
+
+^Numpad0::PastePrompt(".\scripts\switch-subagent-backend.ps1 -Status")
+
 #HotIf

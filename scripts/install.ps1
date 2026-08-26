@@ -150,6 +150,9 @@ $script:PendingFiles = @{}
 $script:RemovedParents = New-Object System.Collections.Generic.List[string]
 $script:PriorFeaturesRecord = $null
 $script:PriorBackendState = $null
+$script:PriorDelegationState = $null
+$script:SelectedBackend = 'deepseek'
+$script:SelectedPolicy = 'balanced'
 $script:FeaturesGateApplied = $false
 $script:FeaturesPrior = [ordered]@{ present = $false; value = $null }
 $script:ConfigModified = $false
@@ -165,7 +168,7 @@ function Assert-InstallState {
     }
 
     $schemaText = [string]$State.schemaVersion
-    if ($schemaText -notin @('1', '2', '3', '4')) {
+    if ($schemaText -notin @('1', '2', '3', '4', '5')) {
         throw "Install state has an unsupported schema: $schemaText"
     }
     $schema = [int]$schemaText
@@ -187,29 +190,50 @@ function Assert-InstallState {
         throw 'Only schema 3 and later install state may contain pendingFiles.'
     }
 
-    if ($schema -eq 4) {
+    if ($schema -ge 4) {
         if (-not ($State.PSObject.Properties.Name -contains 'codexFeaturesPrior') -or $null -eq $State.codexFeaturesPrior) {
-            throw 'Schema 4 install state is missing codexFeaturesPrior.'
+            throw "Schema $schema install state is missing codexFeaturesPrior."
         }
         if (-not ($State.codexFeaturesPrior.PSObject.Properties.Name -contains 'multi_agent')) {
-            throw 'Schema 4 install state is missing the multi_agent feature record.'
+            throw "Schema $schema install state is missing the multi_agent feature record."
         }
         $featureRecord = $State.codexFeaturesPrior.multi_agent
         if ($null -eq $featureRecord -or -not ($featureRecord.PSObject.Properties.Name -contains 'present') -or -not ($featureRecord.PSObject.Properties.Name -contains 'value')) {
-            throw 'Schema 4 install state contains an invalid multi_agent feature record.'
+            throw "Schema $schema install state contains an invalid multi_agent feature record."
         }
         if ($featureRecord.present -notin @($true, $false)) {
-            throw 'Schema 4 install state has an invalid multi_agent presence flag.'
+            throw "Schema $schema install state has an invalid multi_agent presence flag."
         }
         if ([bool]$featureRecord.present -and $null -eq $featureRecord.value) {
-            throw 'Schema 4 install state has a present multi_agent record without a value.'
+            throw "Schema $schema install state has a present multi_agent record without a value."
         }
         if (-not [bool]$featureRecord.present -and $null -ne $featureRecord.value) {
-            throw 'Schema 4 install state has an absent multi_agent record with a value.'
+            throw "Schema $schema install state has an absent multi_agent record with a value."
         }
-        if ($State.PSObject.Properties.Name -contains 'codexBackend') {
-            Assert-CodexBackendState -BackendState $State.codexBackend
+    }
+
+    if ($State.PSObject.Properties.Name -contains 'codexBackend') {
+        if ($null -eq $State.codexBackend) {
+            throw "Install state contains an invalid codexBackend property."
         }
+        Assert-CodexBackendState -BackendState $State.codexBackend
+    }
+    if ($State.PSObject.Properties.Name -contains 'codexDelegation') {
+        if ($null -eq $State.codexDelegation) {
+            throw "Install state contains an invalid codexDelegation property."
+        }
+        Assert-CodexDelegationState -DelegationState $State.codexDelegation
+    }
+
+    if ($schema -ge 5) {
+        if (-not ($State.PSObject.Properties.Name -contains 'codexBackend') -or $null -eq $State.codexBackend) {
+            throw "Schema $schema install state is missing required codexBackend."
+        }
+        Assert-CodexBackendState -BackendState $State.codexBackend
+        if (-not ($State.PSObject.Properties.Name -contains 'codexDelegation') -or $null -eq $State.codexDelegation) {
+            throw "Schema $schema install state is missing required codexDelegation."
+        }
+        Assert-CodexDelegationState -DelegationState $State.codexDelegation
     }
 
     $seenPaths = @{}
@@ -245,41 +269,62 @@ function Test-FullyQualifiedPath {
 }
 
 function Initialize-PriorState {
-    if (-not (Test-Path -LiteralPath $statePath -PathType Leaf)) {
-        return
-    }
-
-    try {
-        $state = Get-Content -LiteralPath $statePath -Raw -Encoding UTF8 | ConvertFrom-Json
-        $schema = Assert-InstallState -State $state
-        $priorEntries = @($state.files)
-        if ($schema -ge 3) {
-            $priorEntries += @($state.pendingFiles)
-        }
-        foreach ($file in $priorEntries) {
-            $path = [IO.Path]::GetFullPath([string]$file.path)
-            if (-not $script:PriorHashes.ContainsKey($path)) {
-                $script:PriorPaths.Add($path)
+    $existingState = $null
+    if (Test-Path -LiteralPath $statePath -PathType Leaf) {
+        try {
+            $state = Get-Content -LiteralPath $statePath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $schema = Assert-InstallState -State $state
+            $existingState = $state
+            $priorEntries = @($state.files)
+            if ($schema -ge 3) {
+                $priorEntries += @($state.pendingFiles)
             }
-            $script:PriorHashes[$path] = [string]$file.sha256
-        }
-        if ($schema -eq 4 -and ($state.PSObject.Properties.Name -contains 'codexFeaturesPrior')) {
-            $script:PriorFeaturesRecord = $state.codexFeaturesPrior
-        }
-        if ($schema -eq 4 -and ($state.PSObject.Properties.Name -contains 'codexBackend')) {
-            Assert-CodexBackendState -BackendState $state.codexBackend
-            $script:PriorBackendState = $state.codexBackend
-            $configFullPath = [IO.Path]::GetFullPath($configPath)
-            if ($script:PriorHashes.ContainsKey($configFullPath) -and (Test-Path -LiteralPath $configPath -PathType Leaf)) {
-                $actualConfigHash = Get-BackendFileHash -Path $configPath
-                if ($actualConfigHash -cne [string]$script:PriorHashes[$configFullPath]) {
-                    throw "Backend configuration drift detected; safe install is blocked until $configPath is reviewed."
+            foreach ($file in $priorEntries) {
+                $path = [IO.Path]::GetFullPath([string]$file.path)
+                if (-not $script:PriorHashes.ContainsKey($path)) {
+                    $script:PriorPaths.Add($path)
+                }
+                $script:PriorHashes[$path] = [string]$file.sha256
+            }
+            if ($schema -ge 4 -and ($state.PSObject.Properties.Name -contains 'codexFeaturesPrior')) {
+                $script:PriorFeaturesRecord = $state.codexFeaturesPrior
+            }
+            if ($state.PSObject.Properties.Name -contains 'codexBackend') {
+                Assert-CodexBackendState -BackendState $state.codexBackend
+                $script:PriorBackendState = $state.codexBackend
+                $script:SelectedBackend = [string]$state.codexBackend.selected
+                if (Test-Path -LiteralPath $configPath -PathType Leaf) {
+                    $existingConfig = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8
+                    try {
+                        Assert-CodexBackendMatrix -Text $existingConfig -Backend $script:SelectedBackend -BackendState $script:PriorBackendState | Out-Null
+                    }
+                    catch {
+                        throw "Backend configuration drift detected; safe install is blocked until $configPath is reviewed: $($_.Exception.Message)"
+                    }
                 }
             }
+            if ($state.PSObject.Properties.Name -contains 'codexDelegation') {
+                Assert-CodexDelegationState -DelegationState $state.codexDelegation
+                $script:PriorDelegationState = $state.codexDelegation
+                $script:SelectedPolicy = [string]$state.codexDelegation.selected
+            }
+        }
+        catch {
+            throw "Previous install state is invalid: $($_.Exception.Message)"
         }
     }
-    catch {
-        throw "Previous install state is invalid: $($_.Exception.Message)"
+
+    if ($null -eq $script:PriorBackendState) {
+        $existingConfig = if (Test-Path -LiteralPath $configPath -PathType Leaf) { Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 } else { '' }
+        $cleanedConfig = Remove-KitBlocks -Text $existingConfig
+        $snap = Get-BackendConfigSnapshot -Text $cleanedConfig
+        $script:PriorBackendState = New-CodexBackendState -Snapshot $snap -ExistingInstallState $existingState
+        $script:SelectedBackend = [string]$script:PriorBackendState.selected
+    }
+
+    if ($null -eq $script:PriorDelegationState) {
+        $script:PriorDelegationState = New-CodexDelegationState -ExistingInstallState $existingState
+        $script:SelectedPolicy = [string]$script:PriorDelegationState.selected
     }
 }
 
@@ -439,8 +484,6 @@ function Install-StartupShortcut {
 function Install-GlobalAgentsFile {
     $raw = Get-Content -LiteralPath $agentsMdSource -Raw -Encoding UTF8
     $begin = '# BEGIN CODEX-WORKFLOWS-KIT'
-    $end = '# END CODEX-WORKFLOWS-KIT'
-    $managed = $begin + $nl + $raw + $nl + $end + $nl
     $existing = if (Test-Path -LiteralPath $agentsMdDest -PathType Leaf) {
         Get-Content -LiteralPath $agentsMdDest -Raw -Encoding UTF8
     }
@@ -448,21 +491,11 @@ function Install-GlobalAgentsFile {
         ''
     }
 
-    if ($existing.IndexOf($begin, [StringComparison]::Ordinal) -ge 0) {
-        $start = $existing.IndexOf($begin, [StringComparison]::Ordinal)
-        $endStart = $existing.IndexOf($end, $start, [StringComparison]::Ordinal)
-        if ($endStart -lt 0) {
-            throw "Managed AGENTS.md block is incomplete: $agentsMdDest"
-        }
-        $tail = $existing.Substring($endStart + $end.Length).TrimStart([char[]]@([char]13, [char]10))
-        $content = $existing.Substring(0, $start) + $managed + $tail
-    }
-    elseif (-not [string]::IsNullOrWhiteSpace($existing) -and -not $Force) {
+    if ($existing.IndexOf($begin, [StringComparison]::Ordinal) -lt 0 -and -not [string]::IsNullOrWhiteSpace($existing) -and -not $Force) {
         throw "An unmanaged AGENTS.md already exists. Review it and use -Force to replace it: $agentsMdDest"
     }
-    else {
-        $content = $managed
-    }
+
+    $content = Set-CodexAgentsManagedBlockText -ExistingAgentsText $existing -TemplateText $raw -Backend $script:SelectedBackend -Policy $script:SelectedPolicy
 
     Install-ManagedContent -Destination $agentsMdDest -Content $content
 }
@@ -618,7 +651,7 @@ function Restore-MultiAgentFeature {
 
     if ($info.MultiAgentValue -cne 'false') {
         if (-not ($priorPresent -and $priorValue -ceq $info.MultiAgentValue)) {
-            Write-Warning "multi_agent is '$($info.MultiAgentValue)'; leaving it as-is. The safe profile expects false: $configPath"
+            Write-Warning "multi_agent is '$($info.MultiAgentValue)'; leaving it as-is: $configPath"
         }
         return
     }
@@ -717,24 +750,21 @@ function Remove-ManagedAgentsBlock {
         return
     }
 
-    $begin = '# BEGIN CODEX-WORKFLOWS-KIT'
-    $end = '# END CODEX-WORKFLOWS-KIT'
     $content = Get-Content -LiteralPath $agentsMdDest -Raw -Encoding UTF8
-    $start = $content.IndexOf($begin, [StringComparison]::Ordinal)
-    if ($start -lt 0) {
+    $blockRegex = '(?ms)^# BEGIN CODEX-WORKFLOWS-KIT\s*\r?\n.*?^# END CODEX-WORKFLOWS-KIT\s*(?:\r?\n|$)'
+    $match = [regex]::Match($content, $blockRegex)
+    if (-not $match.Success) {
+        if ($content.IndexOf('# BEGIN CODEX-WORKFLOWS-KIT', [StringComparison]::Ordinal) -ge 0) {
+            throw "Managed AGENTS.md block is incomplete: $agentsMdDest"
+        }
         return
-    }
-
-    $endStart = $content.IndexOf($end, $start, [StringComparison]::Ordinal)
-    if ($endStart -lt 0) {
-        throw "Managed AGENTS.md block is incomplete: $agentsMdDest"
     }
 
     if (-not (Test-CanRemoveManagedFile -Path $agentsMdDest -Action 'managed AGENTS.md block')) {
         return
     }
 
-    $result = ($content.Substring(0, $start) + $content.Substring($endStart + $end.Length)).Trim()
+    $result = ($content.Substring(0, $match.Index) + $content.Substring($match.Index + $match.Length)).Trim()
     if (Confirm-InstallAction -Target $agentsMdDest -Action 'remove managed AGENTS.md block') {
         Backup-ExistingFile -Destination $agentsMdDest
         if ([string]::IsNullOrWhiteSpace($result)) {
@@ -889,6 +919,15 @@ function Save-InstallState {
     $featuresPrior = if ($null -ne $script:PriorFeaturesRecord) {
         $script:PriorFeaturesRecord
     }
+    elseif ($null -ne $script:PriorBackendState) {
+        $multiPrior = Get-BackendPriorRecord -BackendState $script:PriorBackendState -Path 'features.multi_agent'
+        [ordered]@{
+            multi_agent = [ordered]@{
+                present = [bool]$multiPrior.present
+                value = if ([bool]$multiPrior.present) { [string]$multiPrior.value } else { $null }
+            }
+        }
+    }
     else {
         [ordered]@{
             multi_agent = [ordered]@{
@@ -898,20 +937,22 @@ function Save-InstallState {
         }
     }
 
+    $backendState = $script:PriorBackendState
+    $delegationState = $script:PriorDelegationState
+
     $state = [ordered]@{
-        schemaVersion = 4
+        schemaVersion = 5
         product = 'codex-workflows-kit'
         profile = $Profile
         installedAtUtc = [datetime]::UtcNow.ToString('o')
         files = $entries
         pendingFiles = $pendingEntries
         codexFeaturesPrior = $featuresPrior
-    }
-    if ($null -ne $script:PriorBackendState) {
-        $state.codexBackend = $script:PriorBackendState
+        codexBackend = $backendState
+        codexDelegation = $delegationState
     }
 
-    Install-ManagedContent -Destination $statePath -Content (($state | ConvertTo-Json -Depth 5) + $nl)
+    Install-ManagedContent -Destination $statePath -Content (($state | ConvertTo-Json -Depth 8) + $nl)
 }
 
 function Assert-InstallPreflight {
@@ -934,23 +975,21 @@ function Assert-InstallPreflight {
 
     if (Test-Path -LiteralPath $agentsMdDest -PathType Leaf) {
         $existing = Get-Content -LiteralPath $agentsMdDest -Raw -Encoding UTF8
-        $begin = '# BEGIN CODEX-WORKFLOWS-KIT'
-        $end = '# END CODEX-WORKFLOWS-KIT'
-        $start = $existing.IndexOf($begin, [StringComparison]::Ordinal)
-        if ($start -ge 0 -and $existing.IndexOf($end, $start, [StringComparison]::Ordinal) -lt 0) {
+        $blockRegex = '(?ms)^# BEGIN CODEX-WORKFLOWS-KIT\s*\r?\n.*?^# END CODEX-WORKFLOWS-KIT\s*(?:\r?\n|$)'
+        $hasBegin = $existing.IndexOf('# BEGIN CODEX-WORKFLOWS-KIT', [StringComparison]::Ordinal) -ge 0
+        if ($hasBegin -and -not [regex]::IsMatch($existing, $blockRegex)) {
             throw "Managed AGENTS.md block is incomplete: $agentsMdDest"
         }
-        if ($start -lt 0 -and -not [string]::IsNullOrWhiteSpace($existing) -and -not $Force) {
+        if (-not $hasBegin -and -not [string]::IsNullOrWhiteSpace($existing) -and -not $Force) {
             throw "An unmanaged AGENTS.md already exists. Review it and use -Force to replace it: $agentsMdDest"
         }
     }
 
     if (Test-Path -LiteralPath $geminiMdDest -PathType Leaf) {
         $existing = Get-Content -LiteralPath $geminiMdDest -Raw -Encoding UTF8
-        $begin = '# BEGIN CODEX-WORKFLOWS-KIT'
-        $end = '# END CODEX-WORKFLOWS-KIT'
-        $start = $existing.IndexOf($begin, [StringComparison]::Ordinal)
-        if ($start -ge 0 -and $existing.IndexOf($end, $start, [StringComparison]::Ordinal) -lt 0) {
+        $blockRegex = '(?ms)^# BEGIN CODEX-WORKFLOWS-KIT\s*\r?\n.*?^# END CODEX-WORKFLOWS-KIT\s*(?:\r?\n|$)'
+        $hasBegin = $existing.IndexOf('# BEGIN CODEX-WORKFLOWS-KIT', [StringComparison]::Ordinal) -ge 0
+        if ($hasBegin -and -not [regex]::IsMatch($existing, $blockRegex)) {
             throw "Managed GEMINI.md block is incomplete: $geminiMdDest"
         }
     }
@@ -1026,7 +1065,11 @@ Write-Host "Agents home: $AgentsHome"
 Write-Host "Antigravity home: $AntigravityHome"
 Write-Host "Skills: $skillsDest"
 if ($Profile -eq 'safe' -and -not $WhatIfPreference) {
-    Write-Host "Multi-agent route: disabled via [features] multi_agent = false in $configPath"
+    $backendLabel = if ($null -ne $script:PriorBackendState) { [string]$script:PriorBackendState.selected } else { $script:SelectedBackend }
+    $policyLabel = if ($null -ne $script:PriorDelegationState) { [string]$script:PriorDelegationState.selected } else { $script:SelectedPolicy }
+    Write-Host "Subagent backend: $backendLabel"
+    Write-Host "Delegation policy: $policyLabel"
+    Write-Host "Backend matrix: $backendLabel active in $configPath"
 }
 if ($InstallAhk) { Write-Host "AHK: $AhkDestination" }
 if ($script:BackedUp.Count -gt 0) { Write-Host "Backups: $script:BackupRoot" }

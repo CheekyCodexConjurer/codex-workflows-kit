@@ -62,19 +62,19 @@ function Read-SurfaceText {
 function Get-ManagedBlock {
     param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
 
-    $begin = '# BEGIN CODEX-WORKFLOWS-KIT'
-    $end = '# END CODEX-WORKFLOWS-KIT'
-    $start = $Text.IndexOf($begin, [StringComparison]::Ordinal)
-    if ($start -lt 0) {
-        return ''
+    $blockRegex = '(?ms)^# BEGIN CODEX-WORKFLOWS-KIT\s*\r?\n.*?^# END CODEX-WORKFLOWS-KIT\s*(?:\r?\n|$)'
+    $match = [regex]::Match($Text, $blockRegex)
+    if ($match.Success) {
+        return $match.Value
     }
 
-    $endStart = $Text.IndexOf($end, $start, [StringComparison]::Ordinal)
-    if ($endStart -lt 0) {
+    $begin = '# BEGIN CODEX-WORKFLOWS-KIT'
+    $start = $Text.IndexOf($begin, [StringComparison]::Ordinal)
+    if ($start -ge 0) {
         return $Text.Substring($start)
     }
 
-    return $Text.Substring($start, ($endStart + $end.Length) - $start)
+    return ''
 }
 
 function Assert-InstallState {
@@ -88,7 +88,7 @@ function Assert-InstallState {
     }
 
     $schemaText = [string]$State.schemaVersion
-    if ($schemaText -notin @('1', '2', '3', '4')) {
+    if ($schemaText -notin @('1', '2', '3', '4', '5')) {
         throw "Install state has an unsupported schema: $schemaText"
     }
     $schema = [int]$schemaText
@@ -110,26 +110,50 @@ function Assert-InstallState {
         throw 'Only schema 3 and later install state may contain pendingFiles.'
     }
 
-    if ($schema -eq 4) {
+    if ($schema -ge 4) {
         if (-not ($State.PSObject.Properties.Name -contains 'codexFeaturesPrior') -or $null -eq $State.codexFeaturesPrior) {
-            throw 'Schema 4 install state is missing codexFeaturesPrior.'
+            throw "Schema $schema install state is missing codexFeaturesPrior."
         }
         if (-not ($State.codexFeaturesPrior.PSObject.Properties.Name -contains 'multi_agent')) {
-            throw 'Schema 4 install state is missing the multi_agent feature record.'
+            throw "Schema $schema install state is missing the multi_agent feature record."
         }
         $featureRecord = $State.codexFeaturesPrior.multi_agent
         if ($null -eq $featureRecord -or -not ($featureRecord.PSObject.Properties.Name -contains 'present') -or -not ($featureRecord.PSObject.Properties.Name -contains 'value')) {
-            throw 'Schema 4 install state contains an invalid multi_agent feature record.'
+            throw "Schema $schema install state contains an invalid multi_agent feature record."
         }
         if ($featureRecord.present -notin @($true, $false)) {
-            throw 'Schema 4 install state has an invalid multi_agent presence flag.'
+            throw "Schema $schema install state has an invalid multi_agent presence flag."
         }
         if ([bool]$featureRecord.present -and $null -eq $featureRecord.value) {
-            throw 'Schema 4 install state has a present multi_agent record without a value.'
+            throw "Schema $schema install state has a present multi_agent record without a value."
         }
         if (-not [bool]$featureRecord.present -and $null -ne $featureRecord.value) {
-            throw 'Schema 4 install state has an absent multi_agent record with a value.'
+            throw "Schema $schema install state has an absent multi_agent record with a value."
         }
+    }
+
+    if ($State.PSObject.Properties.Name -contains 'codexBackend') {
+        if ($null -eq $State.codexBackend) {
+            throw "Install state contains an invalid codexBackend property."
+        }
+        Assert-CodexBackendState -BackendState $State.codexBackend
+    }
+    if ($State.PSObject.Properties.Name -contains 'codexDelegation') {
+        if ($null -eq $State.codexDelegation) {
+            throw "Install state contains an invalid codexDelegation property."
+        }
+        Assert-CodexDelegationState -DelegationState $State.codexDelegation
+    }
+
+    if ($schema -ge 5) {
+        if (-not ($State.PSObject.Properties.Name -contains 'codexBackend') -or $null -eq $State.codexBackend) {
+            throw "Schema $schema install state is missing required codexBackend."
+        }
+        Assert-CodexBackendState -BackendState $State.codexBackend
+        if (-not ($State.PSObject.Properties.Name -contains 'codexDelegation') -or $null -eq $State.codexDelegation) {
+            throw "Schema $schema install state is missing required codexDelegation."
+        }
+        Assert-CodexDelegationState -DelegationState $State.codexDelegation
     }
 
     $seenPaths = @{}
@@ -363,6 +387,8 @@ Write-Check -Name 'Install state' -Passed (Test-Path -LiteralPath $statePath -Pa
 $state = $null
 $stateSchema = $null
 $installedProfile = ''
+$selectedBackend = 'deepseek'
+$selectedPolicy = 'balanced'
 if (Test-Path -LiteralPath $statePath -PathType Leaf) {
     try {
         $state = Get-Content -LiteralPath $statePath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -404,6 +430,7 @@ foreach ($path in $coreFiles) {
 if ($installedProfile -eq 'safe') {
     Write-Check -Name 'No managed agents defaults' -Passed (Test-NoManagedAgentsBlock -Path $configPath) -Detail $configPath
 
+    $selectedBackend = 'deepseek'
     if ($null -ne $state -and ($state.PSObject.Properties.Name -contains 'codexBackend')) {
         try {
             $selectedBackend = [string]$state.codexBackend.selected
@@ -421,9 +448,31 @@ if ($installedProfile -eq 'safe') {
         Write-Check -Name 'Multi-agent route disabled' -Passed (Test-FeaturesMultiAgentDisabled -Path $configPath) -Detail $configPath
     }
 
+    $selectedPolicy = 'balanced'
+    if ($null -ne $state -and ($state.PSObject.Properties.Name -contains 'codexDelegation')) {
+        try {
+            $selectedPolicy = [string]$state.codexDelegation.selected
+            Assert-CodexDelegationState -DelegationState $state.codexDelegation
+            Write-Check -Name 'Delegation policy' -Passed $true -Detail $selectedPolicy
+        }
+        catch {
+            Write-Check -Name 'Delegation policy' -Passed $false -Detail $_.Exception.Message
+        }
+    }
+
     $agentsMdContent = Read-SurfaceText -Path $agentsMdPath
-    $managedBlockCount = @([regex]::Matches($agentsMdContent, '# BEGIN CODEX-WORKFLOWS-KIT')).Count
+    $managedBlockCount = @([regex]::Matches($agentsMdContent, '(?m)^# BEGIN CODEX-WORKFLOWS-KIT\r?$')).Count
     Write-Check -Name 'Unique managed policy (AGENTS)' -Passed ($managedBlockCount -eq 1) -Detail $agentsMdPath
+
+    $expectedBackend = if ($null -ne $state -and ($state.PSObject.Properties.Name -contains 'codexBackend')) { [string]$state.codexBackend.selected } else { 'deepseek' }
+    $expectedPolicy = if ($null -ne $state -and ($state.PSObject.Properties.Name -contains 'codexDelegation')) { [string]$state.codexDelegation.selected } else { 'balanced' }
+    try {
+        Assert-CodexAgentsRuntimeBlock -Text $agentsMdContent -Backend $expectedBackend -Policy $expectedPolicy
+        Write-Check -Name 'Managed AGENTS runtime' -Passed $true -Detail "Exact runtime block matches (backend=$expectedBackend, policy=$expectedPolicy)"
+    }
+    catch {
+        Write-Check -Name 'Managed AGENTS runtime' -Passed $false -Detail $_.Exception.Message
+    }
 
     $templatePath = Join-Path $repoRoot 'codex\AGENTS.md'
     $templateMatches = $false
@@ -434,7 +483,7 @@ if ($installedProfile -eq 'safe') {
     Write-Check -Name 'Managed AGENTS template' -Passed $templateMatches -Detail $agentsMdPath -Optional
 
     $geminiMdContent = Read-SurfaceText -Path $geminiMdPath
-    $geminiManagedBlockCount = @([regex]::Matches($geminiMdContent, '# BEGIN CODEX-WORKFLOWS-KIT')).Count
+    $geminiManagedBlockCount = @([regex]::Matches($geminiMdContent, '(?m)^# BEGIN CODEX-WORKFLOWS-KIT\r?$')).Count
     Write-Check -Name 'Unique managed policy (GEMINI)' -Passed ($geminiManagedBlockCount -eq 1) -Detail $geminiMdPath
 
     $geminiTemplatePath = Join-Path $repoRoot 'antigravity\GEMINI.md'
@@ -602,7 +651,7 @@ if ($null -ne $state) {
 
 if (-not [string]::IsNullOrWhiteSpace($ahkPath) -and (Test-Path -LiteralPath $ahkPath -PathType Leaf)) {
     $ahkText = Get-Content -LiteralPath $ahkPath -Raw -Encoding UTF8
-    $promptPadPatterns = @('deepseek', '\bmcp\b', ('\b' + $tokNative + '\b'), ('\b' + $tokBackend + '\b'), '\breader\b', ('\b' + $tWr + '\b'), ('\b' + $tSct + '\b'), ('\b' + $tRsr + '\b'), ('\b' + $tRvw + '\b'), ('\b' + $tWk + '\b'), 'PromptPadNative', 'BackendOverrideText', 'WorkflowPrompt')
+    $promptPadPatterns = @('\breader\b', ('\b' + $tWr + '\b'), ('\b' + $tSct + '\b'), ('\b' + $tRsr + '\b'), ('\b' + $tRvw + '\b'), ('\b' + $tWk + '\b'), 'PromptPadNative', 'BackendOverrideText', 'WorkflowPrompt')
     $promptPadDirty = $false
     foreach ($pattern in $promptPadPatterns) {
         if ([regex]::IsMatch($ahkText, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)) {
@@ -664,7 +713,12 @@ else {
 
 $currentMcp = $mcpServers | Where-Object { $_.Name -eq 'deepseek-subagent' }
 if ($null -eq $currentMcp) {
-    Write-Check -Name 'DeepSeek Sub-Agent MCP' -Passed $false -Detail 'Not configured in config.toml'
+    if ($selectedBackend -eq 'deepseek') {
+        Write-Check -Name 'DeepSeek Sub-Agent MCP' -Passed $false -Detail 'Not configured in config.toml'
+    }
+    else {
+        Write-Check -Name 'DeepSeek Sub-Agent MCP' -Passed $true -Detail 'Not active (native subagent backend selected)'
+    }
 }
 else {
     $mcStatus = Get-McpEntryStatus -Body $currentMcp.Body
@@ -713,8 +767,10 @@ if ($Detailed) {
     Write-Host "Installed paths are recorded in: $statePath"
     Write-Host 'The doctor is read-only: it inspects installed surfaces, MCP registrations,'
     Write-Host 'scheduled tasks, and the Startup shortcut without modifying configuration.'
-    Write-Host 'The safe profile requires [features] multi_agent = false; the prior value is'
-    Write-Host 'recorded in the install state and restored on uninstall only while it is still false.'
+    $docBackend = if ($null -ne $state -and ($state.PSObject.Properties.Name -contains 'codexBackend')) { [string]$state.codexBackend.selected } else { $selectedBackend }
+    $docPolicy = if ($null -ne $state -and ($state.PSObject.Properties.Name -contains 'codexDelegation')) { [string]$state.codexDelegation.selected } else { $selectedPolicy }
+    Write-Host "Active subagent backend: $docBackend (matrix enforced in config.toml)"
+    Write-Host "Active delegation policy: $docPolicy"
 }
 
 if ($script:Failures.Count -gt 0) {

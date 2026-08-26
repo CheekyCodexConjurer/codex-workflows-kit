@@ -165,7 +165,7 @@ function Assert-McpFoundationSkill {
 
     $forbiddenAutomations = @(
         '(?i)\b(?:may|can|should|must|authorized to)\b\s+(?!not\b|never\b)[^.;]*\b(?:automate|auto-kill|auto-restart|auto-upgrade|auto-init)\b',
-        '(?i)\b(?:permite|autoriza|deve|pode)\b\s+(?!n[aã]o\b|nunca\b)[^.;]*\b(?:automatizar|auto-kill|auto-restart|auto-upgrade|auto-init)\b'
+        '(?i)\b(?:permite|autoriza|deve|pode)\b\s+(?!n[a\u00e3]o\b|nunca\b)[^.;]*\b(?:automatizar|auto-kill|auto-restart|auto-upgrade|auto-init)\b'
     )
     foreach ($pattern in $forbiddenAutomations) {
         if ([regex]::IsMatch($normalized, $pattern)) {
@@ -343,38 +343,401 @@ function Assert-McpTemplateRouting {
     }
 }
 
+function Assert-DeliveryReviewContract {
+    param(
+        [Parameter(Mandatory)][string]$Label,
+        [Parameter(Mandatory)][string]$Text
+    )
+
+    $normalized = [regex]::Replace($Text, '\s+', ' ').Trim()
+
+    $requiredModes = @('IMPL.AUTO', 'IMPL', 'IMPL.PHASE', 'DELIVER.AUTO', 'BUG.FIX', 'DEBUG')
+    foreach ($mode in $requiredModes) {
+        if ($normalized.IndexOf($mode, [StringComparison]::Ordinal) -lt 0) {
+            throw "$Label is missing required mode: $mode"
+        }
+    }
+
+    $requiredPatterns = @(
+        '(?i)R\.A\.F\.V',
+        '(?i)(?:manual|sob demanda|explicitamente|separate|explicit)',
+        '(?i)(?:nunca|never).{0,40}(?:autom[a\u00e1]tic|auto-run)',
+        '(?i)alvo congelado|frozen target',
+        '(?i)baseline',
+        '(?i)status',
+        '(?i)diff|patch hash',
+        '(?i)SHA256',
+        '(?i)valida[c\u00e7][a\u00e3]o determin[i\u00ed]stica|deterministic validation',
+        '(?i)revis[a\u00e3]o independente|independent review',
+        '(?i)reconstru[c\u00e7]\w*.{0,30}(?:requisitos|pedido)|reconstruct.{0,30}requirements',
+        '(?i)claim-map|mapa de alega[c\u00e7][o\u00f5]es',
+        '(?i)(?:caminhos prim[a\u00e1]rios|primary).{0,60}(?:alternativos|alternate).{0,60}(?:hist[o\u00f3]ric|historical)',
+        '(?i)(?:negativ|negative).{0,60}(?:falha|failure).{0,60}(?:concorr[e\u00ea]ncia|concurrency).{0,60}(?:seguran[c\u00e7]a|security)',
+        '(?i)(?:falso-verde|false-green|false green)',
+        '(?i)(?:integra[c\u00e7][a\u00e3]o|integration).{0,60}(?:invariantes|invariants).{0,60}(?:retrocompatibilidade|backcompat).{0,60}(?:escopo|scope)',
+        '(?i)target_id',
+        '(?i)target_id.{0,100}(?:digest determin[i\u00ed]stic|deterministic digest|SHA256)',
+        '(?i)(?:n[a\u00e3]o|never|nunca).{0,40}(?:timestamp-only|apenas timestamp|somente timestamp)',
+        '(?i)diff_sha256',
+        '(?i)file_sha256',
+        '(?i)(?:revisor independente|independent reviewer).{0,80}(?:n[a\u00e3]o-autor|non-author).{0,80}(?:contexto (?:novo|limpo|read-only|somente leitura)|fresh/read-only context|contexto de leitura)',
+        '(?i)APPROVED',
+        '(?i)BLOCKED',
+        '(?i)required_fix',
+        '(?i)(?:lote [u\u00fa]nico|consolidated|lote consolidado).{0,40}reparo',
+        '(?i)(?:delta|re-revis[a\u00e3]o delta)',
+        '(?i)(?:bloqueios|blockers).{0,60}(?:blast radius|raio de impacto|impacto afetado)',
+        '(?i)(?:re-checa|reverifi|revalid|checagem|avalia).{0,60}(?:identidade|alvo|target).{0,60}(?:invariantes|invariants)',
+        '(?i)(?:recomput|recalcul).{0,60}(?:target_id|identidade do alvo|target identity).{0,60}(?:igualdade exata|exact equality|coincid)',
+        '(?i)(?:m[a\u00e1]ximo|max).{0,30}(?:2|duas|two).{0,30}rodadas?',
+        '(?i)falha fechado|fail closed',
+        '(?i)zero (?:bloqueios|blockers)',
+        '(?i)invariante a staging|staging-invariant',
+        '(?i)code[- ]page|host-code-page|encoding do host|codifica[c\u00e7][a\u00e3]o do host',
+        '(?i)head_status|relativo ao HEAD|HEAD-relative',
+        '(?i)raw_porcelain|fora do digest|outside the digest|outside digest',
+        '(?i)staged path set|conjunto de (?:arquivos|caminhos) no stage',
+        '(?i)staged blob|conte[uú]do.{0,60}(?:aprovado|approved).{0,60}(?:index|stage)|(?:index|stage).{0,60}conte[uú]do.{0,60}(?:aprovado|approved)'
+    )
+
+    foreach ($pattern in $requiredPatterns) {
+        if (-not [regex]::IsMatch($normalized, $pattern)) {
+            throw "$Label is missing required delivery-review contract pattern: $pattern"
+        }
+    }
+
+    $forbidden = @(
+        'Review-And-Fix-Vigorously',
+        'Review and Fix Vigorously',
+        'Review-And-Fix',
+        'Review and Fix',
+        'target-<hash-ou-timestamp>',
+        'focada estritamente nos apontamentos',
+        'exclusively delta'
+    )
+    foreach ($token in $forbidden) {
+        if ($Text.IndexOf($token, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+            throw "$Label contains forbidden phrase or obsolete template: $token"
+        }
+    }
+}
+
+function Assert-DelegationContract {
+    param(
+        [Parameter(Mandatory)][string]$Label,
+        [Parameter(Mandatory)][string]$Text
+    )
+
+    $normalized = [regex]::Replace($Text, '\s+', ' ').Trim()
+
+    $requiredPatterns = @(
+        '(?i)subagent_backend',
+        '(?i)delegation_policy',
+        '(?i)balanced',
+        '(?i)aggressive',
+        '(?i)wall-clock|wall time',
+        '(?i)token offload|desonera[c\u00e7][a\u00e3]o de tokens',
+        '(?i)deepseek_continue',
+        '(?i)allow_respawn\s*=\s*true',
+        '(?i)terminal result|resultado terminal'
+    )
+    foreach ($pattern in $requiredPatterns) {
+        if (-not [regex]::IsMatch($normalized, $pattern)) {
+            throw "$Label is missing required delegation contract pattern: $pattern"
+        }
+    }
+
+    $forbiddenPatterns = @(
+        '(?i)Review-And-Fix-Vigorously',
+        '(?i)\b(?:not the repository workforce|n[a\u00e3]o a for[c\u00e7]a de trabalho)\b',
+        '(?i)allow_respawn\s*=\s*true[^.;]*(?:rotineir|rotina|normalmente|routine|habitual)'
+    )
+    foreach ($pattern in $forbiddenPatterns) {
+        if ([regex]::IsMatch($normalized, $pattern)) {
+            throw "$Label contains forbidden pattern: $pattern"
+        }
+    }
+}
+
+function Assert-DeliveryGateWiring {
+    param(
+        [Parameter(Mandatory)][string]$Label,
+        [Parameter(Mandatory)][string]$Text
+    )
+
+    $normalized = [regex]::Replace($Text, '\s+', ' ').Trim()
+    $requiredPatterns = @(
+        '(?i)alvo congelado|frozen target',
+        '(?i)revis[a\u00e3]o independente|independent review',
+        '(?i)APPROVED',
+        '(?i)zero (?:bloqueios|blockers)',
+        '(?i)staging-invariant|invariante a staging',
+        '(?i)code[- ]page|host-code-page|encoding do host|codifica[c\u00e7][a\u00e3]o do host',
+        '(?i)staged path set|conjunto de (?:arquivos|caminhos) no stage',
+        '(?i)staged blob|conte[uú]do.{0,60}(?:aprovado|approved).{0,60}(?:index|stage)|(?:index|stage).{0,60}conte[uú]do.{0,60}(?:aprovado|approved)'
+    )
+    foreach ($pattern in $requiredPatterns) {
+        if (-not [regex]::IsMatch($normalized, $pattern)) {
+            throw "$Label is missing required delivery gate wiring pattern: $pattern"
+        }
+    }
+
+    if ($Text.IndexOf('Review-And-Fix-Vigorously', [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+        throw "$Label contains invented RAFV acronym expansion"
+    }
+}
+
+function Assert-DesignSpecContract {
+    param(
+        [Parameter(Mandatory)][string]$Label,
+        [Parameter(Mandatory)][string]$Text
+    )
+
+    $normalized = [regex]::Replace($Text, '\s+', ' ').Trim()
+    $requiredPatterns = @(
+        '(?i)subagent_backend',
+        '(?i)delegation_policy',
+        '(?i)balanced',
+        '(?i)aggressive',
+        '(?i)wall time|wall-clock',
+        '(?i)desonera[c\u00e7][a\u00e3]o de tokens|token offload',
+        '(?i)alvo congelado|frozen target',
+        '(?i)revis[a\u00e3]o independente|independent review',
+        '(?i)APPROVED',
+        '(?i)BLOCKED',
+        '(?i)R\.A\.F\.V',
+        '(?i)invariante a staging|staging-invariant',
+        '(?i)code[- ]page|host-code-page|encoding do host|codifica[c\u00e7][a\u00e3]o do host',
+        '(?i)staged path set|conjunto de arquivos no stage',
+        '(?i)staged blob|conte[uú]do.{0,60}(?:aprovado|approved).{0,60}(?:index|stage)|(?:index|stage).{0,60}conte[uú]do.{0,60}(?:aprovado|approved)',
+        '(?i)drift.{0,100}proje[c\u00e7][o\u00f5]es gerenciadas.{0,80}(?:fail-closed|falha fechad)',
+        '(?i)n[a\u00e3]o relacionados.{0,120}preservados e reconciliados'
+    )
+    foreach ($pattern in $requiredPatterns) {
+        if (-not [regex]::IsMatch($normalized, $pattern)) {
+            throw "$Label is missing required spec contract pattern: $pattern"
+        }
+    }
+
+    if ($Text.IndexOf('Review-And-Fix-Vigorously', [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+        throw "$Label contains invented RAFV acronym expansion"
+    }
+}
+
+function Assert-PlanContract {
+    param(
+        [Parameter(Mandatory)][string]$Label,
+        [Parameter(Mandatory)][string]$Text
+    )
+
+    if ($Text.IndexOf('Review-And-Fix-Vigorously', [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+        throw "$Label contains invented RAFV acronym expansion"
+    }
+}
+
+function Assert-SecurityDocContract {
+    param(
+        [Parameter(Mandatory)][string]$Label,
+        [Parameter(Mandatory)][string]$Text
+    )
+
+    $normalized = [regex]::Replace($Text, '\s+', ' ').Trim()
+
+    $requiredPatterns = @(
+        '(?i)subagent_backend',
+        '(?i)delegation_policy',
+        '(?i)native',
+        '(?i)deepseek',
+        '(?i)balanced',
+        '(?i)aggressive',
+        '(?i)wall-clock|wall time',
+        '(?i)desonera[c\u00e7][a\u00e3]o de tokens|token offload',
+        '(?i)sem fallback|no fallback|fallback proibido|bloqueia.{0,40}fallback',
+        '(?i)alvo congelado|frozen target',
+        '(?i)revis[a\u00e3]o independente|independent review',
+        '(?i)APPROVED'
+    )
+    foreach ($pattern in $requiredPatterns) {
+        if (-not [regex]::IsMatch($normalized, $pattern)) {
+            throw "$Label is missing required security contract pattern: $pattern"
+        }
+    }
+
+    $forbiddenPatterns = @(
+        '(?i)executor principal [e\u00e9] o DeepSeek Sub-Agent MCP',
+        '(?i)orquestra[c\u00e7][a\u00e3]o (?:passa a ser )?exclusivamente via DeepSeek'
+    )
+    foreach ($pattern in $forbiddenPatterns) {
+        if ([regex]::IsMatch($normalized, $pattern)) {
+            throw "$Label contains outdated architecture claim: $pattern"
+        }
+    }
+}
+
+function Assert-OpenAiAgentContract {
+    param(
+        [Parameter(Mandatory)][string]$Label,
+        [Parameter(Mandatory)][string]$Text
+    )
+
+    $normalized = [regex]::Replace($Text, '\s+', ' ').Trim()
+
+    if ($normalized -notmatch '(?i)display_name:\s*"Workflows"') {
+        throw "$Label is missing display_name"
+    }
+    if ($normalized -notmatch '(?i)short_description:\s*"[^"]+"') {
+        throw "$Label is missing short_description"
+    }
+
+    $forbiddenPatterns = @(
+        '(?i)deepseek',
+        '(?i)\bnative\b',
+        '(?i)\bbalanced\b',
+        '(?i)\baggressive\b'
+    )
+    foreach ($pattern in $forbiddenPatterns) {
+        if ([regex]::IsMatch($normalized, $pattern)) {
+            throw "$Label short_description is not backend/policy neutral: $pattern"
+        }
+    }
+}
+
+function Assert-InstallerOutputContract {
+    param(
+        [Parameter(Mandatory)][string]$Label,
+        [Parameter(Mandatory)][string]$Text
+    )
+
+    $normalized = [regex]::Replace($Text, '\s+', ' ').Trim()
+
+    $requiredPatterns = @(
+        '(?i)Subagent backend:',
+        '(?i)Delegation policy:',
+        '(?i)Backend matrix:'
+    )
+    foreach ($pattern in $requiredPatterns) {
+        if (-not [regex]::IsMatch($normalized, $pattern)) {
+            throw "$Label is missing required selector-aware output pattern: $pattern"
+        }
+    }
+
+    if ($Text -match '(?i)Multi-agent route:\s*disabled via\s*\[features\]\s*multi_agent\s*=\s*false') {
+        throw "$Label contains unconditional multi_agent disabled output message"
+    }
+}
+
+function Assert-DoctorOutputContract {
+    param(
+        [Parameter(Mandatory)][string]$Label,
+        [Parameter(Mandatory)][string]$Text
+    )
+
+    $normalized = [regex]::Replace($Text, '\s+', ' ').Trim()
+
+    $requiredPatterns = @(
+        '(?i)Active subagent backend:',
+        '(?i)Active delegation policy:'
+    )
+    foreach ($pattern in $requiredPatterns) {
+        if (-not [regex]::IsMatch($normalized, $pattern)) {
+            throw "$Label detailed output is missing selector-aware pattern: $pattern"
+        }
+    }
+
+    if ($Text -match '(?i)safe profile requires\s+(?:\[features\]\s+)?multi_agent\s*=\s*false') {
+        throw "$Label detailed output contains obsolete unconditional multi_agent=false requirement"
+    }
+}
+
+function Assert-SupersededSpecContract {
+    param(
+        [Parameter(Mandatory)][string]$Label,
+        [Parameter(Mandatory)][string]$Text
+    )
+
+    $normalized = [regex]::Replace($Text, '\s+', ' ').Trim()
+    $requiredPatterns = @(
+        '(?i)SUPERSEDED',
+        '(?i)2026-08-26-workflow-rearchitecture-design\.md',
+        '(?i)hist[o\u00f3]rico|historical'
+    )
+    foreach ($pattern in $requiredPatterns) {
+        if (-not [regex]::IsMatch($normalized, $pattern)) {
+            throw "$Label is missing required superseded marker pattern: $pattern"
+        }
+    }
+}
+
+function Assert-ReadmeContract {
+    param(
+        [Parameter(Mandatory)][string]$Label,
+        [Parameter(Mandatory)][string]$Text
+    )
+
+    $normalized = [regex]::Replace($Text, '\s+', ' ').Trim()
+
+    $required = @(
+        '(?i)\^Numpad1|Ctrl\s*\+\s*Numpad1',
+        '(?i)\^Numpad2|Ctrl\s*\+\s*Numpad2',
+        '(?i)\^Numpad4|Ctrl\s*\+\s*Numpad4',
+        '(?i)\^Numpad5|Ctrl\s*\+\s*Numpad5',
+        '(?i)\^Numpad0|Ctrl\s*\+\s*Numpad0',
+        '(?i)checkout root|raiz do checkout|diret[o\u00f3]rio raiz do reposit[o\u00f3]rio',
+        '(?i)subagent_backend',
+        '(?i)delegation_policy',
+        '(?i)controle de seletores',
+        '(?i)drift.{0,100}proje[c\u00e7][a\u00e3]o gerenciada.{0,80}falham fechado',
+        '(?i)n[a\u00e3]o relacionados.{0,120}preservados e reconciliados'
+    )
+    foreach ($pattern in $required) {
+        if (-not [regex]::IsMatch($normalized, $pattern)) {
+            throw "$Label is missing required documentation pattern: $pattern"
+        }
+    }
+
+    $forbiddenPatterns = @(
+        '(?i)orquestra[c\u00e7][a\u00e3]o (?:passa a ser )?exclusivamente via DeepSeek',
+        '(?i)executor principal [e\u00e9] o DeepSeek Sub-Agent MCP'
+    )
+    foreach ($pattern in $forbiddenPatterns) {
+        if ([regex]::IsMatch($normalized, $pattern)) {
+            throw "$Label contains outdated DeepSeek-only architecture text: $pattern"
+        }
+    }
+}
+
 function Test-OrchestrationPolicy {
     param([Parameter(Mandatory)][string]$Text)
 
     $normalized = [regex]::Replace($Text, '\s+', ' ').Trim()
 
     $requiredPatterns = @(
-        '(?i)seletor global de backend.{0,100}autorit(?:[aá]rio|ativa|ativo)',
-        '(?i)matriz ausente,? inv[aá]lida ou inconsistente bloqueia.{0,80}fallback silencioso',
-        '(?i)native.{0,140}gpt-5\.6-luna.{0,100}reasoning_effort.{0,80}normal/default',
-        '(?i)deepseek.{0,100}deepseek_spawn.{0,100}deepseek_continue.{0,100}deepseek_follow',
-        '(?i)trabalho material passa pela rota do backend selecionado',
-        '(?i)trabalho local do parent [eé] at[oóô]mico',
+        '(?i)seletor global de backend.{0,120}autorit(?:[a\u00e1]rio|ativa|ativo)',
+        '(?i)matriz ausente,? inv[a\u00e1]lida ou inconsistente bloqueia.{0,80}fallback silencioso',
+        '(?i)native.{0,180}gpt-5\.6-luna.{0,100}reasoning_effort.{0,80}normal/default',
+        '(?i)deepseek.{0,120}deepseek_spawn.{0,100}deepseek_continue.{0,100}deepseek_follow',
+        '(?i)delegation_policy',
+        '(?i)balanced',
+        '(?i)aggressive',
         '(?i)nunca refazer localmente uma frente material delegada',
         '(?i)consuma todo job aceito antes de um gate dependente ou da resposta final',
         '(?i)feche explicitamente todo agente terminado',
-        '(?i)sem obriga[cç][oõ]es pendentes ou em aberto',
-        '(?i)o writer fica aberto.{0,80}at[ée] a revis[aã]o independente',
-        '(?i)defeitos provados voltam [aáà] mesma frente',
-        '(?i)feche s[oó] depois',
-        '(?i)n[aã]o est[aá] terminado antes de revis[aã]o e corre[cç][oõ]es conclu[ií]das',
-        '(?i)a isen[cç][aã]o nunca autoriza o parent a invocar ferramentas nativas',
+        '(?i)sem obriga[c\u00e7][o\u00f5]es pendentes ou em aberto',
+        '(?i)o writer fica aberto.{0,80}at[\u00e9e] a revis[\u00e3a]o independente',
+        '(?i)defeitos provados voltam [a\u00e1\u00e0] mesma frente',
+        '(?i)feche s[o\u00f3] depois',
+        '(?i)n[\u00e3a]o est[\u00e1a] terminado antes de revis[\u00e3a]o e corre[c\u00e7][o\u00f5]es conclu[\u00ed\u00ec]das',
         '(?i)falha fechado',
         '(?i)visual_context',
-        '(?i)antes de esperar,? mapeie frentes independentes,? depend[eê]ncias e recursos exclusivos ou compartilhados',
-        '(?i)lance em lote todas as frentes materiais independentes antes do primeiro follow',
-        '(?i)apenas trilhas com depend[eê]ncia real ou recurso compartilhado ficam seriais',
-        '(?i)enquanto aguarda,? fa[cç]a orquestra[cç][aã]o independente [uú]til',
-        '(?i)ledger est[aá]vel de request_id.{0,60}frente,? agente,? job,? estado,? consumido e fechado',
-        '(?i)consuma cada job e feche cada agente ap[oó]s a integra[cç][aã]o',
+        '(?i)antes de esperar,? mapeie frentes independentes,? depend[e\u00ea]ncias e recursos exclusivos ou compartilhados',
+        '(?i)(?:quando a pol[i\u00ed]tica eleger delega[c\u00e7][a\u00e3]o|se a pol[i\u00ed]tica eleger delega[c\u00e7][a\u00e3]o|ap[o\u00f3]s a pol[i\u00ed]tica eleger delega[c\u00e7][a\u00e3]o|ap[o\u00f3]s eleger delega[c\u00e7][a\u00e3]o),? lance em lote todas as frentes materiais independentes antes do primeiro follow',
+        '(?i)apenas trilhas com depend[e\u00ea]ncia real ou recurso compartilhado ficam seriais',
+        '(?i)enquanto aguarda,? fa[c\u00e7]a orquestra[c\u00e7][\u00e3a]o independente [u\u00fa]til',
+        '(?i)ledger est[a\u00e1]vel de request_id.{0,60}frente,? agente,? job,? estado,? consumido e fechado',
+        '(?i)consuma cada job e feche cada agente ap[o\u00f3]s a integra[c\u00e7][\u00e3a]o',
         '(?i)deepseek_continue.{0,80}allow_respawn',
-        '(?i)sem pedir nova permiss[ãa]o',
-        '(?i)cria sess[ãa]o.{0,60}lineage',
+        '(?i)sem pedir nova permiss[\u00e3a]o',
+        '(?i)cria sess[\u00e3a]o.{0,60}lineage',
         '(?i)nunca recupere job running',
         '(?i)abortad[oa] explicitamente',
         '(?i)sem fallback',
@@ -388,13 +751,16 @@ function Test-OrchestrationPolicy {
     }
 
     $forbiddenPatterns = @(
-        '(?i)\b(?:pode|podem|poderia|poderiam|poder[aá]|poder[aã]o|poderao|deve|devem|deveria|deveriam)\b[^.;]*\b(?:l[eê]|ler|escreve|escrever|testa|testar|revisa|revisar|investiga|investigar|executa|executar|realiza|realizar|faz|fazer|verifica|verificar|confere|conferir)\b[^.;]*\b(?:localmente|diretamente|por conta pr[oó]pria)\b',
-        '(?i)\b(?:pode|poderia|poder[aá]|deve|deveria)\b[^.;]*\b(?:refazer|repetir|duplicar)\b',
-        '(?i)(?:n[aã]o precisa|sem precisar|sem a necessidade)\b[^.;]*\bdelegar\b',
-        '(?i)\b(?:exceto|salvo)\b[^.;]*\b(?:leitura|investiga[cç][aã]o|escrita|teste|revis[aã]o)\b',
-        '(?i)\b(?:pode|poderia|poder[aá]|deve|deveria)\b[^.;]*\b(?:fechar|encerrar)\b[^.;]*(?:writer|agente|frente)',
-        '(?i)\b(?=[^.;]*\b(?:pode|podem|poderia|poderiam|poder[aá]|poder[aã]o|poderao|deve|devem|deveria|deveriam|s[aã]o autorizad[ao]s? a|est[aã]o autorizad[ao]s? a|usam)\b)(?=[^.;]*\b(?:spawn_agent|wait_agent|multi_agent_v1__spawn_agent)\b)(?=[^.;]*\b(?:supervis[aã]o|guardian)\b)[^.;]+',
-        '(?i)\b(?:parent|parent gpt)\b[^.;]*\b(?:l[eê]|ler|escreve|escrever|testa|testar|revisa|revisar|investiga|investigar|executa|executar|realiza|realizar|faz|fazer|verifica|verificar|confere|conferir)\b[^.;]*\b(?:localmente|diretamente|por conta pr[oó]pria)\b'
+        '(?i)Review-And-Fix-Vigorously',
+        '(?i)\bR\.A\.F\.V\b\s*\(',
+        '(?i)pedir explicitamente sub-agentes',
+        '(?i)usu[a\u00e1]rio pedir explicitamente',
+        '(?i)n[a\u00e3]o\s+(?:[e\u00e9]\s+)?a\s+for[c\u00e7]a\s+de\s+trabalho',
+        '(?i)trabalho local do parent [e\u00e9] at[o\u00f3\u00f4]mico',
+        '(?i)\b(?:pode|poderia|poder[a\u00e1]|deve|deveria)\b[^.;]*\b(?:refazer|repetir|duplicar)\b',
+        '(?i)(?:n[a\u00e3]o precisa|sem precisar|sem a necessidade)\b[^.;]*\bdelegar\b',
+        '(?i)\b(?:pode|poderia|poder[a\u00e1]|deve|deveria)\b[^.;]*\b(?:fechar|encerrar)\b[^.;]*(?:writer|agente|frente)',
+        '(?i)\b(?=[^.;]*\b(?:pode|podem|poderia|poderiam|poder[a\u00e1]|poder[a\u00e3]o|poderao|deve|devem|deveria|deveriam|s[a\u00e3]o autorizad[ao]s? a|est[a\u00e3]o autorizad[ao]s? a|usam)\b)(?=[^.;]*\b(?:spawn_agent|wait_agent|multi_agent_v1__spawn_agent)\b)(?=[^.;]*\b(?:supervis[a\u00e3]o|guardian)\b)[^.;]+'
     )
 
     foreach ($pattern in $forbiddenPatterns) {
@@ -404,12 +770,13 @@ function Test-OrchestrationPolicy {
     }
 
     $recoveryForbiddenPatterns = @(
-        '(?i)\b(?:pode|podem|poderia|poderiam|poder[aá]|poder[aã]o|poderao|deve|devem|deveria|deveriam)\b[^.;]*\b(?:recupera[rç]|reabrir|retomar|continuar|abrir|usar)\b[^.;]*(?:job running|running|em execu[cç][aã]o|em andamento|em curso|ativos?|andamento)',
-        '(?i)\b(?:pode|podem|poderia|poderiam|poder[aá]|poder[aã]o|poderao|deve|devem|deveria|deveriam)\b[^.;]*\b(?:recupera[rç]|reabrir|retomar|continuar|abrir|usar)\b[^.;]*(?:sem resposta final|resposta final persistida|sem resultado final|resultado final persistido|sem resultado terminal)',
-        '(?i)\b(?:pode|podem|poderia|poderiam|poder[aá]|poder[aã]o|poderao|deve|devem|deveria|deveriam)\b[^.;]*\b(?:recupera[rç]|reabrir|retomar|continuar|abrir|usar)\b[^.;]*(?:abortad[oa]|abortados)',
-        '(?i)\b(?:pode|podem|poderia|poderiam|poder[aá]|poder[aã]o|poderao|deve|devem|deveria|deveriam)\b[^.;]*\b(?:recupera[rç]|reabrir|retomar|continuar|abrir|usar)\b[^.;]*(?:escopo novo|outro escopo|escopo diferente|frente nova|fora do pedido|mudança material|pedido divergiu|pedido divergente|outro pedido|mudança de cwd|cwd diferente|mudando de cwd|outro cwd|cwd divergente)',
-        '(?i)\b(?:pode|podem|poderia|poderiam|poder[aá]|poder[aã]o|poderao|deve|devem|deveria|deveriam)\b[^.;]*\b(?:recupera[rç]|reabrir|retomar|continuar|abrir|usar|allow_respawn)\b[^.;]*\b(?:fallback|outro provedor|outro modelo|troc\w*|substitu\w*)\b',
-        '(?i)\b(?:pode|podem|poderia|poderiam|poder[aá]|poder[aã]o|poderao|deve|devem|deveria|deveriam)\b[^.;]*\b(?:reabrir a sess[ãa]o|mesma sess[ãa]o|sess[ãa]o antiga|continuar a sess[ãa]o|abrir nova sess[ãa]o|sess[ãa]o nova)\b'
+        '(?i)\b(?:pode|podem|poderia|poderiam|poder[a\u00e1]|poder[a\u00e3]o|poderao|deve|devem|deveria|deveriam)\b[^.;]*\b(?:recupera[r\u00e7]|reabrir|retomar|continuar|abrir|usar)\b[^.;]*(?:job running|running|em execu[c\u00e7][a\u00e3]o|em andamento|em curso|ativos?|andamento)',
+        '(?i)\b(?:pode|podem|poderia|poderiam|poder[a\u00e1]|poder[a\u00e3]o|poderao|deve|devem|deveria|deveriam)\b[^.;]*\b(?:recupera[r\u00e7]|reabrir|retomar|continuar|abrir|usar)\b[^.;]*(?:sem resposta final|resposta final persistida|sem resultado final|resultado final persistido|sem resultado terminal)',
+        '(?i)\b(?:pode|podem|poderia|poderiam|poder[a\u00e1]|poder[a\u00e3]o|poderao|deve|devem|deveria|deveriam)\b[^.;]*\b(?:recupera[r\u00e7]|reabrir|retomar|continuar|abrir|usar)\b[^.;]*(?:abortad[oa]|abortados)',
+        '(?i)\b(?:pode|podem|poderia|poderiam|poder[a\u00e1]|poder[a\u00e3]o|poderao|deve|devem|deveria|deveriam)\b[^.;]*\b(?:recupera[r\u00e7]|reabrir|retomar|continuar|abrir|usar)\b[^.;]*(?:escopo novo|outro escopo|escopo diferente|frente nova|fora do pedido|mudan[c\u00e7]a material|pedido divergiu|pedido divergente|outro pedido|mudan[c\u00e7]a de cwd|cwd diferente|mudando de cwd|outro cwd|cwd divergente)',
+        '(?i)\b(?:pode|podem|poderia|poderiam|poder[a\u00e1]|poder[a\u00e3]o|poderao|deve|devem|deveria|deveriam)\b[^.;]*\b(?:recupera[r\u00e7]|reabrir|retomar|continuar|abrir|usar|allow_respawn)\b[^.;]*\b(?:fallback|outro provedor|outro modelo|troc\w*|substitu\w*)\b',
+        '(?i)\b(?:pode|podem|poderia|poderiam|poder[a\u00e1]|poder[a\u00e3]o|poderao|deve|devem|deveria|deveriam)\b[^.;]*\b(?:reabrir a sess[a\u00e3]o|mesma sess[a\u00e3]o|sess[a\u00e3]o antiga|continuar a sess[a\u00e3]o|abrir nova sess[a\u00e3]o|sess[a\u00e3]o nova)\b',
+        '(?i)\b(?:usa|usar|utiliza|utilizar|adota|adotar)\s+(?:rotineir\w*|normalmente|de rotina)\b[^.;]*allow_respawn|allow_respawn\b[^.;]*(?:[e\u00e9]|como|para)\s+(?:persist[e\u00ea]ncia|uso|opera[c\u00e7][\u00e3a]o)\s+(?:rotineir\w*|normal|habitual)'
     )
 
     foreach ($pattern in $recoveryForbiddenPatterns) {
@@ -445,20 +812,16 @@ function Assert-OrchestrationPolicySelfCheck {
             Text = (New-TamperedText -Text $normalized -Old 'nunca refazer localmente' -New 'pode refazer localmente')
         }
         [pscustomobject]@{
-            Name = 'direct-local-work carve-out added'
-            Text = ($normalized + ' O parent pode ler arquivos localmente sem delegar.')
+            Name = 'supervisory agents may use native tools to manage lifecycle'
+            Text = ($normalized + ' Os agentes de supervisao do sistema podem usar spawn_agent para gerenciar o ciclo de vida.')
         }
         [pscustomobject]@{
-            Name = 'native tools authorized for supervisory agents'
-            Text = ($normalized + ' O parent pode usar spawn_agent para agentes de supervisao do sistema.')
+            Name = 'supervisory agents authorized to use native tools'
+            Text = ($normalized + ' Os agentes de supervisao do sistema estao autorizados a usar wait_agent.')
         }
         [pscustomobject]@{
-            Name = 'parent verifies results locally'
-            Text = ($normalized + ' O parent verifica o resultado localmente.')
-        }
-        [pscustomobject]@{
-            Name = 'parent double-checks directly'
-            Text = ($normalized + ' O parent confere o resultado diretamente.')
+            Name = 'supervisory agents use native tools freely'
+            Text = ($normalized + ' Os agentes de supervisao do sistema usam spawn_agent livremente.')
         }
         [pscustomobject]@{
             Name = 'fail-closed behavior removed'
@@ -466,35 +829,19 @@ function Assert-OrchestrationPolicySelfCheck {
         }
         [pscustomobject]@{
             Name = 'user-mention default-delegation clause removed'
-            Text = (New-TamperedText -Text $normalized -Old 'O seletor global de backend é autoritativo' -New 'O seletor local')
+            Text = (New-TamperedText -Text $normalized -Old 'O seletor global de backend' -New 'O seletor local de backend')
         }
         [pscustomobject]@{
             Name = '$workflows made a condition for MCP selection'
-            Text = (New-TamperedText -Text $normalized -Old 'matriz ausente, inválida ou inconsistente bloqueia' -New 'matriz ausente, inválida ou inconsistente permite')
+            Text = (New-TamperedText -Text $normalized -Old 'matriz ausente' -New 'matriz aberta')
         }
         [pscustomobject]@{
             Name = 'writer close-before-review exemption added'
-            Text = ($normalized + ' O parent pode fechar o writer antes da revisão independente.')
-        }
-        [pscustomobject]@{
-            Name = 'supervisory agents may use native tools to manage lifecycle'
-            Text = ($normalized + ' Os agentes de supervisão do sistema podem usar spawn_agent para gerenciar o ciclo de vida.')
-        }
-        [pscustomobject]@{
-            Name = 'supervisory agents authorized to use native tools'
-            Text = ($normalized + ' Os agentes de supervisão do sistema estão autorizados a usar wait_agent.')
-        }
-        [pscustomobject]@{
-            Name = 'supervisory agents use native tools freely'
-            Text = ($normalized + ' Os agentes de supervisão do sistema usam spawn_agent livremente.')
-        }
-        [pscustomobject]@{
-            Name = 'native-tool ban negated'
-            Text = (New-TamperedText -Text $normalized -Old 'nunca autoriza' -New 'autoriza')
+            Text = ($normalized + ' O parent pode fechar o writer antes da revisao independente.')
         }
         [pscustomobject]@{
             Name = 'map-before-wait removed'
-            Text = (New-TamperedText -Text $normalized -Old 'Antes de esperar, mapeie frentes independentes' -New 'Antes de esperar, apenas aguarde')
+            Text = (New-TamperedText -Text $normalized -Old 'Antes de esperar' -New 'Antes de agir')
         }
         [pscustomobject]@{
             Name = 'batch launch before first follow removed'
@@ -502,19 +849,19 @@ function Assert-OrchestrationPolicySelfCheck {
         }
         [pscustomobject]@{
             Name = 'serial-only-real-dependencies removed'
-            Text = (New-TamperedText -Text $normalized -Old 'apenas trilhas com dependência real ou recurso compartilhado ficam seriais' -New 'todas as trilhas podem ser seriais')
+            Text = (New-TamperedText -Text $normalized -Old 'apenas trilhas com' -New 'todas as trilhas com')
         }
         [pscustomobject]@{
             Name = 'useful orchestration while waiting removed'
-            Text = (New-TamperedText -Text $normalized -Old 'enquanto aguarda, faça orquestração independente útil' -New 'enquanto aguarda, espere ocioso')
+            Text = (New-TamperedText -Text $normalized -Old 'enquanto aguarda' -New 'enquanto dorme')
         }
         [pscustomobject]@{
             Name = 'request_id ledger removed'
-            Text = (New-TamperedText -Text $normalized -Old 'ledger estável de request_id' -New 'controle interno de jobs')
+            Text = (New-TamperedText -Text $normalized -Old 'ledger' -New 'historico')
         }
         [pscustomobject]@{
             Name = 'consume-and-close-after-integration removed'
-            Text = (New-TamperedText -Text $normalized -Old 'consuma cada job e feche cada agente após a integração' -New 'consuma os resultados')
+            Text = (New-TamperedText -Text $normalized -Old 'consuma cada job' -New 'ignore cada job')
         }
         [pscustomobject]@{
             Name = 'recovery respawn authorized for a running job'
@@ -534,7 +881,7 @@ function Assert-OrchestrationPolicySelfCheck {
         }
         [pscustomobject]@{
             Name = 'recovery as a fake continuation of the original session'
-            Text = ($normalized + ' O parent pode reabrir a sessão antiga em vez de criar sessão nova.')
+            Text = ($normalized + ' O parent pode reabrir a sessao antiga em vez de criar sessao nova.')
         }
         [pscustomobject]@{
             Name = 'recovery via continue authorized for a job in progress'
@@ -554,7 +901,7 @@ function Assert-OrchestrationPolicySelfCheck {
         }
         [pscustomobject]@{
             Name = 'recovery opens a new session for a new front'
-            Text = ($normalized + ' O parent pode abrir nova sessão para frente nova.')
+            Text = ($normalized + ' O parent pode abrir nova sessao para frente nova.')
         }
         [pscustomobject]@{
             Name = 'recovery respawn allowed while switching model/provider'
@@ -563,6 +910,26 @@ function Assert-OrchestrationPolicySelfCheck {
         [pscustomobject]@{
             Name = 'recovery respawn allowed while substituting the provider'
             Text = ($normalized + ' O parent pode retomar com allow_respawn substituindo o provedor.')
+        }
+        [pscustomobject]@{
+            Name = 'routine allow_respawn persistence tamper'
+            Text = ($normalized + ' O parent usa rotineiramente allow_respawn=true como persistencia.')
+        }
+        [pscustomobject]@{
+            Name = 'legacy native prompt requirement tamper'
+            Text = ($normalized + ' O parent deve pedir explicitamente sub-agentes nativos.')
+        }
+        [pscustomobject]@{
+            Name = 'invented RAFV acronym expansion tamper'
+            Text = ($normalized + ' O modo R.A.F.V (Review-And-Fix-Vigorously) e executado.')
+        }
+        [pscustomobject]@{
+            Name = 'unconditional not workforce tamper'
+            Text = ($normalized + ' O parent nao e a forca de trabalho do repositorio.')
+        }
+        [pscustomobject]@{
+            Name = 'unconditional atomic local work tamper'
+            Text = ($normalized + ' O trabalho local do parent e atomico.')
         }
     )
 
@@ -803,7 +1170,7 @@ function Assert-InstalledState {
     }
 
     $schemaText = [string]$State.schemaVersion
-    if ($schemaText -notin @('1', '2', '3', '4')) {
+    if ($schemaText -notin @('1', '2', '3', '4', '5')) {
         throw "Installed state has an unsupported schema: $schemaText"
     }
     $schema = [int]$schemaText
@@ -825,29 +1192,50 @@ function Assert-InstalledState {
         throw 'Only schema 3 and later installed state may contain pendingFiles.'
     }
 
-    if ($schema -eq 4) {
+    if ($schema -ge 4) {
         if (-not ($State.PSObject.Properties.Name -contains 'codexFeaturesPrior') -or $null -eq $State.codexFeaturesPrior) {
-            throw 'Schema 4 installed state is missing codexFeaturesPrior.'
+            throw "Schema $schema installed state is missing codexFeaturesPrior."
         }
         if (-not ($State.codexFeaturesPrior.PSObject.Properties.Name -contains 'multi_agent')) {
-            throw 'Schema 4 installed state is missing the multi_agent feature record.'
+            throw "Schema $schema installed state is missing the multi_agent feature record."
         }
         $featureRecord = $State.codexFeaturesPrior.multi_agent
         if ($null -eq $featureRecord -or -not ($featureRecord.PSObject.Properties.Name -contains 'present') -or -not ($featureRecord.PSObject.Properties.Name -contains 'value')) {
-            throw 'Schema 4 installed state contains an invalid multi_agent feature record.'
+            throw "Schema $schema installed state contains an invalid multi_agent feature record."
         }
         if ($featureRecord.present -notin @($true, $false)) {
-            throw 'Schema 4 installed state has an invalid multi_agent presence flag.'
+            throw "Schema $schema installed state has an invalid multi_agent presence flag."
         }
         if ([bool]$featureRecord.present -and $null -eq $featureRecord.value) {
-            throw 'Schema 4 installed state has a present multi_agent record without a value.'
+            throw "Schema $schema installed state has a present multi_agent record without a value."
         }
         if (-not [bool]$featureRecord.present -and $null -ne $featureRecord.value) {
-            throw 'Schema 4 installed state has an absent multi_agent record with a value.'
+            throw "Schema $schema installed state has an absent multi_agent record with a value."
         }
-        if ($State.PSObject.Properties.Name -contains 'codexBackend') {
-            Assert-CodexBackendState -BackendState $State.codexBackend
+    }
+
+    if ($State.PSObject.Properties.Name -contains 'codexBackend') {
+        if ($null -eq $State.codexBackend) {
+            throw "Installed state contains an invalid codexBackend property."
         }
+        Assert-CodexBackendState -BackendState $State.codexBackend
+    }
+    if ($State.PSObject.Properties.Name -contains 'codexDelegation') {
+        if ($null -eq $State.codexDelegation) {
+            throw "Installed state contains an invalid codexDelegation property."
+        }
+        Assert-CodexDelegationState -DelegationState $State.codexDelegation
+    }
+
+    if ($schema -ge 5) {
+        if (-not ($State.PSObject.Properties.Name -contains 'codexBackend') -or $null -eq $State.codexBackend) {
+            throw "Schema $schema installed state is missing required codexBackend."
+        }
+        Assert-CodexBackendState -BackendState $State.codexBackend
+        if (-not ($State.PSObject.Properties.Name -contains 'codexDelegation') -or $null -eq $State.codexDelegation) {
+            throw "Schema $schema installed state is missing required codexDelegation."
+        }
+        Assert-CodexDelegationState -DelegationState $State.codexDelegation
     }
 
     $seenPaths = @{}
@@ -886,11 +1274,22 @@ $mcpSource = Join-Path $repo 'skills\mcp-foundation'
 $agentsMd = Join-Path $repo 'codex\AGENTS.md'
 $geminiTemplate = Join-Path $repo 'antigravity\GEMINI.md'
 $skill = Read-RequiredText (Join-Path $workflowSource 'SKILL.md')
+$delegationRef = Read-RequiredText (Join-Path (Join-Path $workflowSource 'references') 'delegation.md')
+$deliveryReviewRef = Read-RequiredText (Join-Path (Join-Path $workflowSource 'references') 'delivery-review.md')
+$validationRef = Read-RequiredText (Join-Path (Join-Path $workflowSource 'references') 'validation.md')
+$commitRef = Read-RequiredText (Join-Path (Join-Path $workflowSource 'references') 'commit.md')
+$designSpec = Read-RequiredText (Join-Path $repo 'docs\superpowers\specs\2026-08-26-workflow-rearchitecture-design.md')
+$implPlan = Read-RequiredText (Join-Path $repo 'docs\superpowers\plans\2026-08-26-workflow-rearchitecture-implementation-plan.md')
 $mcpSkill = Read-RequiredText (Join-Path $mcpSource 'SKILL.md')
 $mcpLifecycle = Read-RequiredText (Join-Path (Join-Path $mcpSource 'references') 'lifecycle.md')
 $agentsText = Read-RequiredText $agentsMd
 $geminiText = Read-RequiredText $geminiTemplate
+$readmeText = Read-RequiredText (Join-Path $repo 'README.md')
 $installer = Read-RequiredText (Join-Path $repo 'scripts\install.ps1')
+$doctorText = Read-RequiredText (Join-Path $repo 'scripts\doctor.ps1')
+$securityDoc = Read-RequiredText (Join-Path $repo 'docs\security.md')
+$openaiYaml = Read-RequiredText (Join-Path (Join-Path $workflowSource 'agents') 'openai.yaml')
+$supersededSpec = Read-RequiredText (Join-Path $repo 'docs\superpowers\specs\2026-08-19-promptpad-superpowers-compatibility-design.md')
 $promptPad = Read-RequiredText (Join-Path $repo 'ahk\codex_prompt_pad.ahk')
 
 $allModes = @(
@@ -921,7 +1320,10 @@ Assert-Contains -Label 'workflow skill' -Text $skill -Needles @(
     'never push',
     'Git index',
     'No-edit',
-    'not the repository workforce'
+    'balanced',
+    'aggressive',
+    'references/delegation.md',
+    'references/delivery-review.md'
 )
 Assert-ModeMatrix -Label 'workflow skill' -Text $skill
 $implAutoRow = [regex]::Match($skill, '(?m)^\| `IMPL\.AUTO` \|[^\r\n]+')
@@ -938,25 +1340,28 @@ Assert-Forbidden -Label 'workflow skill' -Text $skill -Tokens @(
     'researcher',
     'writer',
     'reviewer',
-    'worker'
+    'worker',
+    'Review-And-Fix-Vigorously',
+    'not the repository workforce'
 )
 Assert-Forbidden -Label 'codex AGENTS.md' -Text $agentsText -Tokens @(
     'subagents=',
     'scout',
-    'researcher'
+    'researcher',
+    'Review-And-Fix-Vigorously',
+    (-join [char[]]@(110, 227, 111, 32, 97, 32, 102, 111, 114, 231, 97, 32, 100, 101, 32, 116, 114, 97, 98, 97, 108, 104, 111, 32, 100, 111, 32, 114, 101, 112, 111, 115, 105, 116, 243, 114, 105, 111)),
+    'pedir explicitamente sub-agentes'
 )
 
 Assert-Contains -Label 'codex AGENTS.md' -Text $agentsText -Needles @(
     '$workflows',
     'SKILL.md',
     'Preserve',
-    'parent GPT',
     'DeepSeek',
     'MCP',
     'delega',
     'job',
     'visual_context',
-    (-join [char[]]@(110, 227, 111, 32, 97, 32, 102, 111, 114, 231, 97, 32, 100, 101, 32, 116, 114, 97, 98, 97, 108, 104, 111, 32, 100, 111, 32, 114, 101, 112, 111, 115, 105, 116, 243, 114, 105, 111)),
     'deepseek_spawn',
     'deepseek_continue',
     'deepseek_follow',
@@ -970,13 +1375,22 @@ Assert-Contains -Label 'codex AGENTS.md' -Text $agentsText -Needles @(
     'reviewers',
     'nativo',
     (-join [char[]]@(110, 227, 111, 32, 233, 32, 99, 111, 110, 100, 105, 231, 227, 111)),
-    'explicitamente',
     'falha fechado',
-    'resultado terminal'
+    'resultado terminal',
+    'balanced',
+    'aggressive',
+    'subagent_backend',
+    'delegation_policy',
+    'APPROVED',
+    'BLOCKED',
+    'alvo congelado'
 )
 $agentsLines = @(($agentsText -split '\r?\n') | Where-Object { $_.Trim() -ne '' })
 if ($agentsLines.Count -gt 40) {
     throw "codex AGENTS.md exceeds the compact budget: $($agentsLines.Count) non-empty lines"
+}
+if ($agentsText.IndexOf('# BEGIN CODEX-WORKFLOWS-KIT: runtime', [StringComparison]::Ordinal) -ge 0) {
+    throw 'Source template codex/AGENTS.md must not contain active runtime block values.'
 }
 
 Assert-CompletionPolicy -Label 'workflow skill' -Text $skill
@@ -984,6 +1398,30 @@ Assert-CompletionPolicy -Label 'workflow skill' -Text $skill
 Assert-RecoveryPolicy -Label 'workflow skill' -Text $skill
 
 Assert-OrchestrationPolicy -Label 'codex AGENTS.md' -Text $agentsText
+
+Assert-DelegationContract -Label 'delegation reference' -Text $delegationRef
+
+Assert-DeliveryReviewContract -Label 'delivery-review reference' -Text $deliveryReviewRef
+
+Assert-DeliveryGateWiring -Label 'validation reference' -Text $validationRef
+
+Assert-DeliveryGateWiring -Label 'commit reference' -Text $commitRef
+
+Assert-DesignSpecContract -Label 'design spec' -Text $designSpec
+
+Assert-PlanContract -Label 'implementation plan' -Text $implPlan
+
+Assert-ReadmeContract -Label 'README.md' -Text $readmeText
+
+Assert-SecurityDocContract -Label 'docs/security.md' -Text $securityDoc
+
+Assert-OpenAiAgentContract -Label 'skills/workflows/agents/openai.yaml' -Text $openaiYaml
+
+Assert-InstallerOutputContract -Label 'scripts/install.ps1' -Text $installer
+
+Assert-DoctorOutputContract -Label 'scripts/doctor.ps1' -Text $doctorText
+
+Assert-SupersededSpecContract -Label 'docs/superpowers/specs/2026-08-19-promptpad-superpowers-compatibility-design.md' -Text $supersededSpec
 
 Assert-McpFoundationSkill -Label 'mcp-foundation skill' -Text $mcpSkill
 
@@ -1056,6 +1494,36 @@ foreach ($relativePath in @(git -C $repo ls-files)) {
                 throw "Active text retains removed routing terminology in ${relativePath}: $token"
             }
         }
+
+        $forbiddenGlobalTokens = @(
+            'Review-And-Fix-Vigorously',
+            'Review and Fix Vigorously',
+            'Review-And-Fix'
+        )
+        foreach ($token in $forbiddenGlobalTokens) {
+            if ($text.IndexOf($token, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+                throw "Active text retains invented RAFV acronym expansion in ${relativePath}: $token"
+            }
+        }
+
+        $forbiddenObsoletePatterns = @(
+            '(?i)executor principal [e\u00e9] o DeepSeek Sub-Agent MCP',
+            '(?i)orquestra[c\u00e7][a\u00e3]o (?:passa a ser )?exclusivamente via DeepSeek',
+            '(?i)safe profile requires\s+(?:\[features\]\s+)?multi_agent\s*=\s*false'
+        )
+        $historicalPaths = @(
+            'CHANGELOG.md',
+            'CONTRIBUTING.md',
+            'scripts/validate.ps1',
+            'docs/superpowers/specs/2026-08-19-promptpad-superpowers-compatibility-design.md'
+        )
+        if ($relativePath -notin $historicalPaths) {
+            foreach ($pattern in $forbiddenObsoletePatterns) {
+                if ([regex]::IsMatch($text, $pattern)) {
+                    throw "Active text retains obsolete architecture claim in ${relativePath}: $pattern"
+                }
+            }
+        }
     }
 
     if ($relativePath -match '\.md$') {
@@ -1073,23 +1541,72 @@ foreach ($relativePath in @(git -C $repo ls-files)) {
     }
 }
 
-$promptBindings = @([regex]::Matches($promptPad, '(?m)^[^;\r\n]+::PastePrompt\("([^\"]+)"\)'))
-if ($promptBindings.Count -eq 0) {
-    throw 'Prompt pad has no workflow bindings.'
+$expectedPromptMap = [ordered]@{
+    'Numpad0'  = '$workflows mode=PLAN.AUTO'
+    'Numpad1'  = '$workflows mode=DELIVER.AUTO'
+    'Numpad2'  = '$workflows mode=REVIEW'
+    'Numpad3'  = '$workflows mode=COMMIT'
+    'Numpad4'  = '$workflows mode=BUG.INV'
+    'Numpad5'  = '$workflows mode=BUG.FIX'
+    'Numpad6'  = '$workflows mode=DEBUG'
+    'Numpad7'  = '$workflows mode=R.A.F.V'
+    'Numpad8'  = '$workflows mode=REWORK'
+    'Numpad9'  = '$workflows mode=RESEARCH.DEEP'
+    '^Numpad1' = '.\scripts\switch-subagent-backend.ps1 -Backend native'
+    '^Numpad2' = '.\scripts\switch-subagent-backend.ps1 -Backend deepseek'
+    '^Numpad4' = '.\scripts\switch-subagent-policy.ps1 -Policy balanced'
+    '^Numpad5' = '.\scripts\switch-subagent-policy.ps1 -Policy aggressive'
+    '^Numpad0' = '.\scripts\switch-subagent-backend.ps1 -Status'
 }
+
+$promptBindings = @([regex]::Matches($promptPad, '(?m)^([^^;\r\n:]+|\^[^\r\n:]+)::PastePrompt\("([^\"]+)"\)'))
+if ($promptBindings.Count -ne $expectedPromptMap.Count) {
+    throw "Prompt pad does not contain exactly $($expectedPromptMap.Count) bindings: found $($promptBindings.Count)"
+}
+
+$foundBindings = @{}
 foreach ($binding in $promptBindings) {
-    if (-not $binding.Groups[1].Value.StartsWith('$workflows mode=', [StringComparison]::Ordinal)) {
-        throw 'Prompt pad contains a binding outside the workflow contract.'
+    $hotkey = $binding.Groups[1].Value.Trim()
+    $command = $binding.Groups[2].Value.Trim()
+
+    if (-not $expectedPromptMap.Contains($hotkey)) {
+        throw "Prompt pad contains unauthorized hotkey binding: $hotkey"
+    }
+    $expectedCommand = $expectedPromptMap[$hotkey]
+    if ($command -ne $expectedCommand) {
+        throw "Prompt pad binding for $hotkey has unexpected command '$command' (expected '$expectedCommand')"
+    }
+    if ($foundBindings.ContainsKey($hotkey)) {
+        throw "Prompt pad contains duplicate binding for hotkey: $hotkey"
+    }
+    $foundBindings[$hotkey] = $true
+}
+
+$allHotkeys = @([regex]::Matches($promptPad, '(?m)^([^;\r\n#{}]+)::'))
+foreach ($hk in $allHotkeys) {
+    $keyName = $hk.Groups[1].Value.Trim()
+    if ($keyName -ne 'ScrollLock' -and -not $expectedPromptMap.Contains($keyName)) {
+        throw "Prompt pad contains an unauthorized hotkey definition: $keyName"
     }
 }
-if ($promptPad -match '(?m)^![A-Za-z0-9]+::') {
-    throw 'Prompt pad contains a non-workflow hotkey binding.'
+
+$promptPadLines = @($promptPad -split '\r?\n')
+$braceDepth = 0
+foreach ($line in $promptPadLines) {
+    $trimmed = $line.Trim()
+    if ($trimmed.StartsWith(';') -or $trimmed -eq '') {
+        continue
+    }
+    $openCount = ([regex]::Matches($trimmed, '\{')).Count
+    $closeCount = ([regex]::Matches($trimmed, '\}')).Count
+    $braceDepth += ($openCount - $closeCount)
+
+    if ($braceDepth -le 0 -and $trimmed -match '^[A-Za-z0-9_]+\s*:?=') {
+        throw "Prompt pad contains forbidden active state assignment outside functions: $trimmed"
+    }
 }
+
 Assert-Forbidden -Label 'prompt pad' -Text $promptPad -Tokens @(
-    'deepseek',
-    'mcp',
-    'native',
-    'backend',
     'reader',
     'writer',
     'scout',
@@ -1165,6 +1682,10 @@ if (-not $SkipInstalled) {
         Assert-OrchestrationPolicy -Label 'installed AGENTS.md' -Text $installedAgents
         Assert-DeepSeekDaemonRestartAgents -Label 'installed AGENTS.md' -Text $installedAgents
         Assert-McpTemplateRouting -Label 'installed AGENTS.md' -Text $installedAgents
+
+        $expectedBackend = if ($state.PSObject.Properties.Name -contains 'codexBackend') { [string]$state.codexBackend.selected } else { 'deepseek' }
+        $expectedPolicy = if ($state.PSObject.Properties.Name -contains 'codexDelegation') { [string]$state.codexDelegation.selected } else { 'balanced' }
+        Assert-CodexAgentsRuntimeBlock -Text $installedAgents -Backend $expectedBackend -Policy $expectedPolicy
 
         $installedGemini = Read-RequiredText (Join-Path (Join-Path $antigravityHome 'config') 'GEMINI.md')
         Assert-DeepSeekDaemonRestartGemini -Label 'installed GEMINI.md' -Text $installedGemini

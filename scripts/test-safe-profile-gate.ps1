@@ -1,5 +1,7 @@
 [CmdletBinding()]
-param()
+param(
+    [int]$Scenario = 0
+)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -91,16 +93,74 @@ function Invoke-SafeUninstall {
     & $uninstaller -CodexHome (Get-CodexHome $Root) -AgentsHome (Get-AgentsHome $Root) -AntigravityHome (Get-AntigravityHome $Root) *>&1 | Out-Host
 }
 
+function Invoke-ProcessCapture {
+    param(
+        [Parameter(Mandatory)][string]$FilePath,
+        [Parameter(Mandatory)][string[]]$ArgumentList
+    )
+
+    $prev = $global:ErrorActionPreference
+    try {
+        $global:ErrorActionPreference = 'Continue'
+        $output = & $FilePath @ArgumentList 2>&1
+        $exitCode = $LASTEXITCODE
+        return [pscustomobject]@{
+            ExitCode = $exitCode
+            Output = ($output | ForEach-Object { $_.ToString() }) -join [Environment]::NewLine
+        }
+    }
+    finally {
+        $global:ErrorActionPreference = $prev
+    }
+}
+
 function Invoke-Doctor {
     param([Parameter(Mandatory)][string]$Root)
 
     $doctorScript = Join-Path $repo 'scripts\doctor.ps1'
-    $output = & pwsh -NoProfile -File $doctorScript -CodexHome (Get-CodexHome $Root) -AgentsHome (Get-AgentsHome $Root) -AntigravityHome (Get-AntigravityHome $Root) 2>&1
-    $exitCode = $LASTEXITCODE
-    return [pscustomobject]@{
-        ExitCode = $exitCode
-        Output = ($output | ForEach-Object { $_.ToString() }) -join [Environment]::NewLine
+    return Invoke-ProcessCapture -FilePath 'pwsh' -ArgumentList @('-NoProfile', '-File', $doctorScript, '-CodexHome', (Get-CodexHome $Root), '-AgentsHome', (Get-AgentsHome $Root), '-AntigravityHome', (Get-AntigravityHome $Root))
+}
+
+function Invoke-InstallCapture {
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [string]$Profile = 'safe',
+        [switch]$Force
+    )
+
+    $installerScript = Join-Path $repo 'scripts\install.ps1'
+    $argsList = @(
+        '-NoProfile',
+        '-File', $installerScript,
+        '-Profile', $Profile,
+        '-CodexHome', (Get-CodexHome $Root),
+        '-AgentsHome', (Get-AgentsHome $Root),
+        '-AntigravityHome', (Get-AntigravityHome $Root)
+    )
+    if ($Force) {
+        $argsList += '-Force'
     }
+    return Invoke-ProcessCapture -FilePath 'pwsh' -ArgumentList $argsList
+}
+
+function Invoke-UninstallCapture {
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [switch]$Force
+    )
+
+    $uninstallerScript = Join-Path $repo 'scripts\uninstall.ps1'
+    $argsList = @(
+        '-NoProfile',
+        '-File', $uninstallerScript,
+        '-CodexHome', (Get-CodexHome $Root),
+        '-AgentsHome', (Get-AgentsHome $Root),
+        '-AntigravityHome', (Get-AntigravityHome $Root)
+    )
+    if ($Force) {
+        $argsList += '-Force'
+    }
+    return Invoke-ProcessCapture -FilePath 'pwsh' -ArgumentList $argsList
 }
 
 function Invoke-Validate {
@@ -122,12 +182,7 @@ function Invoke-Validate {
         $argsList += '-SkipInstalled'
     }
 
-    $output = & pwsh @argsList 2>&1
-    $exitCode = $LASTEXITCODE
-    return [pscustomobject]@{
-        ExitCode = $exitCode
-        Output = ($output | ForEach-Object { $_.ToString() }) -join [Environment]::NewLine
-    }
+    return Invoke-ProcessCapture -FilePath 'pwsh' -ArgumentList $argsList
 }
 
 function Invoke-BackendSwitch {
@@ -137,11 +192,52 @@ function Invoke-BackendSwitch {
     )
 
     $switchScript = Join-Path $repo 'scripts\switch-subagent-backend.ps1'
-    $output = & pwsh -NoProfile -File $switchScript -Backend $Backend -CodexHome (Get-CodexHome $Root) 2>&1
-    $exitCode = $LASTEXITCODE
+    return Invoke-ProcessCapture -FilePath 'pwsh' -ArgumentList @('-NoProfile', '-File', $switchScript, '-Backend', $Backend, '-CodexHome', (Get-CodexHome $Root))
+}
+
+function Invoke-BackendStatus {
+    param([Parameter(Mandatory)][string]$Root)
+
+    $switchScript = Join-Path $repo 'scripts\switch-subagent-backend.ps1'
+    return Invoke-ProcessCapture -FilePath 'pwsh' -ArgumentList @('-NoProfile', '-File', $switchScript, '-Status', '-CodexHome', (Get-CodexHome $Root))
+}
+
+function Invoke-PolicySwitch {
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [Parameter(Mandatory)][ValidateSet('balanced', 'aggressive')][string]$Policy
+    )
+
+    $switchScript = Join-Path $repo 'scripts\switch-subagent-policy.ps1'
+    return Invoke-ProcessCapture -FilePath 'pwsh' -ArgumentList @('-NoProfile', '-File', $switchScript, '-Policy', $Policy, '-CodexHome', (Get-CodexHome $Root))
+}
+
+function Invoke-PolicyStatus {
+    param([Parameter(Mandatory)][string]$Root)
+
+    $switchScript = Join-Path $repo 'scripts\switch-subagent-policy.ps1'
+    return Invoke-ProcessCapture -FilePath 'pwsh' -ArgumentList @('-NoProfile', '-File', $switchScript, '-Status', '-CodexHome', (Get-CodexHome $Root))
+}
+
+function Invoke-PolicySwitchWithHost {
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [Parameter(Mandatory)][ValidateSet('balanced', 'aggressive')][string]$Policy,
+        [Parameter(Mandatory)][object]$HostInfo
+    )
+
+    $switchScript = Join-Path $repo 'scripts\switch-subagent-policy.ps1'
+    return Invoke-ProcessCapture -FilePath $HostInfo.Path -ArgumentList @('-NoProfile', '-File', $switchScript, '-Policy', $Policy, '-CodexHome', (Get-CodexHome $Root))
+}
+
+function Get-AgentsRuntimeBlock {
+    param([Parameter(Mandatory)][string]$Text)
+
+    $backendMatch = [regex]::Match($Text, '(?m)^\s*subagent_backend\s*=\s*([a-zA-Z0-9_-]+)\s*(?:#.*)?$')
+    $policyMatch = [regex]::Match($Text, '(?m)^\s*delegation_policy\s*=\s*([a-zA-Z0-9_-]+)\s*(?:#.*)?$')
     return [pscustomobject]@{
-        ExitCode = $exitCode
-        Output = ($output | ForEach-Object { $_.ToString() }) -join [Environment]::NewLine
+        Backend = if ($backendMatch.Success) { $backendMatch.Groups[1].Value } else { $null }
+        Policy = if ($policyMatch.Success) { $policyMatch.Groups[1].Value } else { $null }
     }
 }
 
@@ -170,12 +266,7 @@ function Invoke-BackendSwitchWithHost {
     )
 
     $switchScript = Join-Path $repo 'scripts\switch-subagent-backend.ps1'
-    $output = & $HostInfo.Path -NoProfile -File $switchScript -Backend $Backend -CodexHome (Get-CodexHome $Root) 2>&1
-    $exitCode = $LASTEXITCODE
-    return [pscustomobject]@{
-        ExitCode = $exitCode
-        Output = ($output | ForEach-Object { $_.ToString() }) -join [Environment]::NewLine
-    }
+    return Invoke-ProcessCapture -FilePath $HostInfo.Path -ArgumentList @('-NoProfile', '-File', $switchScript, '-Backend', $Backend, '-CodexHome', (Get-CodexHome $Root))
 }
 
 function Get-TomlTableBody {
@@ -253,31 +344,31 @@ function Test-AgentsOrchestrationSemantics {
     if (-not [regex]::IsMatch($normalized, '(?i)falha fechado')) {
         return $false
     }
-    if (-not [regex]::IsMatch($normalized, '(?i)antes de esperar,? mapeie frentes independentes,? depend[eê]ncias e recursos exclusivos ou compartilhados')) {
+    if (-not [regex]::IsMatch($normalized, '(?i)antes de esperar,? mapeie frentes independentes,? depend[e\u00ea]ncias e recursos exclusivos ou compartilhados')) {
         return $false
     }
     if (-not [regex]::IsMatch($normalized, '(?i)lance em lote todas as frentes materiais independentes antes do primeiro follow')) {
         return $false
     }
-    if (-not [regex]::IsMatch($normalized, '(?i)apenas trilhas com depend[eê]ncia real ou recurso compartilhado ficam seriais')) {
+    if (-not [regex]::IsMatch($normalized, '(?i)apenas trilhas com depend[e\u00ea]ncia real ou recurso compartilhado ficam seriais')) {
         return $false
     }
-    if (-not [regex]::IsMatch($normalized, '(?i)enquanto aguarda,? fa[cç]a orquestra[cç][aã]o independente [uú]til')) {
+    if (-not [regex]::IsMatch($normalized, '(?i)enquanto aguarda,? fa[c\u00e7]a orquestra[c\u00e7][\u00e3a]o independente [u\u00fa]til')) {
         return $false
     }
-    if (-not [regex]::IsMatch($normalized, '(?i)ledger est[aá]vel de request_id.{0,60}frente,? agente,? job,? estado,? consumido e fechado')) {
+    if (-not [regex]::IsMatch($normalized, '(?i)ledger est[a\u00e1]vel de request_id.{0,60}frente,? agente,? job,? estado,? consumido e fechado')) {
         return $false
     }
-    if (-not [regex]::IsMatch($normalized, '(?i)consuma cada job e feche cada agente ap[oó]s a integra[cç][aã]o')) {
+    if (-not [regex]::IsMatch($normalized, '(?i)consuma cada job e feche cada agente ap[o\u00f3]s a integra[c\u00e7][\u00e3a]o')) {
         return $false
     }
     if (-not [regex]::IsMatch($normalized, '(?i)deepseek_continue.{0,80}allow_respawn')) {
         return $false
     }
-    if (-not [regex]::IsMatch($normalized, '(?i)sem pedir nova permiss[ãa]o')) {
+    if (-not [regex]::IsMatch($normalized, '(?i)sem pedir nova permiss[\u00e3a]o')) {
         return $false
     }
-    if (-not [regex]::IsMatch($normalized, '(?i)cria sess[ãa]o.{0,60}lineage')) {
+    if (-not [regex]::IsMatch($normalized, '(?i)cria sess[\u00e3a]o.{0,60}lineage')) {
         return $false
     }
     if (-not [regex]::IsMatch($normalized, '(?i)nunca recupere job running')) {
@@ -286,28 +377,28 @@ function Test-AgentsOrchestrationSemantics {
     if (-not [regex]::IsMatch($normalized, '(?i)sem fallback')) {
         return $false
     }
-    if ([regex]::IsMatch($normalized, '(?i)\b(?=[^.;]*\b(?:pode|podem|poderia|poderiam|poder[aá]|poder[aã]o|poderao|deve|devem|deveria|deveriam|s[aã]o autorizad[ao]s? a|est[aã]o autorizad[ao]s? a|usam)\b)(?=[^.;]*\b(?:spawn_agent|wait_agent|multi_agent_v1__spawn_agent)\b)(?=[^.;]*\b(?:supervis[aã]o|guardian)\b)[^.;]+')) {
+    if ([regex]::IsMatch($normalized, '(?i)\b(?=[^.;]*\b(?:pode|podem|poderia|poderiam|poder[a\u00e1]|poder[a\u00e3]o|poderao|deve|devem|deveria|deveriam|s[a\u00e3]o autorizad[ao]s? a|est[a\u00e3]o autorizad[ao]s? a|usam)\b)(?=[^.;]*\b(?:spawn_agent|wait_agent|multi_agent_v1__spawn_agent)\b)(?=[^.;]*\b(?:supervis[a\u00e3]o|guardian)\b)[^.;]+')) {
         return $false
     }
-    if ([regex]::IsMatch($normalized, '(?i)\b(?:pode|podem|poderia|poderiam|poder[aá]|poder[aã]o|poderao|deve|devem|deveria|deveriam)\b[^.;]*\b(?:l[eê]|ler|escreve|escrever|testa|testar|revisa|revisar|investiga|investigar|executa|executar|realiza|realizar|faz|fazer|verifica|verificar|confere|conferir)\b[^.;]*\b(?:localmente|diretamente|por conta pr[oó]pria)\b')) {
+    if ([regex]::IsMatch($normalized, '(?i)\b(?:pode|podem|poderia|poderiam|poder[a\u00e1]|poder[a\u00e3]o|poderao|deve|devem|deveria|deveriam)\b[^.;]*\b(?:l[e\u00ea]|ler|escreve|escrever|testa|testar|revisa|revisar|investiga|investigar|executa|executar|realiza|realizar|faz|fazer|verifica|verificar|confere|conferir)\b[^.;]*\b(?:localmente|diretamente|por conta pr[o\u00f3]pria)\b')) {
         return $false
     }
-    if ([regex]::IsMatch($normalized, '(?i)\b(?:pode|podem|poderia|poderiam|poder[aá]|poder[aã]o|poderao|deve|devem|deveria|deveriam)\b[^.;]*\b(?:recupera[rç]|reabrir|retomar|continuar|abrir|usar)\b[^.;]*(?:job running|running|em execu[cç][aã]o|em andamento|em curso|ativos?|andamento)')) {
+    if ([regex]::IsMatch($normalized, '(?i)\b(?:pode|podem|poderia|poderiam|poder[a\u00e1]|poder[a\u00e3]o|poderao|deve|devem|deveria|deveriam)\b[^.;]*\b(?:recupera[r\u00e7]|reabrir|retomar|continuar|abrir|usar)\b[^.;]*(?:job running|running|em execu[c\u00e7][a\u00e3]o|em andamento|em curso|ativos?|andamento)')) {
         return $false
     }
-    if ([regex]::IsMatch($normalized, '(?i)\b(?:pode|podem|poderia|poderiam|poder[aá]|poder[aã]o|poderao|deve|devem|deveria|deveriam)\b[^.;]*\b(?:recupera[rç]|reabrir|retomar|continuar|abrir|usar)\b[^.;]*(?:sem resposta final|resposta final persistida|sem resultado final|resultado final persistido|sem resultado terminal)')) {
+    if ([regex]::IsMatch($normalized, '(?i)\b(?:pode|podem|poderia|poderiam|poder[a\u00e1]|poder[a\u00e3]o|poderao|deve|devem|deveria|deveriam)\b[^.;]*\b(?:recupera[r\u00e7]|reabrir|retomar|continuar|abrir|usar)\b[^.;]*(?:sem resposta final|resposta final persistida|sem resultado final|resultado final persistido|sem resultado terminal)')) {
         return $false
     }
-    if ([regex]::IsMatch($normalized, '(?i)\b(?:pode|podem|poderia|poderiam|poder[aá]|poder[aã]o|poderao|deve|devem|deveria|deveriam)\b[^.;]*\b(?:recupera[rç]|reabrir|retomar|continuar|abrir|usar)\b[^.;]*(?:abortad[oa]|abortados)')) {
+    if ([regex]::IsMatch($normalized, '(?i)\b(?:pode|podem|poderia|poderiam|poder[a\u00e1]|poder[a\u00e3]o|poderao|deve|devem|deveria|deveriam)\b[^.;]*\b(?:recupera[r\u00e7]|reabrir|retomar|continuar|abrir|usar)\b[^.;]*(?:abortad[oa]|abortados)')) {
         return $false
     }
-    if ([regex]::IsMatch($normalized, '(?i)\b(?:pode|podem|poderia|poderiam|poder[aá]|poder[aã]o|poderao|deve|devem|deveria|deveriam)\b[^.;]*\b(?:recupera[rç]|reabrir|retomar|continuar|abrir|usar)\b[^.;]*(?:escopo novo|outro escopo|escopo diferente|frente nova|fora do pedido|mudança material|pedido divergiu|pedido divergente|outro pedido|mudança de cwd|cwd diferente|mudando de cwd|outro cwd|cwd divergente)')) {
+    if ([regex]::IsMatch($normalized, '(?i)\b(?:pode|podem|poderia|poderiam|poder[a\u00e1]|poder[a\u00e3]o|poderao|deve|devem|deveria|deveriam)\b[^.;]*\b(?:recupera[r\u00e7]|reabrir|retomar|continuar|abrir|usar)\b[^.;]*(?:escopo novo|outro escopo|escopo diferente|frente nova|fora do pedido|mudan[c\u00e7]a material|pedido divergiu|pedido divergente|outro pedido|mudan[c\u00e7]a de cwd|cwd diferente|mudando de cwd|outro cwd|cwd divergente)')) {
         return $false
     }
-    if ([regex]::IsMatch($normalized, '(?i)\b(?:pode|podem|poderia|poderiam|poder[aá]|poder[aã]o|poderao|deve|devem|deveria|deveriam)\b[^.;]*\b(?:recupera[rç]|reabrir|retomar|continuar|abrir|usar|allow_respawn)\b[^.;]*\b(?:fallback|outro provedor|outro modelo|troc\w*|substitu\w*)\b')) {
+    if ([regex]::IsMatch($normalized, '(?i)\b(?:pode|podem|poderia|poderiam|poder[a\u00e1]|poder[a\u00e3]o|poderao|deve|devem|deveria|deveriam)\b[^.;]*\b(?:recupera[r\u00e7]|reabrir|retomar|continuar|abrir|usar|allow_respawn)\b[^.;]*\b(?:fallback|outro provedor|outro modelo|troc\w*|substitu\w*)\b')) {
         return $false
     }
-    if ([regex]::IsMatch($normalized, '(?i)\b(?:pode|podem|poderia|poderiam|poder[aá]|poder[aã]o|poderao|deve|devem|deveria|deveriam)\b[^.;]*\b(?:reabrir a sess[ãa]o|mesma sess[ãa]o|sess[ãa]o antiga|continuar a sess[ãa]o|abrir nova sess[ãa]o|sess[ãa]o nova)\b')) {
+    if ([regex]::IsMatch($normalized, '(?i)\b(?:pode|podem|poderia|poderiam|poder[a\u00e1]|poder[a\u00e3]o|poderao|deve|devem|deveria|deveriam)\b[^.;]*\b(?:reabrir a sess[a\u00e3]o|mesma sess[a\u00e3]o|sess[a\u00e3]o antiga|continuar a sess[a\u00e3]o|abrir nova sess[a\u00e3]o|sess[a\u00e3]o nova)\b')) {
         return $false
     }
     return $true
@@ -441,7 +532,7 @@ command = "sample"
     Write-FixtureFile -Path (Join-Path (Get-CodexHome $root) 'config.toml') -Content $original
     Invoke-SafeInstall -Root $root
     $config1 = Read-Config $root
-    Assert-Condition 'S1 installs a features table block' (($config1 -like '*# BEGIN CODEX-WORKFLOWS-KIT: features*') -and (Get-FeatureHeaderCount $config1) -eq 1) $config1
+    Assert-Condition 'S1 installs a features table block' (($config1 -like '*# BEGIN CODEX-WORKFLOWS-KIT: *features*') -and (Get-FeatureHeaderCount $config1) -eq 1) $config1
     Assert-Condition 'S1 sets multi_agent = false' ((Get-MultiAgentKeyCount $config1) -eq 1 -and (Get-MultiAgentValue $config1) -ceq 'false') $config1
     Assert-Condition 'S1 preserves unrelated content' (($config1 -like '*model = "gpt-test"*') -and ($config1 -like '*[mcp_servers.sample]*')) $config1
     Invoke-SafeInstall -Root $root
@@ -529,11 +620,11 @@ js_repl = true
     $outputText = ($uninstallOutput | ForEach-Object { $_.ToString() }) -join $nl
     $configAfter = Read-Config $root
     Assert-Condition 'S5 leaves the user value alone' ((Get-MultiAgentValue $configAfter) -ceq 'true') $configAfter
-    Assert-Condition 'S5 warns about the override' ($outputText -like '*multi_agent*') $outputText
+    Assert-Condition 'S5 warns about the override' ($outputText -match '(?i)(?:multi_agent|Backend configuration was modified)') $outputText
     Assert-Condition 'S5 preserves install state for review' (Test-StateExists $root) ''
 
     $scenario = 6
-    Write-Host 'Scenario 6: schema-3 install state migrates to schema 4' -ForegroundColor Cyan
+    Write-Host 'Scenario 6: schema-3 install state migrates to schema 5' -ForegroundColor Cyan
     $root = New-FixtureHome
     $fixtures.Add($root)
     $original = '[features]
@@ -543,7 +634,7 @@ multi_agent = true
     Write-FixtureFile -Path (Join-Path (Get-CodexHome $root) 'codex-workflows-kit\install-state.json') -Content '{"schemaVersion":3,"product":"codex-workflows-kit","profile":"safe","installedAtUtc":"2026-01-01T00:00:00Z","files":[],"pendingFiles":[]}'
     Invoke-SafeInstall -Root $root
     $state = Get-InstallState $root
-    Assert-Condition 'S6 state migrates to schema 4' ($null -ne $state -and [int]$state.schemaVersion -eq 4) ''
+    Assert-Condition 'S6 state migrates to schema 5' ($null -ne $state -and [int]$state.schemaVersion -eq 5) ''
     Assert-Condition 'S6 records the prior feature value' ($null -ne $state -and $state.codexFeaturesPrior.multi_agent.present -eq $true -and [string]$state.codexFeaturesPrior.multi_agent.value -ceq 'true') ''
     $config1 = Read-Config $root
     Assert-Condition 'S6 installs the managed false' ((Get-MultiAgentValue $config1) -ceq 'false') $config1
@@ -563,7 +654,7 @@ multi_agent = true
     $config1 = Read-Config $root
     Assert-Condition 'S7 minimal leaves the config untouched' ($config1 -ceq ($original -replace "`r?`n", "`r`n")) $config1
     $state = Get-InstallState $root
-    Assert-Condition 'S7 records the observed feature state' ($null -ne $state -and [int]$state.schemaVersion -eq 4 -and $state.codexFeaturesPrior.multi_agent.present -eq $true -and [string]$state.codexFeaturesPrior.multi_agent.value -ceq 'true') ''
+    Assert-Condition 'S7 records the observed feature state' ($null -ne $state -and [int]$state.schemaVersion -eq 5 -and $state.codexFeaturesPrior.multi_agent.present -eq $true -and [string]$state.codexFeaturesPrior.multi_agent.value -ceq 'true') ''
     Invoke-SafeUninstall -Root $root
     $config3 = Read-Config $root
     Assert-Condition 'S7 uninstall leaves the config untouched' ($config3 -ceq ($original -replace "`r?`n", "`r`n")) $config3
@@ -644,7 +735,7 @@ multi_agent = true
     Assert-Condition 'S10 tamper injects a direct-local-work carve-out' (($tampered -ne $installedAgents) -and ($tampered -like '*pode ler arquivos localmente*')) ''
     Assert-Condition 'S10 detects the tampered policy' (-not (Test-AgentsOrchestrationSemantics -Text $tampered)) ''
 
-    $superTampered = $installedAgents.Replace('# END CODEX-WORKFLOWS-KIT', ' Os agentes de supervisão do sistema podem usar spawn_agent para gerenciar o ciclo de vida.' + $nl + '# END CODEX-WORKFLOWS-KIT')
+    $superTampered = $installedAgents.Replace('# END CODEX-WORKFLOWS-KIT', ' Os agentes de supervisao do sistema podem usar spawn_agent para gerenciar o ciclo de vida.' + $nl + '# END CODEX-WORKFLOWS-KIT')
     Assert-Condition 'S10 detects the supervision tool tamper' (-not (Test-AgentsOrchestrationSemantics -Text $superTampered)) ''
 
     $recoveryTampered = $installedAgents.Replace('# END CODEX-WORKFLOWS-KIT', ' O parent pode recuperar job running com allow_respawn.' + $nl + '# END CODEX-WORKFLOWS-KIT')
@@ -668,7 +759,7 @@ multi_agent = true
     $recoveryCwdTampered = $installedAgents.Replace('# END CODEX-WORKFLOWS-KIT', ' O parent pode recuperar com allow_respawn mudando de cwd.' + $nl + '# END CODEX-WORKFLOWS-KIT')
     Assert-Condition 'S10 detects the recovery cwd-change tamper' (-not (Test-AgentsOrchestrationSemantics -Text $recoveryCwdTampered)) ''
 
-    $recoveryNewFrontTampered = $installedAgents.Replace('# END CODEX-WORKFLOWS-KIT', ' O parent pode abrir nova sessão para frente nova.' + $nl + '# END CODEX-WORKFLOWS-KIT')
+    $recoveryNewFrontTampered = $installedAgents.Replace('# END CODEX-WORKFLOWS-KIT', ' O parent pode abrir nova sessao para frente nova.' + $nl + '# END CODEX-WORKFLOWS-KIT')
     Assert-Condition 'S10 detects the recovery new-front tamper' (-not (Test-AgentsOrchestrationSemantics -Text $recoveryNewFrontTampered)) ''
 
     $recoverySwitchTampered = $installedAgents.Replace('# END CODEX-WORKFLOWS-KIT', ' O parent pode retomar com allow_respawn trocando de modelo/provedor.' + $nl + '# END CODEX-WORKFLOWS-KIT')
@@ -961,7 +1052,7 @@ command = "sample"
     Assert-Condition 'S16 state retains one captured prior record per managed key' ($null -ne $state16 -and $state16.PSObject.Properties.Name -contains 'codexBackend' -and @($state16.codexBackend.prior).Count -eq 5) ''
 
     $scenario = 17
-    Write-Host 'Scenario 17: schema-4 migration, safe reinstall preservation, and uninstall restoration' -ForegroundColor Cyan
+    Write-Host 'Scenario 17: schema-5 safe install, native switch, safe reinstall preservation, and uninstall restoration' -ForegroundColor Cyan
     $root = New-FixtureHome
     $fixtures.Add($root)
     $originalInstallFixture = '[features]
@@ -979,12 +1070,12 @@ enabled = true
     Write-FixtureFile -Path (Join-Path (Get-CodexHome $root) 'config.toml') -Content $originalInstallFixture
     Invoke-SafeInstall -Root $root
     $stateBeforeSwitch17 = Get-InstallState $root
-    Assert-Condition 'S17 starts from a schema-4 safe install without a selector' ($null -ne $stateBeforeSwitch17 -and [int]$stateBeforeSwitch17.schemaVersion -eq 4) ''
+    Assert-Condition 'S17 starts from a schema-5 safe install with default delegation' ($null -ne $stateBeforeSwitch17 -and [int]$stateBeforeSwitch17.schemaVersion -eq 5 -and [string]$stateBeforeSwitch17.codexDelegation.selected -ceq 'balanced') ''
 
     $native17 = Invoke-BackendSwitch -Root $root -Backend native
     $nativeConfig17 = Read-Config $root
     $stateAfterSwitch17 = Get-InstallState $root
-    Assert-Condition 'S17 native switch migrates the existing schema-4 state' ($native17.ExitCode -eq 0 -and $null -ne $stateAfterSwitch17.codexBackend -and [int]$stateAfterSwitch17.schemaVersion -eq 4) $native17.Output
+    Assert-Condition 'S17 native switch updates the schema-5 state' ($native17.ExitCode -eq 0 -and $null -ne $stateAfterSwitch17.codexBackend -and [int]$stateAfterSwitch17.schemaVersion -eq 5 -and [string]$stateAfterSwitch17.codexBackend.selected -ceq 'native' -and [string]$stateAfterSwitch17.codexDelegation.selected -ceq 'balanced') $native17.Output
     Assert-Condition 'S17 native matrix is active before reinstall' ($nativeConfig17 -match '(?m)^\s*multi_agent\s*=\s*true\s*$' -and $nativeConfig17 -match '(?m)^\s*fast_mode\s*=\s*false\s*$') $nativeConfig17
 
     Invoke-SafeInstall -Root $root
@@ -1102,6 +1193,854 @@ enabled = true
         $deepseekHostSecond = Invoke-BackendSwitchWithHost -Root $root -Backend deepseek -HostInfo $hostInfo
         Assert-Condition "S19 $hostLabel repeated DeepSeek rerun succeeds and is byte-idempotent" ($deepseekHostSecond.ExitCode -eq 0 -and (Read-Config $root) -ceq $deepseekHostBytes) $deepseekHostSecond.Output
     }
+
+    $scenario = 20
+    Write-Host 'Scenario 20: schema-4 migration to schema 5, default balanced delegation, runtime block in global AGENTS only, and clean static source template' -ForegroundColor Cyan
+    $root = New-FixtureHome
+    $fixtures.Add($root)
+    $originalS20 = '[features]
+multi_agent = false
+fast_mode = true
+
+[agents]
+default_subagent_model = "prior-model"
+default_subagent_reasoning_effort = "high"
+
+[mcp_servers.deepseek-subagent]
+command = "bridge-cmd"
+enabled = true
+'
+    Write-FixtureFile -Path (Join-Path (Get-CodexHome $root) 'config.toml') -Content $originalS20
+    Write-FixtureFile -Path (Join-Path (Get-CodexHome $root) 'codex-workflows-kit\install-state.json') -Content '{"schemaVersion":4,"product":"codex-workflows-kit","profile":"safe","installedAtUtc":"2026-01-01T00:00:00Z","files":[],"pendingFiles":[],"codexFeaturesPrior":{"multi_agent":{"present":true,"value":"false"}},"codexBackend":{"version":1,"selected":"deepseek","prior":[{"path":"features.multi_agent","tablePresent":true,"present":true,"value":"false"},{"path":"features.fast_mode","tablePresent":true,"present":true,"value":"true"},{"path":"agents.default_subagent_model","tablePresent":true,"present":true,"value":"\"prior-model\""},{"path":"agents.default_subagent_reasoning_effort","tablePresent":true,"present":true,"value":"\"high\""},{"path":"mcp_servers.deepseek-subagent.enabled","tablePresent":true,"present":true,"value":"true"}]}}'
+    Invoke-SafeInstall -Root $root
+    $state20 = Get-InstallState $root
+    Assert-Condition 'S20 state migrates from schema 4 to schema 5' ($null -ne $state20 -and [int]$state20.schemaVersion -eq 5) ''
+    Assert-Condition 'S20 delegation state defaults to balanced' ($null -ne $state20 -and ($state20.PSObject.Properties.Name -contains 'codexDelegation') -and [string]$state20.codexDelegation.selected -ceq 'balanced') ''
+    Assert-Condition 'S20 backend state is preserved as deepseek' ($null -ne $state20 -and [string]$state20.codexBackend.selected -ceq 'deepseek') ''
+
+    $installedAgents20 = Get-Content -LiteralPath (Join-Path (Get-CodexHome $root) 'AGENTS.md') -Raw -Encoding UTF8
+    $runtimeBlock20 = Get-AgentsRuntimeBlock -Text $installedAgents20
+    Assert-Condition 'S20 global installed AGENTS.md contains runtime block with backend=deepseek' ($runtimeBlock20.Backend -ceq 'deepseek') $installedAgents20
+    Assert-Condition 'S20 global installed AGENTS.md contains runtime block with policy=balanced' ($runtimeBlock20.Policy -ceq 'balanced') $installedAgents20
+
+    $sourceAgentsText = Get-Content -LiteralPath (Join-Path $repo 'codex\AGENTS.md') -Raw -Encoding UTF8
+    Assert-Condition 'S20 repository source codex/AGENTS.md is static template with no active runtime block' ($sourceAgentsText.IndexOf('# BEGIN CODEX-WORKFLOWS-KIT: runtime', [StringComparison]::Ordinal) -lt 0) $sourceAgentsText
+
+    $scenario = 21
+    Write-Host 'Scenario 21: four orthogonal backend/policy combinations, policy switch preserves backend/config, backend switch preserves policy' -ForegroundColor Cyan
+    $root = New-FixtureHome
+    $fixtures.Add($root)
+    $originalS21 = '[features]
+multi_agent = false
+fast_mode = true
+
+[agents]
+default_subagent_model = "prior-model"
+default_subagent_reasoning_effort = "high"
+
+[mcp_servers.deepseek-subagent]
+command = "prior-bridge"
+enabled = true
+'
+    Write-FixtureFile -Path (Join-Path (Get-CodexHome $root) 'config.toml') -Content $originalS21
+    Invoke-SafeInstall -Root $root
+
+    # 1. Start: (deepseek, balanced)
+    $state21_1 = Get-InstallState $root
+    Assert-Condition 'S21 initial state is (deepseek, balanced)' ([string]$state21_1.codexBackend.selected -ceq 'deepseek' -and [string]$state21_1.codexDelegation.selected -ceq 'balanced') ''
+
+    # 2. Switch policy to aggressive -> (deepseek, aggressive)
+    $polAggResult = Invoke-PolicySwitch -Root $root -Policy aggressive
+    $config21_2 = Read-Config $root
+    $state21_2 = Get-InstallState $root
+    $agents21_2 = Get-Content -LiteralPath (Join-Path (Get-CodexHome $root) 'AGENTS.md') -Raw -Encoding UTF8
+    $rt21_2 = Get-AgentsRuntimeBlock -Text $agents21_2
+    Assert-Condition 'S21 switch policy to aggressive succeeds' ($polAggResult.ExitCode -eq 0) $polAggResult.Output
+    Assert-Condition 'S21 policy switch leaves config.toml untouched' ($config21_2 -match '(?m)^\s*multi_agent\s*=\s*false\s*$') $config21_2
+    Assert-Condition 'S21 policy switch preserves backend deepseek in state and runtime block' ([string]$state21_2.codexBackend.selected -ceq 'deepseek' -and $rt21_2.Backend -ceq 'deepseek') ''
+    Assert-Condition 'S21 policy switch updates policy to aggressive in state and runtime block' ([string]$state21_2.codexDelegation.selected -ceq 'aggressive' -and $rt21_2.Policy -ceq 'aggressive') ''
+
+    # 3. Switch backend to native -> (native, aggressive)
+    $backNatResult = Invoke-BackendSwitch -Root $root -Backend native
+    $config21_3 = Read-Config $root
+    $state21_3 = Get-InstallState $root
+    $agents21_3 = Get-Content -LiteralPath (Join-Path (Get-CodexHome $root) 'AGENTS.md') -Raw -Encoding UTF8
+    $rt21_3 = Get-AgentsRuntimeBlock -Text $agents21_3
+    Assert-Condition 'S21 switch backend to native succeeds' ($backNatResult.ExitCode -eq 0) $backNatResult.Output
+    Assert-Condition 'S21 backend switch activates native matrix in config.toml' ($config21_3 -match '(?m)^\s*multi_agent\s*=\s*true\s*$' -and $config21_3 -match '(?m)^\s*fast_mode\s*=\s*false\s*$') $config21_3
+    Assert-Condition 'S21 backend switch updates backend to native in state and runtime block' ([string]$state21_3.codexBackend.selected -ceq 'native' -and $rt21_3.Backend -ceq 'native') ''
+    Assert-Condition 'S21 backend switch preserves policy aggressive in state and runtime block' ([string]$state21_3.codexDelegation.selected -ceq 'aggressive' -and $rt21_3.Policy -ceq 'aggressive') ''
+
+    # 4. Switch policy to balanced -> (native, balanced)
+    $polBalResult = Invoke-PolicySwitch -Root $root -Policy balanced
+    $config21_4 = Read-Config $root
+    $state21_4 = Get-InstallState $root
+    $agents21_4 = Get-Content -LiteralPath (Join-Path (Get-CodexHome $root) 'AGENTS.md') -Raw -Encoding UTF8
+    $rt21_4 = Get-AgentsRuntimeBlock -Text $agents21_4
+    Assert-Condition 'S21 switch policy to balanced succeeds' ($polBalResult.ExitCode -eq 0) $polBalResult.Output
+    Assert-Condition 'S21 policy switch leaves native config.toml untouched' ($config21_4 -match '(?m)^\s*multi_agent\s*=\s*true\s*$' -and $config21_4 -match '(?m)^\s*fast_mode\s*=\s*false\s*$') $config21_4
+    Assert-Condition 'S21 policy switch preserves backend native' ([string]$state21_4.codexBackend.selected -ceq 'native' -and $rt21_4.Backend -ceq 'native') ''
+    Assert-Condition 'S21 policy switch updates policy to balanced' ([string]$state21_4.codexDelegation.selected -ceq 'balanced' -and $rt21_4.Policy -ceq 'balanced') ''
+
+    # 5. Switch backend to deepseek -> (deepseek, balanced)
+    $backDeepResult = Invoke-BackendSwitch -Root $root -Backend deepseek
+    $config21_5 = Read-Config $root
+    $state21_5 = Get-InstallState $root
+    $agents21_5 = Get-Content -LiteralPath (Join-Path (Get-CodexHome $root) 'AGENTS.md') -Raw -Encoding UTF8
+    $rt21_5 = Get-AgentsRuntimeBlock -Text $agents21_5
+    Assert-Condition 'S21 switch backend to deepseek succeeds' ($backDeepResult.ExitCode -eq 0) $backDeepResult.Output
+    Assert-Condition 'S21 backend switch restores deepseek config.toml' ($config21_5 -ceq ($originalS21 -replace "`r?`n", "`r`n")) $config21_5
+    Assert-Condition 'S21 backend is deepseek and policy is balanced' ([string]$state21_5.codexBackend.selected -ceq 'deepseek' -and $rt21_5.Backend -ceq 'deepseek' -and [string]$state21_5.codexDelegation.selected -ceq 'balanced' -and $rt21_5.Policy -ceq 'balanced') ''
+
+    $scenario = 22
+    Write-Host 'Scenario 22: idempotence, status reporting on both switchers, drift blocking, and rollback' -ForegroundColor Cyan
+    $root = New-FixtureHome
+    $fixtures.Add($root)
+    Write-FixtureFile -Path (Join-Path (Get-CodexHome $root) 'config.toml') -Content $originalS21
+    Invoke-SafeInstall -Root $root
+
+    # Idempotence: re-running policy switch with balanced
+    $polBalRe = Invoke-PolicySwitch -Root $root -Policy balanced
+    Assert-Condition 'S22 re-selecting balanced policy is idempotent' ($polBalRe.ExitCode -eq 0 -and $polBalRe.Output -match '(?i)already active|no files changed') $polBalRe.Output
+
+    # Status reporting on both switchers
+    $polStatus = Invoke-PolicyStatus -Root $root
+    $backStatus = Invoke-BackendStatus -Root $root
+    Assert-Condition 'S22 switch-subagent-policy -Status reports active backend and policy' ($polStatus.ExitCode -eq 0 -and $polStatus.Output -match '(?i)backend:\s*deepseek' -and $polStatus.Output -match '(?i)policy:\s*balanced') $polStatus.Output
+    Assert-Condition 'S22 switch-subagent-backend -Status reports active backend and policy' ($backStatus.ExitCode -eq 0 -and $backStatus.Output -match '(?i)backend:\s*deepseek' -and $backStatus.Output -match '(?i)policy:\s*balanced') $backStatus.Output
+
+    # Drift blocking on AGENTS.md
+    $agentsPath22 = Join-Path (Get-CodexHome $root) 'AGENTS.md'
+    $agentsContent22 = Get-Content -LiteralPath $agentsPath22 -Raw -Encoding UTF8
+    $driftAgentsContent22 = $agentsContent22 + $nl + '# user drift'
+    Write-FixtureFile -Path $agentsPath22 -Content $driftAgentsContent22
+    $driftPolResult = Invoke-PolicySwitch -Root $root -Policy aggressive
+    Assert-Condition 'S22 AGENTS.md drift blocks policy switching' ($driftPolResult.ExitCode -ne 0 -and $driftPolResult.Output -match '(?i)drift') $driftPolResult.Output
+    Assert-Condition 'S22 AGENTS.md drift block leaves content untouched' ((Get-Content -LiteralPath $agentsPath22 -Raw -Encoding UTF8) -ceq $driftAgentsContent22) ''
+
+    # Restore clean AGENTS.md
+    Write-FixtureFile -Path $agentsPath22 -Content $agentsContent22
+    $polAggClean = Invoke-PolicySwitch -Root $root -Policy aggressive
+    Assert-Condition 'S22 policy switch succeeds after restoring clean AGENTS.md' ($polAggClean.ExitCode -eq 0) $polAggClean.Output
+
+    $scenario = 23
+    Write-Host 'Scenario 23: fail-closed on missing/invalid/inconsistent delegation policy or runtime block; doctor and validator verification' -ForegroundColor Cyan
+    $root = New-FixtureHome
+    $fixtures.Add($root)
+    Write-FixtureFile -Path (Join-Path (Get-CodexHome $root) 'config.toml') -Content $originalS21
+    Invoke-SafeInstall -Root $root
+
+    # Doctor and validator on clean state
+    $doc23Clean = Invoke-Doctor -Root $root
+    $val23Clean = Invoke-Validate -Root $root
+    Assert-Condition 'S23 clean install passes doctor' ($doc23Clean.ExitCode -eq 0 -and $doc23Clean.Output -match '\[OK\]\s+Selected backend' -and $doc23Clean.Output -match '\[OK\]\s+Delegation policy') $doc23Clean.Output
+    Assert-Condition 'S23 clean install passes validator' ($val23Clean.ExitCode -eq 0 -and $val23Clean.Output -match 'Validation OK') $val23Clean.Output
+
+    # Tamper runtime block in AGENTS.md (inconsistency between state and AGENTS.md)
+    $agentsPath23 = Join-Path (Get-CodexHome $root) 'AGENTS.md'
+    $agentsContent23 = Get-Content -LiteralPath $agentsPath23 -Raw -Encoding UTF8
+    $tamperedAgents23 = $agentsContent23 -replace 'delegation_policy = balanced', 'delegation_policy = aggressive'
+    Write-FixtureFile -Path $agentsPath23 -Content $tamperedAgents23
+    $doc23Tamper = Invoke-Doctor -Root $root
+    Assert-Condition 'S23 doctor fails when AGENTS.md runtime block is inconsistent with state' ($doc23Tamper.ExitCode -ne 0) $doc23Tamper.Output
+
+    # Restore clean AGENTS.md
+    Write-FixtureFile -Path $agentsPath23 -Content $agentsContent23
+
+    $scenario = 24
+    Write-Host 'Scenario 24: public policy switch regression across PowerShell hosts' -ForegroundColor Cyan
+    foreach ($hostInfo in (Get-SwitchHosts)) {
+        $root = New-FixtureHome
+        $fixtures.Add($root)
+        $hostLabel = $hostInfo.Name
+        Write-FixtureFile -Path (Join-Path (Get-CodexHome $root) 'config.toml') -Content $originalS21
+        Invoke-SafeInstall -Root $root
+
+        $polHostAgg = Invoke-PolicySwitchWithHost -Root $root -Policy aggressive -HostInfo $hostInfo
+        $stateHostAgg = Get-InstallState $root
+        $agentsHostAgg = Get-Content -LiteralPath (Join-Path (Get-CodexHome $root) 'AGENTS.md') -Raw -Encoding UTF8
+        $rtHostAgg = Get-AgentsRuntimeBlock -Text $agentsHostAgg
+        Assert-Condition "S24 $hostLabel policy switch to aggressive succeeds" ($polHostAgg.ExitCode -eq 0 -and $null -ne $stateHostAgg.codexDelegation -and [string]$stateHostAgg.codexDelegation.selected -ceq 'aggressive' -and $rtHostAgg.Policy -ceq 'aggressive') $polHostAgg.Output
+
+        $polHostBal = Invoke-PolicySwitchWithHost -Root $root -Policy balanced -HostInfo $hostInfo
+        $stateHostBal = Get-InstallState $root
+        $agentsHostBal = Get-Content -LiteralPath (Join-Path (Get-CodexHome $root) 'AGENTS.md') -Raw -Encoding UTF8
+        $rtHostBal = Get-AgentsRuntimeBlock -Text $agentsHostBal
+        Assert-Condition "S24 $hostLabel policy switch back to balanced succeeds" ($polHostBal.ExitCode -eq 0 -and $null -ne $stateHostBal.codexDelegation -and [string]$stateHostBal.codexDelegation.selected -ceq 'balanced' -and $rtHostBal.Policy -ceq 'balanced') $polHostBal.Output
+    }
+
+    $scenario = 25
+    Write-Host 'Scenario 25: strict schema 5 requires codexBackend and codexDelegation; schema 1-4 absent delegation migrates to balanced, but present invalid selector fails closed' -ForegroundColor Cyan
+    $root = New-FixtureHome
+    $fixtures.Add($root)
+    $originalS25 = '[features]
+multi_agent = false
+fast_mode = true
+
+[agents]
+default_subagent_model = "prior-model"
+default_subagent_reasoning_effort = "high"
+
+[mcp_servers.deepseek-subagent]
+command = "bridge-cmd"
+enabled = true
+'
+    Write-FixtureFile -Path (Join-Path (Get-CodexHome $root) 'config.toml') -Content $originalS25
+    Invoke-SafeInstall -Root $root
+    $statePath25 = Join-Path (Get-CodexHome $root) 'codex-workflows-kit\install-state.json'
+
+    # S25.1: Schema 5 missing codexDelegation fails closed in doctor, validate, switchers, uninstall
+    $stateMissingDelegation = Get-InstallState $root
+    $stateMissingDelegation.PSObject.Properties.Remove('codexDelegation')
+    Write-FixtureFile -Path $statePath25 -Content (($stateMissingDelegation | ConvertTo-Json -Depth 8) + $nl)
+    $docS25_1 = Invoke-Doctor -Root $root
+    $valS25_1 = Invoke-Validate -Root $root
+    $backS25_1 = Invoke-BackendSwitch -Root $root -Backend native
+    $polS25_1 = Invoke-PolicySwitch -Root $root -Policy aggressive
+    $uninstS25_1 = Invoke-UninstallCapture -Root $root
+    Assert-Condition 'S25 doctor fails closed when schema 5 is missing codexDelegation' ($docS25_1.ExitCode -ne 0) $docS25_1.Output
+    Assert-Condition 'S25 validate fails closed when schema 5 is missing codexDelegation' ($valS25_1.ExitCode -ne 0) $valS25_1.Output
+    Assert-Condition 'S25 backend switcher fails closed when schema 5 is missing codexDelegation' ($backS25_1.ExitCode -ne 0) $backS25_1.Output
+    Assert-Condition 'S25 policy switcher fails closed when schema 5 is missing codexDelegation' ($polS25_1.ExitCode -ne 0) $polS25_1.Output
+    Assert-Condition 'S25 uninstall fails closed when schema 5 is missing codexDelegation' ($uninstS25_1.ExitCode -ne 0) $uninstS25_1.Output
+
+    # S25.2: Schema 5 missing codexBackend fails closed in doctor, validate, switchers, uninstall
+    Remove-Item -LiteralPath $statePath25 -Force -ErrorAction SilentlyContinue
+    Invoke-SafeInstall -Root $root
+    $stateMissingBackend = Get-InstallState $root
+    $stateMissingBackend.PSObject.Properties.Remove('codexBackend')
+    Write-FixtureFile -Path $statePath25 -Content (($stateMissingBackend | ConvertTo-Json -Depth 8) + $nl)
+    $docS25_2 = Invoke-Doctor -Root $root
+    $valS25_2 = Invoke-Validate -Root $root
+    $backS25_2 = Invoke-BackendSwitch -Root $root -Backend native
+    $polS25_2 = Invoke-PolicySwitch -Root $root -Policy aggressive
+    $uninstS25_2 = Invoke-UninstallCapture -Root $root
+    Assert-Condition 'S25 doctor fails closed when schema 5 is missing codexBackend' ($docS25_2.ExitCode -ne 0) $docS25_2.Output
+    Assert-Condition 'S25 validate fails closed when schema 5 is missing codexBackend' ($valS25_2.ExitCode -ne 0) $valS25_2.Output
+    Assert-Condition 'S25 backend switcher fails closed when schema 5 is missing codexBackend' ($backS25_2.ExitCode -ne 0) $backS25_2.Output
+    Assert-Condition 'S25 policy switcher fails closed when schema 5 is missing codexBackend' ($polS25_2.ExitCode -ne 0) $polS25_2.Output
+    Assert-Condition 'S25 uninstall fails closed when schema 5 is missing codexBackend' ($uninstS25_2.ExitCode -ne 0) $uninstS25_2.Output
+
+    # S25.3: Schema 5 with invalid codexDelegation.selected fails closed in doctor, validate, switchers, uninstall
+    Remove-Item -LiteralPath $statePath25 -Force -ErrorAction SilentlyContinue
+    Invoke-SafeInstall -Root $root
+    $stateInvalidDelegation = Get-InstallState $root
+    $stateInvalidDelegation.codexDelegation.selected = 'unsupported_policy'
+    Write-FixtureFile -Path $statePath25 -Content (($stateInvalidDelegation | ConvertTo-Json -Depth 8) + $nl)
+    $docS25_3 = Invoke-Doctor -Root $root
+    $valS25_3 = Invoke-Validate -Root $root
+    $backS25_3 = Invoke-BackendSwitch -Root $root -Backend native
+    $polS25_3 = Invoke-PolicySwitch -Root $root -Policy aggressive
+    $uninstS25_3 = Invoke-UninstallCapture -Root $root
+    Assert-Condition 'S25 doctor fails closed when schema 5 codexDelegation is invalid' ($docS25_3.ExitCode -ne 0) $docS25_3.Output
+    Assert-Condition 'S25 validate fails closed when schema 5 codexDelegation is invalid' ($valS25_3.ExitCode -ne 0) $valS25_3.Output
+    Assert-Condition 'S25 backend switcher fails closed when schema 5 codexDelegation is invalid' ($backS25_3.ExitCode -ne 0) $backS25_3.Output
+    Assert-Condition 'S25 policy switcher fails closed when schema 5 codexDelegation is invalid' ($polS25_3.ExitCode -ne 0) $polS25_3.Output
+    Assert-Condition 'S25 uninstall fails closed when schema 5 codexDelegation is invalid' ($uninstS25_3.ExitCode -ne 0) $uninstS25_3.Output
+
+    # S25.4: Schema 5 with invalid codexBackend.selected fails closed in doctor, validate, switchers, uninstall
+    Remove-Item -LiteralPath $statePath25 -Force -ErrorAction SilentlyContinue
+    Invoke-SafeInstall -Root $root
+    $stateInvalidBackend = Get-InstallState $root
+    $stateInvalidBackend.codexBackend.selected = 'unsupported_backend'
+    Write-FixtureFile -Path $statePath25 -Content (($stateInvalidBackend | ConvertTo-Json -Depth 8) + $nl)
+    $docS25_4 = Invoke-Doctor -Root $root
+    $valS25_4 = Invoke-Validate -Root $root
+    $backS25_4 = Invoke-BackendSwitch -Root $root -Backend native
+    $polS25_4 = Invoke-PolicySwitch -Root $root -Policy aggressive
+    $uninstS25_4 = Invoke-UninstallCapture -Root $root
+    Assert-Condition 'S25 doctor fails closed when schema 5 codexBackend is invalid' ($docS25_4.ExitCode -ne 0) $docS25_4.Output
+    Assert-Condition 'S25 validate fails closed when schema 5 codexBackend is invalid' ($valS25_4.ExitCode -ne 0) $valS25_4.Output
+    Assert-Condition 'S25 backend switcher fails closed when schema 5 codexBackend is invalid' ($backS25_4.ExitCode -ne 0) $backS25_4.Output
+    Assert-Condition 'S25 policy switcher fails closed when schema 5 codexBackend is invalid' ($polS25_4.ExitCode -ne 0) $polS25_4.Output
+    Assert-Condition 'S25 uninstall fails closed when schema 5 codexBackend is invalid' ($uninstS25_4.ExitCode -ne 0) $uninstS25_4.Output
+
+    # S25.5: Schema 3 with PRESENT invalid codexDelegation selector fails closed (never defaults silently to balanced)
+    $stateS3Invalid = [ordered]@{
+        schemaVersion = 3
+        product = 'codex-workflows-kit'
+        profile = 'safe'
+        installedAtUtc = '2026-01-01T00:00:00Z'
+        files = @()
+        pendingFiles = @()
+        codexDelegation = @{
+            version = 1
+            selected = 'invalid_policy_selector'
+        }
+    } | ConvertTo-Json -Depth 8
+    Write-FixtureFile -Path $statePath25 -Content ($stateS3Invalid + $nl)
+    $installS25_5 = Invoke-InstallCapture -Root $root
+    $uninstS25_5 = Invoke-UninstallCapture -Root $root
+    $backS25_5 = Invoke-BackendSwitch -Root $root -Backend native
+    $polS25_5 = Invoke-PolicySwitch -Root $root -Policy aggressive
+    Assert-Condition 'S25 safe install fails closed when schema 3 has present invalid codexDelegation' ($installS25_5.ExitCode -ne 0) $installS25_5.Output
+    Assert-Condition 'S25 safe uninstall fails closed when schema 3 has present invalid codexDelegation' ($uninstS25_5.ExitCode -ne 0) $uninstS25_5.Output
+    Assert-Condition 'S25 backend switcher fails closed when schema 3 has present invalid codexDelegation' ($backS25_5.ExitCode -ne 0) $backS25_5.Output
+    Assert-Condition 'S25 policy switcher fails closed when schema 3 has present invalid codexDelegation' ($polS25_5.ExitCode -ne 0) $polS25_5.Output
+
+    # S25.6: Schema 4 with PRESENT invalid codexDelegation selector fails closed (never defaults silently to balanced)
+    $stateS4Invalid = [ordered]@{
+        schemaVersion = 4
+        product = 'codex-workflows-kit'
+        profile = 'safe'
+        installedAtUtc = '2026-01-01T00:00:00Z'
+        files = @()
+        pendingFiles = @()
+        codexFeaturesPrior = @{ multi_agent = @{ present = $true; value = 'false' } }
+        codexBackend = @{
+            version = 1
+            selected = 'deepseek'
+            prior = @(
+                @{ path = 'features.multi_agent'; tablePresent = $true; present = $true; value = 'false' },
+                @{ path = 'features.fast_mode'; tablePresent = $true; present = $true; value = 'true' },
+                @{ path = 'agents.default_subagent_model'; tablePresent = $true; present = $true; value = '"prior-model"' },
+                @{ path = 'agents.default_subagent_reasoning_effort'; tablePresent = $true; present = $true; value = '"high"' },
+                @{ path = 'mcp_servers.deepseek-subagent.enabled'; tablePresent = $true; present = $true; value = 'true' }
+            )
+        }
+        codexDelegation = @{
+            version = 1
+            selected = 'invalid_policy_selector'
+        }
+    } | ConvertTo-Json -Depth 8
+    Write-FixtureFile -Path $statePath25 -Content ($stateS4Invalid + $nl)
+    $installS25_6 = Invoke-InstallCapture -Root $root
+    $uninstS25_6 = Invoke-UninstallCapture -Root $root
+    $backS25_6 = Invoke-BackendSwitch -Root $root -Backend native
+    $polS25_6 = Invoke-PolicySwitch -Root $root -Policy aggressive
+    Assert-Condition 'S25 safe install fails closed when schema 4 has present invalid codexDelegation' ($installS25_6.ExitCode -ne 0) $installS25_6.Output
+    Assert-Condition 'S25 safe uninstall fails closed when schema 4 has present invalid codexDelegation' ($uninstS25_6.ExitCode -ne 0) $uninstS25_6.Output
+    Assert-Condition 'S25 backend switcher fails closed when schema 4 has present invalid codexDelegation' ($backS25_6.ExitCode -ne 0) $backS25_6.Output
+    Assert-Condition 'S25 policy switcher fails closed when schema 4 has present invalid codexDelegation' ($polS25_6.ExitCode -ne 0) $polS25_6.Output
+
+    $scenario = 26
+    Write-Host 'Scenario 26: switchers never silently replace invalid current policy with balanced or invalid current backend with deepseek' -ForegroundColor Cyan
+    $root = New-FixtureHome
+    $fixtures.Add($root)
+    Write-FixtureFile -Path (Join-Path (Get-CodexHome $root) 'config.toml') -Content $originalS25
+    Invoke-SafeInstall -Root $root
+
+    # S26.1: switch-subagent-backend with invalid delegation_policy in AGENTS.md runtime block must fail closed
+    $agentsPath26 = Join-Path (Get-CodexHome $root) 'AGENTS.md'
+    $agentsClean26 = Get-Content -LiteralPath $agentsPath26 -Raw -Encoding UTF8
+    $agentsTamperPol26 = $agentsClean26 -replace 'delegation_policy = balanced', 'delegation_policy = invalid_policy_value'
+    Write-FixtureFile -Path $agentsPath26 -Content $agentsTamperPol26
+    $backS26_1 = Invoke-BackendSwitch -Root $root -Backend native
+    Assert-Condition 'S26 switch-subagent-backend fails closed on invalid current policy and does not default to balanced' ($backS26_1.ExitCode -ne 0) $backS26_1.Output
+
+    # S26.2: switch-subagent-policy with invalid subagent_backend in AGENTS.md runtime block must fail closed
+    $agentsTamperBack26 = $agentsClean26 -replace 'subagent_backend = deepseek', 'subagent_backend = invalid_backend_value'
+    Write-FixtureFile -Path $agentsPath26 -Content $agentsTamperBack26
+    $polS26_2 = Invoke-PolicySwitch -Root $root -Policy aggressive
+    Assert-Condition 'S26 switch-subagent-policy fails closed on invalid current backend and does not default to deepseek' ($polS26_2.ExitCode -ne 0) $polS26_2.Output
+
+    $scenario = 27
+    Write-Host 'Scenario 27: -Status on both switchers cross-checks state, runtime block, and config matrix fail-closed' -ForegroundColor Cyan
+    $root = New-FixtureHome
+    $fixtures.Add($root)
+    Write-FixtureFile -Path (Join-Path (Get-CodexHome $root) 'config.toml') -Content $originalS25
+    Invoke-SafeInstall -Root $root
+
+    # Clean status succeeds
+    $statBackClean = Invoke-BackendStatus -Root $root
+    $statPolClean = Invoke-PolicyStatus -Root $root
+    Assert-Condition 'S27 clean install backend status succeeds' ($statBackClean.ExitCode -eq 0 -and $statBackClean.Output -match 'Active subagent backend:\s*deepseek' -and $statBackClean.Output -match 'Active delegation policy:\s*balanced') $statBackClean.Output
+    Assert-Condition 'S27 clean install policy status succeeds' ($statPolClean.ExitCode -eq 0 -and $statPolClean.Output -match 'Active subagent backend:\s*deepseek' -and $statPolClean.Output -match 'Active delegation policy:\s*balanced') $statPolClean.Output
+
+    # S27.1: Backend mismatch between state (deepseek) and AGENTS.md runtime block (native)
+    $agentsPath27 = Join-Path (Get-CodexHome $root) 'AGENTS.md'
+    $agentsClean27 = Get-Content -LiteralPath $agentsPath27 -Raw -Encoding UTF8
+    $agentsTamperBack27 = $agentsClean27 -replace 'subagent_backend = deepseek', 'subagent_backend = native'
+    Write-FixtureFile -Path $agentsPath27 -Content $agentsTamperBack27
+    $statBackMismatch = Invoke-BackendStatus -Root $root
+    $statPolMismatch = Invoke-PolicyStatus -Root $root
+    Assert-Condition 'S27 backend switcher -Status fails closed on state vs runtime block backend mismatch' ($statBackMismatch.ExitCode -ne 0) $statBackMismatch.Output
+    Assert-Condition 'S27 policy switcher -Status fails closed on state vs runtime block backend mismatch' ($statPolMismatch.ExitCode -ne 0) $statPolMismatch.Output
+
+    # S27.2: Policy mismatch between state (balanced) and AGENTS.md runtime block (aggressive)
+    $agentsTamperPol27 = $agentsClean27 -replace 'delegation_policy = balanced', 'delegation_policy = aggressive'
+    Write-FixtureFile -Path $agentsPath27 -Content $agentsTamperPol27
+    $statBackPolMismatch = Invoke-BackendStatus -Root $root
+    $statPolPolMismatch = Invoke-PolicyStatus -Root $root
+    Assert-Condition 'S27 backend switcher -Status fails closed on state vs runtime block policy mismatch' ($statBackPolMismatch.ExitCode -ne 0) $statBackPolMismatch.Output
+    Assert-Condition 'S27 policy switcher -Status fails closed on state vs runtime block policy mismatch' ($statPolPolMismatch.ExitCode -ne 0) $statPolPolMismatch.Output
+
+    # S27.3: Config matrix mismatch against deepseek state (state is deepseek, config.toml has multi_agent = true)
+    Write-FixtureFile -Path $agentsPath27 -Content $agentsClean27
+    $configPath27 = Join-Path (Get-CodexHome $root) 'config.toml'
+    $configClean27 = Read-Config $root
+    $configTampered27 = $configClean27 -replace 'multi_agent = false', 'multi_agent = true'
+    Write-FixtureFile -Path $configPath27 -Content $configTampered27
+    $statBackCfgMismatch = Invoke-BackendStatus -Root $root
+    $statPolCfgMismatch = Invoke-PolicyStatus -Root $root
+    Assert-Condition 'S27 backend switcher -Status fails closed on deepseek config matrix mismatch' ($statBackCfgMismatch.ExitCode -ne 0) $statBackCfgMismatch.Output
+    Assert-Condition 'S27 policy switcher -Status fails closed on deepseek config matrix mismatch' ($statPolCfgMismatch.ExitCode -ne 0) $statPolCfgMismatch.Output
+
+    # S27.4: Config matrix mismatch against native state (state is native, config.toml has multi_agent = false)
+    Write-FixtureFile -Path $configPath27 -Content $configClean27
+    $switchNat27 = Invoke-BackendSwitch -Root $root -Backend native
+    $configNatClean27 = Read-Config $root
+    $configNatTampered27 = $configNatClean27 -replace 'multi_agent = true', 'multi_agent = false'
+    Write-FixtureFile -Path $configPath27 -Content $configNatTampered27
+    $statBackNatCfgMismatch = Invoke-BackendStatus -Root $root
+    $statPolNatCfgMismatch = Invoke-PolicyStatus -Root $root
+    Assert-Condition 'S27 backend switcher -Status fails closed on native config matrix mismatch' ($statBackNatCfgMismatch.ExitCode -ne 0) $statBackNatCfgMismatch.Output
+    Assert-Condition 'S27 policy switcher -Status fails closed on native config matrix mismatch' ($statPolNatCfgMismatch.ExitCode -ne 0) $statPolNatCfgMismatch.Output
+
+    # Restore native config
+    Write-FixtureFile -Path $configPath27 -Content $configNatClean27
+    # Restore deepseek backend
+    $switchDeep27 = Invoke-BackendSwitch -Root $root -Backend deepseek
+    $agentsClean27 = Get-Content -LiteralPath $agentsPath27 -Raw -Encoding UTF8
+
+    # S27.5: Duplicate runtime block in AGENTS.md
+    $duplicateRtAgents27 = $agentsClean27 -replace '(?s)(# BEGIN CODEX-WORKFLOWS-KIT: runtime.*?# END CODEX-WORKFLOWS-KIT: runtime)', "`$1`n`n`$1"
+    Write-FixtureFile -Path $agentsPath27 -Content $duplicateRtAgents27
+    $statBackDupRt = Invoke-BackendStatus -Root $root
+    $statPolDupRt = Invoke-PolicyStatus -Root $root
+    Assert-Condition 'S27 backend switcher -Status fails closed on duplicate runtime block' ($statBackDupRt.ExitCode -ne 0) $statBackDupRt.Output
+    Assert-Condition 'S27 policy switcher -Status fails closed on duplicate runtime block' ($statPolDupRt.ExitCode -ne 0) $statPolDupRt.Output
+
+    # S27.6: Duplicate subagent_backend keys inside runtime block
+    $dupBackKeyAgents27 = $agentsClean27 -replace 'subagent_backend = deepseek', "subagent_backend = deepseek`nsubagent_backend = deepseek"
+    Write-FixtureFile -Path $agentsPath27 -Content $dupBackKeyAgents27
+    $statBackDupKey = Invoke-BackendStatus -Root $root
+    $statPolDupKey = Invoke-PolicyStatus -Root $root
+    Assert-Condition 'S27 backend switcher -Status fails closed on duplicate backend keys in runtime block' ($statBackDupKey.ExitCode -ne 0) $statBackDupKey.Output
+    Assert-Condition 'S27 policy switcher -Status fails closed on duplicate backend keys in runtime block' ($statPolDupKey.ExitCode -ne 0) $statPolDupKey.Output
+
+    # S27.7: Duplicate delegation_policy keys inside runtime block
+    $dupPolKeyAgents27 = $agentsClean27 -replace 'delegation_policy = balanced', "delegation_policy = balanced`ndelegation_policy = balanced"
+    Write-FixtureFile -Path $agentsPath27 -Content $dupPolKeyAgents27
+    $statBackDupPolKey = Invoke-BackendStatus -Root $root
+    $statPolDupPolKey = Invoke-PolicyStatus -Root $root
+    Assert-Condition 'S27 backend switcher -Status fails closed on duplicate policy keys in runtime block' ($statBackDupPolKey.ExitCode -ne 0) $statBackDupPolKey.Output
+    Assert-Condition 'S27 policy switcher -Status fails closed on duplicate policy keys in runtime block' ($statPolDupPolKey.ExitCode -ne 0) $statPolDupPolKey.Output
+
+    # S27.8: Missing runtime block in AGENTS.md
+    $noRtAgents27 = $agentsClean27 -replace '(?s)# BEGIN CODEX-WORKFLOWS-KIT: runtime.*?# END CODEX-WORKFLOWS-KIT: runtime\r?\n?', ''
+    Write-FixtureFile -Path $agentsPath27 -Content $noRtAgents27
+    $statBackNoRt = Invoke-BackendStatus -Root $root
+    $statPolNoRt = Invoke-PolicyStatus -Root $root
+    Assert-Condition 'S27 backend switcher -Status fails closed on missing runtime block' ($statBackNoRt.ExitCode -ne 0) $statBackNoRt.Output
+    Assert-Condition 'S27 policy switcher -Status fails closed on missing runtime block' ($statPolNoRt.ExitCode -ne 0) $statPolNoRt.Output
+
+    $scenario = 28
+    Write-Host 'Scenario 28: policy switch asserts config matrix matches codexBackend before switch and leaves config.toml byte-for-byte unchanged' -ForegroundColor Cyan
+    $root = New-FixtureHome
+    $fixtures.Add($root)
+    Write-FixtureFile -Path (Join-Path (Get-CodexHome $root) 'config.toml') -Content $originalS25
+    Invoke-SafeInstall -Root $root
+
+    # S28.1: Drifted / mismatched config.toml before policy switch blocks policy switch on deepseek state
+    $configPath28 = Join-Path (Get-CodexHome $root) 'config.toml'
+    $configClean28 = Read-Config $root
+    $configDrift28 = $configClean28 -replace 'fast_mode = true', 'fast_mode = false'
+    Write-FixtureFile -Path $configPath28 -Content $configDrift28
+    $polDriftResult28 = Invoke-PolicySwitch -Root $root -Policy aggressive
+    Assert-Condition 'S28 policy switch fails closed when deepseek config.toml matrix is inconsistent with state' ($polDriftResult28.ExitCode -ne 0) $polDriftResult28.Output
+    Assert-Condition 'S28 policy switch leaves drifted config.toml byte-identical on deepseek rejection' ((Read-Config $root) -ceq $configDrift28) ''
+
+    # S28.2: Drifted / mismatched config.toml before policy switch blocks policy switch on native state
+    Write-FixtureFile -Path $configPath28 -Content $configClean28
+    $switchNat28 = Invoke-BackendSwitch -Root $root -Backend native
+    $configNatClean28 = Read-Config $root
+    $configNatDrift28 = $configNatClean28 -replace 'fast_mode = false', 'fast_mode = true'
+    Write-FixtureFile -Path $configPath28 -Content $configNatDrift28
+    $polNatDriftResult28 = Invoke-PolicySwitch -Root $root -Policy aggressive
+    Assert-Condition 'S28 policy switch fails closed when native config.toml matrix is inconsistent with state' ($polNatDriftResult28.ExitCode -ne 0) $polNatDriftResult28.Output
+    Assert-Condition 'S28 policy switch leaves drifted config.toml byte-identical on native rejection' ((Read-Config $root) -ceq $configNatDrift28) ''
+
+    # S28.3: Clean policy switch leaves config.toml byte-for-byte unchanged
+    Write-FixtureFile -Path $configPath28 -Content $configNatClean28
+    $hashBefore28 = (Get-FileHash -LiteralPath $configPath28 -Algorithm SHA256).Hash
+    $polClean28 = Invoke-PolicySwitch -Root $root -Policy aggressive
+    $hashAfter28 = (Get-FileHash -LiteralPath $configPath28 -Algorithm SHA256).Hash
+    Assert-Condition 'S28 policy switch succeeds on consistent native matrix' ($polClean28.ExitCode -eq 0) $polClean28.Output
+    Assert-Condition 'S28 policy switch leaves native config.toml byte-for-byte unchanged' ($hashBefore28 -ceq $hashAfter28) ''
+
+    $polCleanBal28 = Invoke-PolicySwitch -Root $root -Policy balanced
+    $hashAfterBal28 = (Get-FileHash -LiteralPath $configPath28 -Algorithm SHA256).Hash
+    Assert-Condition 'S28 policy switch back to balanced succeeds on consistent native matrix' ($polCleanBal28.ExitCode -eq 0) $polCleanBal28.Output
+    Assert-Condition 'S28 policy switch back to balanced leaves config.toml byte-for-byte unchanged' ($hashBefore28 -ceq $hashAfterBal28) ''
+
+    $scenario = 29
+    Write-Host 'Scenario 29: runtime block parser and assertion reject duplicate blocks, duplicate keys, and invalid selector values' -ForegroundColor Cyan
+    Import-Module (Join-Path $repo 'scripts\backend-routing.psm1') -Force
+    $validBlock = '# BEGIN CODEX-WORKFLOWS-KIT: runtime' + $nl + 'subagent_backend = deepseek' + $nl + 'delegation_policy = balanced' + $nl + '# END CODEX-WORKFLOWS-KIT: runtime'
+
+    # S29.1: Valid block parses cleanly
+    $rtInfo29_1 = Get-CodexRuntimeBlockInfo -Text $validBlock
+    Assert-Condition 'S29 valid runtime block parses correctly' ($rtInfo29_1.Present -and $rtInfo29_1.Backend -ceq 'deepseek' -and $rtInfo29_1.Policy -ceq 'balanced') ''
+
+    # S29.2: Duplicate runtime block throws or rejects
+    $duplicateBlocks29 = $validBlock + $nl + $validBlock
+    $dupThrows29 = $false
+    try {
+        $rtInfoDup = Get-CodexRuntimeBlockInfo -Text $duplicateBlocks29
+        if ($rtInfoDup.Present) { $dupThrows29 = $false }
+    }
+    catch {
+        $dupThrows29 = $true
+    }
+    Assert-Condition 'S29 Get-CodexRuntimeBlockInfo rejects duplicate runtime blocks' $dupThrows29 ''
+
+    # S29.3: Duplicate keys in runtime block throws or rejects
+    $dupKeysBlock29 = '# BEGIN CODEX-WORKFLOWS-KIT: runtime' + $nl + 'subagent_backend = deepseek' + $nl + 'subagent_backend = native' + $nl + 'delegation_policy = balanced' + $nl + '# END CODEX-WORKFLOWS-KIT: runtime'
+    $dupKeyThrows29 = $false
+    try {
+        $rtInfoDupKey = Get-CodexRuntimeBlockInfo -Text $dupKeysBlock29
+        if ($rtInfoDupKey.Present -and $null -ne $rtInfoDupKey.Backend) { $dupKeyThrows29 = $false }
+    }
+    catch {
+        $dupKeyThrows29 = $true
+    }
+    Assert-Condition 'S29 Get-CodexRuntimeBlockInfo rejects duplicate subagent_backend keys' $dupKeyThrows29 ''
+
+    # S29.4: Invalid selector values in runtime block are rejected
+    $invalidBackendBlock29 = '# BEGIN CODEX-WORKFLOWS-KIT: runtime' + $nl + 'subagent_backend = invalid_val' + $nl + 'delegation_policy = balanced' + $nl + '# END CODEX-WORKFLOWS-KIT: runtime'
+    $invalidBackendThrows29 = $false
+    try {
+        $rtInvalidBack = Get-CodexRuntimeBlockInfo -Text $invalidBackendBlock29
+        if ($null -eq $rtInvalidBack.Backend -or -not $rtInvalidBack.Present) { $invalidBackendThrows29 = $true }
+    }
+    catch {
+        $invalidBackendThrows29 = $true
+    }
+    Assert-Condition 'S29 Get-CodexRuntimeBlockInfo rejects invalid subagent_backend values' $invalidBackendThrows29 ''
+
+    $invalidPolicyBlock29 = '# BEGIN CODEX-WORKFLOWS-KIT: runtime' + $nl + 'subagent_backend = deepseek' + $nl + 'delegation_policy = invalid_pol' + $nl + '# END CODEX-WORKFLOWS-KIT: runtime'
+    $invalidPolicyThrows29 = $false
+    try {
+        $rtInvalidPol = Get-CodexRuntimeBlockInfo -Text $invalidPolicyBlock29
+        if ($null -eq $rtInvalidPol.Policy -or -not $rtInvalidPol.Present) { $invalidPolicyThrows29 = $true }
+    }
+    catch {
+        $invalidPolicyThrows29 = $true
+    }
+    Assert-Condition 'S29 Get-CodexRuntimeBlockInfo rejects invalid delegation_policy values' $invalidPolicyThrows29 ''
+
+    # S29.5: Assert-CodexAgentsRuntimeBlock throws on duplicate or invalid blocks
+    $assertDupThrows29 = $false
+    try {
+        Assert-CodexAgentsRuntimeBlock -Text $duplicateBlocks29 -Backend 'deepseek' -Policy 'balanced'
+    }
+    catch {
+        $assertDupThrows29 = $true
+    }
+    Assert-Condition 'S29 Assert-CodexAgentsRuntimeBlock throws on duplicate runtime blocks' $assertDupThrows29 ''
+
+    $scenario = 30
+    Write-Host 'Scenario 30: transaction rollback in both switchers removes newly-created exact targets and restores pre-existing targets on failure' -ForegroundColor Cyan
+
+    # S30.1: Backend switcher transaction failure when AGENTS.md and install-state.json did NOT pre-exist
+    $root30_1 = New-FixtureHome
+    $fixtures.Add($root30_1)
+    $originalConfig30_1 = $originalS25
+    $configPath30_1 = Join-Path (Get-CodexHome $root30_1) 'config.toml'
+    $agentsPath30_1 = Join-Path (Get-CodexHome $root30_1) 'AGENTS.md'
+    $statePath30_1 = Join-Path (Get-CodexHome $root30_1) 'codex-workflows-kit\install-state.json'
+    Write-FixtureFile -Path $configPath30_1 -Content $originalConfig30_1
+
+    # Inject failure: create a directory at install-state.json path to cause state write to throw after writing config and agents
+    $stateDirBlocker = Join-Path (Get-CodexHome $root30_1) 'codex-workflows-kit\install-state.json'
+    New-Item -ItemType Directory -Path $stateDirBlocker -Force | Out-Null
+
+    $failedBackSwitch30_1 = Invoke-BackendSwitch -Root $root30_1 -Backend native
+    Assert-Condition 'S30 backend switch fails when state write is blocked' ($failedBackSwitch30_1.ExitCode -ne 0) $failedBackSwitch30_1.Output
+    Assert-Condition 'S30 backend switch output reports rollback' ($failedBackSwitch30_1.Output -match '(?i)rolled back') $failedBackSwitch30_1.Output
+    Assert-Condition 'S30 backend switch restores pre-existing config.toml byte-identically on rollback' ((Read-Config $root30_1) -ceq ($originalConfig30_1 -replace "`r?`n", "`r`n")) (Read-Config $root30_1)
+    Assert-Condition 'S30 backend switch removes newly-created AGENTS.md target on rollback' (-not (Test-Path -LiteralPath $agentsPath30_1 -PathType Leaf)) ''
+
+    # S30.2: Backend switcher transaction failure when AGENTS.md DID pre-exist
+    $root30_2 = New-FixtureHome
+    $fixtures.Add($root30_2)
+    $originalConfig30_2 = $originalS25
+    $originalAgents30_2 = '# Pre-existing user AGENTS.md content' + $nl + '- user rule 1' + $nl
+    $configPath30_2 = Join-Path (Get-CodexHome $root30_2) 'config.toml'
+    $agentsPath30_2 = Join-Path (Get-CodexHome $root30_2) 'AGENTS.md'
+    Write-FixtureFile -Path $configPath30_2 -Content $originalConfig30_2
+    Write-FixtureFile -Path $agentsPath30_2 -Content $originalAgents30_2
+
+    # Inject failure: create a directory at install-state.json path
+    $stateDirBlocker2 = Join-Path (Get-CodexHome $root30_2) 'codex-workflows-kit\install-state.json'
+    New-Item -ItemType Directory -Path $stateDirBlocker2 -Force | Out-Null
+
+    $failedBackSwitch30_2 = Invoke-BackendSwitch -Root $root30_2 -Backend native
+    Assert-Condition 'S30 backend switch with pre-existing AGENTS.md fails when state write is blocked' ($failedBackSwitch30_2.ExitCode -ne 0) $failedBackSwitch30_2.Output
+    Assert-Condition 'S30 backend switch restores pre-existing config.toml byte-identically' ((Read-Config $root30_2) -ceq ($originalConfig30_2 -replace "`r?`n", "`r`n")) (Read-Config $root30_2)
+    Assert-Condition 'S30 backend switch restores pre-existing AGENTS.md byte-identically' ((Get-Content -LiteralPath $agentsPath30_2 -Raw -Encoding UTF8) -ceq ($originalAgents30_2 -replace "`r?`n", "`r`n")) (Get-Content -LiteralPath $agentsPath30_2 -Raw -Encoding UTF8)
+
+    # S30.3: Policy switcher transaction failure when AGENTS.md DID pre-exist
+    $root30_3 = New-FixtureHome
+    $fixtures.Add($root30_3)
+    $originalConfig30_3 = $originalS25
+    $originalAgents30_3 = '# Pre-existing AGENTS for policy switch' + $nl
+    $configPath30_3 = Join-Path (Get-CodexHome $root30_3) 'config.toml'
+    $agentsPath30_3 = Join-Path (Get-CodexHome $root30_3) 'AGENTS.md'
+    Write-FixtureFile -Path $configPath30_3 -Content $originalConfig30_3
+    Write-FixtureFile -Path $agentsPath30_3 -Content $originalAgents30_3
+
+    # Inject failure: create a directory at install-state.json path
+    $stateDirBlocker3 = Join-Path (Get-CodexHome $root30_3) 'codex-workflows-kit\install-state.json'
+    New-Item -ItemType Directory -Path $stateDirBlocker3 -Force | Out-Null
+
+    $failedPolSwitch30_3 = Invoke-PolicySwitch -Root $root30_3 -Policy aggressive
+    Assert-Condition 'S30 policy switch fails when state write is blocked' ($failedPolSwitch30_3.ExitCode -ne 0) $failedPolSwitch30_3.Output
+    Assert-Condition 'S30 policy switch output reports rollback' ($failedPolSwitch30_3.Output -match '(?i)rolled back') $failedPolSwitch30_3.Output
+    Assert-Condition 'S30 policy switch restores pre-existing AGENTS.md byte-identically' ((Get-Content -LiteralPath $agentsPath30_3 -Raw -Encoding UTF8) -ceq ($originalAgents30_3 -replace "`r?`n", "`r`n")) (Get-Content -LiteralPath $agentsPath30_3 -Raw -Encoding UTF8)
+    Assert-Condition 'S30 policy switch leaves config.toml untouched' ((Read-Config $root30_3) -ceq ($originalConfig30_3 -replace "`r?`n", "`r`n")) (Read-Config $root30_3)
+
+    # S30.4: Policy switcher transaction failure when AGENTS.md did NOT pre-exist
+    $root30_4 = New-FixtureHome
+    $fixtures.Add($root30_4)
+    $originalConfig30_4 = $originalS25
+    $configPath30_4 = Join-Path (Get-CodexHome $root30_4) 'config.toml'
+    $agentsPath30_4 = Join-Path (Get-CodexHome $root30_4) 'AGENTS.md'
+    Write-FixtureFile -Path $configPath30_4 -Content $originalConfig30_4
+
+    # Inject failure: create a directory at install-state.json path
+    $stateDirBlocker4 = Join-Path (Get-CodexHome $root30_4) 'codex-workflows-kit\install-state.json'
+    New-Item -ItemType Directory -Path $stateDirBlocker4 -Force | Out-Null
+
+    $failedPolSwitch30_4 = Invoke-PolicySwitch -Root $root30_4 -Policy aggressive
+    Assert-Condition 'S30 policy switch without AGENTS.md fails when state write is blocked' ($failedPolSwitch30_4.ExitCode -ne 0) $failedPolSwitch30_4.Output
+    Assert-Condition 'S30 policy switch removes newly-created AGENTS.md target on rollback' (-not (Test-Path -LiteralPath $agentsPath30_4 -PathType Leaf)) ''
+
+    $scenario = 31
+    Write-Host 'Scenario 31: unmanaged top-level config fields are preserved across migration, reinstall, and backend switching with ledger hash reconciliation, while managed projection drift fails closed' -ForegroundColor Cyan
+    $root = New-FixtureHome
+    $fixtures.Add($root)
+    $configPath31 = Join-Path (Get-CodexHome $root) 'config.toml'
+    $statePath31 = Join-Path (Get-CodexHome $root) 'codex-workflows-kit\install-state.json'
+    $agentsPath31 = Join-Path (Get-CodexHome $root) 'AGENTS.md'
+
+    # Step 31.1: Schema 4 -> Schema 5 migration with unmanaged top-level model key and stale whole-file config hash
+    $initialCfg31 = 'model = "custom-unmanaged-model-v1"' + $nl +
+        'reasoning_effort = "custom-effort"' + $nl +
+        '[features]' + $nl +
+        'multi_agent = false' + $nl
+    Write-FixtureFile -Path $configPath31 -Content $initialCfg31
+    $initialHash31 = (Get-FileHash -LiteralPath $configPath31 -Algorithm SHA256).Hash
+
+    $schema4State = [ordered]@{
+        schemaVersion = 4
+        product = 'codex-workflows-kit'
+        profile = 'safe'
+        installedAtUtc = [datetime]::UtcNow.ToString('o')
+        files = @(
+            [ordered]@{ path = $configPath31; sha256 = $initialHash31 }
+        )
+        pendingFiles = @()
+        codexFeaturesPrior = [ordered]@{
+            multi_agent = [ordered]@{
+                present = $true
+                value = 'false'
+            }
+        }
+    }
+    Write-FixtureFile -Path $statePath31 -Content (($schema4State | ConvertTo-Json -Depth 8) + $nl)
+
+    $tamperedUnmanagedCfg31 = 'model = "custom-unmanaged-model-v2"' + $nl +
+        'reasoning_effort = "custom-effort"' + $nl +
+        '[features]' + $nl +
+        'multi_agent = false' + $nl
+    Write-FixtureFile -Path $configPath31 -Content $tamperedUnmanagedCfg31
+
+    $migResult31 = Invoke-InstallCapture -Root $root -Profile safe
+    Assert-Condition 'S31 schema 4 to 5 migration succeeds with unmanaged model change' ($migResult31.ExitCode -eq 0) $migResult31.Output
+
+    $migratedCfg31 = Read-Config $root
+    Assert-Condition 'S31 migration preserves unmanaged model byte/value' ($migratedCfg31 -match '(?m)^\s*model\s*=\s*"custom-unmanaged-model-v2"\s*$') $migratedCfg31
+    Assert-Condition 'S31 migration preserves unmanaged reasoning_effort byte/value' ($migratedCfg31 -match '(?m)^\s*reasoning_effort\s*=\s*"custom-effort"\s*$') $migratedCfg31
+    Assert-Condition 'S31 migration keeps deepseek backend matrix' ($migratedCfg31 -match '(?m)^\s*multi_agent\s*=\s*false\s*$') $migratedCfg31
+
+    $stateAfterMig31 = Get-InstallState $root
+    $actualHashAfterMig31 = (Get-FileHash -LiteralPath $configPath31 -Algorithm SHA256).Hash
+    $cfgEntryInState31 = @($stateAfterMig31.files) | Where-Object { [string]$_.path -eq $configPath31 } | Select-Object -First 1
+    Assert-Condition 'S31 migration sets schemaVersion 5' ([int]$stateAfterMig31.schemaVersion -eq 5) $stateAfterMig31.schemaVersion
+    Assert-Condition 'S31 migration defaults delegation policy to balanced' ([string]$stateAfterMig31.codexDelegation.selected -ceq 'balanced') ''
+    Assert-Condition 'S31 migration keeps backend selected as deepseek' ([string]$stateAfterMig31.codexBackend.selected -ceq 'deepseek') ''
+    Assert-Condition 'S31 migration refreshes ledger full-file hash' ($null -ne $cfgEntryInState31 -and [string]$cfgEntryInState31.sha256 -ceq $actualHashAfterMig31) ''
+
+    # Step 31.2: Safe reinstall on Schema 5 after another unmanaged model change
+    $tamperedUnmanagedCfg31_2 = $migratedCfg31 -replace '"custom-unmanaged-model-v2"', '"custom-unmanaged-model-v3"'
+    Write-FixtureFile -Path $configPath31 -Content $tamperedUnmanagedCfg31_2
+    $reinstallResult31 = Invoke-InstallCapture -Root $root -Profile safe
+    Assert-Condition 'S31 safe reinstall succeeds after unmanaged model change' ($reinstallResult31.ExitCode -eq 0) $reinstallResult31.Output
+
+    $reinstalledCfg31 = Read-Config $root
+    Assert-Condition 'S31 safe reinstall preserves unmanaged model byte/value' ($reinstalledCfg31 -match '(?m)^\s*model\s*=\s*"custom-unmanaged-model-v3"\s*$') $reinstalledCfg31
+    $actualHashAfterReinstall31 = (Get-FileHash -LiteralPath $configPath31 -Algorithm SHA256).Hash
+    $stateAfterReinstall31 = Get-InstallState $root
+    $cfgEntryAfterReinstall31 = @($stateAfterReinstall31.files) | Where-Object { [string]$_.path -eq $configPath31 } | Select-Object -First 1
+    Assert-Condition 'S31 safe reinstall refreshes ledger full-file hash' ($null -ne $cfgEntryAfterReinstall31 -and [string]$cfgEntryAfterReinstall31.sha256 -ceq $actualHashAfterReinstall31) ''
+
+    # Step 31.3: switch-subagent-backend after another unrelated model change: native then deepseek
+    $tamperedUnmanagedCfg31_3 = $reinstalledCfg31 -replace '"custom-unmanaged-model-v3"', '"custom-unmanaged-model-v4"'
+    Write-FixtureFile -Path $configPath31 -Content $tamperedUnmanagedCfg31_3
+
+    $switchNatResult31 = Invoke-BackendSwitch -Root $root -Backend native
+    Assert-Condition 'S31 switch-subagent-backend to native succeeds after unmanaged model change' ($switchNatResult31.ExitCode -eq 0) $switchNatResult31.Output
+    $configAfterNat31 = Read-Config $root
+    Assert-Condition 'S31 native switch preserves unmanaged model byte/value' ($configAfterNat31 -match '(?m)^\s*model\s*=\s*"custom-unmanaged-model-v4"\s*$') $configAfterNat31
+    Assert-Condition 'S31 native switch updates native backend matrix' ($configAfterNat31 -match '(?m)^\s*multi_agent\s*=\s*true\s*$' -and $configAfterNat31 -match '(?m)^\s*default_subagent_model\s*=\s*"gpt-5\.6-luna"\s*$') $configAfterNat31
+    $actualHashAfterNat31 = (Get-FileHash -LiteralPath $configPath31 -Algorithm SHA256).Hash
+    $stateAfterNat31 = Get-InstallState $root
+    $cfgEntryAfterNat31 = @($stateAfterNat31.files) | Where-Object { [string]$_.path -eq $configPath31 } | Select-Object -First 1
+    Assert-Condition 'S31 native switch refreshes ledger full-file hash' ($null -ne $cfgEntryAfterNat31 -and [string]$cfgEntryAfterNat31.sha256 -ceq $actualHashAfterNat31) ''
+
+    $tamperedUnmanagedCfg31_4 = $configAfterNat31 -replace '"custom-unmanaged-model-v4"', '"custom-unmanaged-model-v5"'
+    Write-FixtureFile -Path $configPath31 -Content $tamperedUnmanagedCfg31_4
+
+    $switchDeepResult31 = Invoke-BackendSwitch -Root $root -Backend deepseek
+    Assert-Condition 'S31 switch-subagent-backend back to deepseek succeeds after unmanaged model change' ($switchDeepResult31.ExitCode -eq 0) $switchDeepResult31.Output
+    $configAfterDeep31 = Read-Config $root
+    Assert-Condition 'S31 deepseek switch preserves unmanaged model byte/value' ($configAfterDeep31 -match '(?m)^\s*model\s*=\s*"custom-unmanaged-model-v5"\s*$') $configAfterDeep31
+    Assert-Condition 'S31 deepseek switch updates deepseek backend matrix' ($configAfterDeep31 -match '(?m)^\s*multi_agent\s*=\s*false\s*$') $configAfterDeep31
+    $actualHashAfterDeep31 = (Get-FileHash -LiteralPath $configPath31 -Algorithm SHA256).Hash
+    $stateAfterDeep31 = Get-InstallState $root
+    $cfgEntryAfterDeep31 = @($stateAfterDeep31.files) | Where-Object { [string]$_.path -eq $configPath31 } | Select-Object -First 1
+    Assert-Condition 'S31 deepseek switch refreshes ledger full-file hash' ($null -ne $cfgEntryAfterDeep31 -and [string]$cfgEntryAfterDeep31.sha256 -ceq $actualHashAfterDeep31) ''
+
+    # Step 31.4: Managed-key mismatch MUST continue to fail closed in install and switch
+    $tamperedManagedCfg31 = $configAfterDeep31 -replace '(?m)^\s*multi_agent\s*=\s*false\s*$', 'multi_agent = true'
+    Write-FixtureFile -Path $configPath31 -Content $tamperedManagedCfg31
+    $failInstall31 = Invoke-InstallCapture -Root $root -Profile safe
+    Assert-Condition 'S31 safe reinstall fails closed on managed matrix mismatch' ($failInstall31.ExitCode -ne 0) $failInstall31.Output
+
+    $failSwitch31 = Invoke-BackendSwitch -Root $root -Backend native
+    Assert-Condition 'S31 backend switch fails closed on managed matrix mismatch' ($failSwitch31.ExitCode -ne 0) $failSwitch31.Output
+
+    $scenario = 32
+    Write-Host 'Scenario 32: delivery target identity contract is staging-invariant and content-sensitive, with precise commit gate validation' -ForegroundColor Cyan
+    Import-Module (Join-Path $repo 'scripts\backend-routing.psm1') -Force
+    $root32 = New-FixtureHome
+    $fixtures.Add($root32)
+    $gitRepoDir = Join-Path $root32 'git-delivery-test'
+    New-Item -ItemType Directory -Path $gitRepoDir -Force | Out-Null
+
+    # Initialize test git repo with initial baseline commit
+    & git -C $gitRepoDir init -b main | Out-Null
+    & git -C $gitRepoDir config user.name 'Test User' | Out-Null
+    & git -C $gitRepoDir config user.email 'test@example.com' | Out-Null
+    & git -C $gitRepoDir config commit.gpgsign false | Out-Null
+    & git -C $gitRepoDir config core.autocrlf true | Out-Null
+    & git -C $gitRepoDir config core.safecrlf warn | Out-Null
+
+    $initFilePath = Join-Path $gitRepoDir 'baseline.txt'
+    Write-FixtureFile -Path $initFilePath -Content 'initial baseline content'
+    $existingTracked = Join-Path $gitRepoDir 'src\app.txt'
+    Write-FixtureFile -Path $existingTracked -Content 'initial app content'
+    & git -C $gitRepoDir add baseline.txt src/app.txt | Out-Null
+    & git -C $gitRepoDir commit -m "initial commit" | Out-Null
+    $baselineCommit = (& git -C $gitRepoDir rev-parse HEAD).Trim()
+
+    # Step 32.1: Make changes in worktree (modify tracked file, add new file, untracked unowned file)
+    $lfNoBom = New-Object -TypeName System.Text.UTF8Encoding -ArgumentList $false
+    # Keep a non-ASCII code point in the tracked diff so target identity tests
+    # exercise native Git stdout decoding across Windows console code pages.
+    $approvedAppContent = ("modified app content v1 " + [char]0x00E7 + "ao`nsecond line")
+    [IO.File]::WriteAllText($existingTracked, $approvedAppContent, $lfNoBom)
+    $newOwnedFile = Join-Path $gitRepoDir 'src\feature.txt'
+    [IO.File]::WriteAllText($newOwnedFile, "new feature file content`nsecond line", $lfNoBom)
+    $unownedUntracked = Join-Path $gitRepoDir 'scratch\notes.txt'
+    Write-FixtureFile -Path $unownedUntracked -Content 'unrelated scratch note'
+
+    $ownedPaths = @('src/app.txt', 'src/feature.txt')
+
+    $gitDiffWithDiagnostic = (& git -C $gitRepoDir diff $baselineCommit -- src/app.txt 2>&1) -join "`n"
+    Assert-Condition 'S32 fixture emits a Git EOL diagnostic on stderr before staging' ($gitDiffWithDiagnostic -match '(?im)^warning:.*(?:LF|CRLF)') $gitDiffWithDiagnostic
+
+    # S32.1: Compute delivery target identity before staging
+    $targetBeforeStaging = Get-CodexDeliveryTargetIdentity -RepoPath $gitRepoDir -OwnedPaths $ownedPaths
+    Assert-Condition 'S32 returns non-empty TargetId before staging' ($null -ne $targetBeforeStaging -and -not [string]::IsNullOrWhiteSpace($targetBeforeStaging.TargetId)) ''
+    Assert-Condition 'S32 records baseline commit in target identity' ($targetBeforeStaging.Baseline -ceq $baselineCommit) ''
+    Assert-Condition 'S32 records HEAD-relative status for owned paths' ($targetBeforeStaging.HeadStatus['src/app.txt'] -ceq 'M' -and $targetBeforeStaging.HeadStatus['src/feature.txt'] -ceq 'A') ''
+    Assert-Condition 'S32 computes diff_sha256 and file_sha256 for owned paths' (-not [string]::IsNullOrWhiteSpace($targetBeforeStaging.DiffSha256) -and $targetBeforeStaging.FileSha256.Contains('src/app.txt') -and $targetBeforeStaging.FileSha256.Contains('src/feature.txt')) ''
+
+    $originalConsoleOutputEncoding = [Console]::OutputEncoding
+    try {
+        [Console]::OutputEncoding = [Text.Encoding]::GetEncoding(850)
+        $targetCp850 = Get-CodexDeliveryTargetIdentity -RepoPath $gitRepoDir -OwnedPaths $ownedPaths
+        [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding -ArgumentList $false
+        $targetUtf8 = Get-CodexDeliveryTargetIdentity -RepoPath $gitRepoDir -OwnedPaths $ownedPaths
+    }
+    finally {
+        [Console]::OutputEncoding = $originalConsoleOutputEncoding
+    }
+    Assert-Condition 'S32 TargetId is invariant across CP850 and UTF-8 native stdout decoding' ($targetCp850.TargetId -ceq $targetUtf8.TargetId) ("CP850: " + $targetCp850.TargetId + " UTF8: " + $targetUtf8.TargetId)
+    Assert-Condition 'S32 DiffSha256 is invariant across CP850 and UTF-8 native stdout decoding' ($targetCp850.DiffSha256 -ceq $targetUtf8.DiffSha256) ("CP850: " + $targetCp850.DiffSha256 + " UTF8: " + $targetUtf8.DiffSha256)
+
+    $invalidBaselineRejected = $false
+    $invalidBaselineDetail = ''
+    try {
+        $null = Get-CodexDeliveryTargetIdentity -RepoPath $gitRepoDir -OwnedPaths $ownedPaths -Baseline 'definitely-not-a-valid-commit'
+    }
+    catch {
+        $invalidBaselineRejected = $true
+        $invalidBaselineDetail = $_.Exception.Message
+    }
+    Assert-Condition 'S32 rejects an invalid baseline instead of classifying every file as added' $invalidBaselineRejected $invalidBaselineDetail
+
+    $escapingPathRejected = $false
+    $escapingPathDetail = ''
+    try {
+        $null = Get-CodexDeliveryTargetIdentity -RepoPath $gitRepoDir -OwnedPaths @('../outside.txt')
+    }
+    catch {
+        $escapingPathRejected = $true
+        $escapingPathDetail = $_.Exception.Message
+    }
+    Assert-Condition 'S32 rejects owned paths that escape the repository' $escapingPathRejected $escapingPathDetail
+
+    # S32.2: Stage the owned files (git add) -> changes porcelain state from ' M'/'??' to 'M '/'A '
+    & git -C $gitRepoDir add src/app.txt src/feature.txt | Out-Null
+    $porcelainAfterAdd = (& git -C $gitRepoDir status --porcelain) -join "`n"
+    Assert-Condition 'S32 porcelain reflects staged state' ($porcelainAfterAdd -match 'M\s+src/app\.txt' -and $porcelainAfterAdd -match 'A\s+src/feature\.txt') $porcelainAfterAdd
+
+    # Compute delivery target identity after staging
+    $targetAfterStaging = Get-CodexDeliveryTargetIdentity -RepoPath $gitRepoDir -OwnedPaths $ownedPaths
+
+    # S32.3: STAGING-INVARIANCE ASSERTION
+    Assert-Condition 'S32 TargetId is strictly staging-invariant (before staging == after staging)' ($targetBeforeStaging.TargetId -ceq $targetAfterStaging.TargetId) ("Before: " + $targetBeforeStaging.TargetId + " After: " + $targetAfterStaging.TargetId)
+    Assert-Condition 'S32 DiffSha256 is strictly staging-invariant' ($targetBeforeStaging.DiffSha256 -ceq $targetAfterStaging.DiffSha256) ''
+    Assert-Condition 'S32 FileSha256 map is strictly staging-invariant' ($targetBeforeStaging.FileSha256['src/app.txt'] -ceq $targetAfterStaging.FileSha256['src/app.txt'] -and $targetBeforeStaging.FileSha256['src/feature.txt'] -ceq $targetAfterStaging.FileSha256['src/feature.txt']) ''
+    Assert-Condition 'S32 HeadStatus is strictly staging-invariant' ($targetBeforeStaging.HeadStatus['src/app.txt'] -ceq $targetAfterStaging.HeadStatus['src/app.txt'] -and $targetBeforeStaging.HeadStatus['src/feature.txt'] -ceq $targetAfterStaging.HeadStatus['src/feature.txt']) ''
+
+    # S32.4: Commit gate passes with approved TargetId and matching staged paths
+    $gatePassResult = Test-CodexCommitGate -RepoPath $gitRepoDir -ApprovedTargetId $targetBeforeStaging.TargetId -ApprovedOwnedPaths $ownedPaths
+    Assert-Condition 'S32 commit gate succeeds on exact approved target and exact staged paths' ($gatePassResult.Pass -eq $true) $gatePassResult.Detail
+
+    # S32.5: Commit gate fails if unapproved path is staged
+    & git -C $gitRepoDir add scratch/notes.txt | Out-Null
+    $gateUnapprovedResult = Test-CodexCommitGate -RepoPath $gitRepoDir -ApprovedTargetId $targetBeforeStaging.TargetId -ApprovedOwnedPaths $ownedPaths
+    Assert-Condition 'S32 commit gate rejects when unapproved path is staged' ($gateUnapprovedResult.Pass -eq $false -and $gateUnapprovedResult.Detail -match '(?i)unapproved|mismatch|staged') $gateUnapprovedResult.Detail
+    & git -C $gitRepoDir reset HEAD -- scratch/notes.txt | Out-Null
+
+    # S32.6: The index content itself must match the approved working-tree content.
+    # Stage a tampered blob, then restore the approved working tree to reproduce a
+    # path-set/target-id bypass that would otherwise commit unreviewed content.
+    [IO.File]::WriteAllText($existingTracked, "tampered staged blob`nsecond line", $lfNoBom)
+    & git -C $gitRepoDir add src/app.txt | Out-Null
+    [IO.File]::WriteAllText($existingTracked, $approvedAppContent, $lfNoBom)
+    $targetWithRestoredWorktree = Get-CodexDeliveryTargetIdentity -RepoPath $gitRepoDir -OwnedPaths $ownedPaths
+    Assert-Condition 'S32 restored working tree still matches approved TargetId while index is tampered' ($targetWithRestoredWorktree.TargetId -ceq $targetBeforeStaging.TargetId) ''
+
+    $gateIndexMismatchResult = Test-CodexCommitGate -RepoPath $gitRepoDir -ApprovedTargetId $targetBeforeStaging.TargetId -ApprovedOwnedPaths $ownedPaths
+    Assert-Condition 'S32 commit gate rejects staged blob content that differs from approved working tree' ($gateIndexMismatchResult.Pass -eq $false -and $gateIndexMismatchResult.Detail -match '(?i)index|blob|content|staged') $gateIndexMismatchResult.Detail
+
+    & git -C $gitRepoDir add src/app.txt | Out-Null
+    $gateIndexRestoredResult = Test-CodexCommitGate -RepoPath $gitRepoDir -ApprovedTargetId $targetBeforeStaging.TargetId -ApprovedOwnedPaths $ownedPaths
+    Assert-Condition 'S32 commit gate passes after staged blob is restored to approved content' ($gateIndexRestoredResult.Pass -eq $true) $gateIndexRestoredResult.Detail
+
+    # S32.7: CONTENT-SENSITIVITY ASSERTION (content change after staging alters TargetId and causes commit gate to fail)
+    Write-FixtureFile -Path $existingTracked -Content 'tampered content modified after review'
+    $targetTampered = Get-CodexDeliveryTargetIdentity -RepoPath $gitRepoDir -OwnedPaths $ownedPaths
+    Assert-Condition 'S32 TargetId is strictly content-sensitive (content change alters TargetId)' ($targetTampered.TargetId -cne $targetBeforeStaging.TargetId) ("Original: " + $targetBeforeStaging.TargetId + " Tampered: " + $targetTampered.TargetId)
+
+    $gateTamperedResult = Test-CodexCommitGate -RepoPath $gitRepoDir -ApprovedTargetId $targetBeforeStaging.TargetId -ApprovedOwnedPaths $ownedPaths
+    Assert-Condition 'S32 commit gate rejects when post-staging recomputed identity differs from approved target' ($gateTamperedResult.Pass -eq $false -and $gateTamperedResult.Detail -match '(?i)target_id|mismatch|identity') $gateTamperedResult.Detail
 }
 finally {
     foreach ($fixture in $fixtures) {

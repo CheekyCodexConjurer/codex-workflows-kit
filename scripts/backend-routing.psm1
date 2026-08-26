@@ -477,6 +477,454 @@ function Backup-BackendFile {
     return $backupPath
 }
 
+function Assert-CodexDelegationState {
+    param([Parameter(Mandatory)][object]$DelegationState)
+
+    if (-not (Test-ObjectProperty -Object $DelegationState -Name 'selected')) {
+        throw 'Delegation state is missing selected policy.'
+    }
+    $selected = [string](Get-ObjectPropertyValue -Object $DelegationState -Name 'selected')
+    if ($selected -notin @('balanced', 'aggressive')) {
+        throw "Delegation state has unsupported selected policy: $selected"
+    }
+}
+
+function New-CodexDelegationState {
+    param([object]$ExistingInstallState)
+
+    if ($null -ne $ExistingInstallState -and (Test-ObjectProperty -Object $ExistingInstallState -Name 'codexDelegation')) {
+        $existingDelegation = Get-ObjectPropertyValue -Object $ExistingInstallState -Name 'codexDelegation'
+        Assert-CodexDelegationState -DelegationState $existingDelegation
+        return [ordered]@{
+            version = 1
+            selected = [string](Get-ObjectPropertyValue -Object $existingDelegation -Name 'selected')
+        }
+    }
+
+    $state = [ordered]@{
+        version = 1
+        selected = 'balanced'
+    }
+    Assert-CodexDelegationState -DelegationState $state
+    return $state
+}
+
+function Get-CodexRuntimeBlockInfo {
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
+
+    $normalized = $Text -replace '\r\n', "`n"
+    $beginMatches = @([regex]::Matches($normalized, '(?m)^# BEGIN CODEX-WORKFLOWS-KIT: runtime\s*(?:#.*)?$'))
+    $endMatches = @([regex]::Matches($normalized, '(?m)^# END CODEX-WORKFLOWS-KIT: runtime\s*(?:#.*)?$'))
+
+    if ($beginMatches.Count -eq 0) {
+        if ($endMatches.Count -gt 0) {
+            throw 'Managed runtime block has an end marker without a begin marker.'
+        }
+        return [pscustomobject]@{
+            Present = $false
+            Backend = $null
+            Policy = $null
+            Body = ''
+        }
+    }
+
+    if ($beginMatches.Count -gt 1 -or $endMatches.Count -gt 1) {
+        throw "AGENTS.md contains duplicate managed runtime blocks ($($beginMatches.Count) begin markers, $($endMatches.Count) end markers)."
+    }
+
+    if ($beginMatches.Count -ne $endMatches.Count) {
+        throw 'Managed runtime block is incomplete.'
+    }
+
+    $pattern = '(?ms)^# BEGIN CODEX-WORKFLOWS-KIT: runtime\s*\r?\n(?<body>.*?)^# END CODEX-WORKFLOWS-KIT: runtime(?:\r?\n|$)'
+    $match = [regex]::Match($normalized, $pattern)
+    if (-not $match.Success) {
+        throw 'Managed runtime block is malformed or incomplete.'
+    }
+
+    $body = $match.Groups['body'].Value
+    $backendMatches = @([regex]::Matches($body, '(?m)^\s*subagent_backend\s*=\s*([^\r\n#]+?)\s*(?:#.*)?$'))
+    $policyMatches = @([regex]::Matches($body, '(?m)^\s*delegation_policy\s*=\s*([^\r\n#]+?)\s*(?:#.*)?$'))
+
+    if ($backendMatches.Count -gt 1) {
+        throw "Managed runtime block contains duplicate 'subagent_backend' keys."
+    }
+    if ($policyMatches.Count -gt 1) {
+        throw "Managed runtime block contains duplicate 'delegation_policy' keys."
+    }
+    if ($backendMatches.Count -eq 0) {
+        throw "Managed runtime block is missing 'subagent_backend' key."
+    }
+    if ($policyMatches.Count -eq 0) {
+        throw "Managed runtime block is missing 'delegation_policy' key."
+    }
+
+    $backendVal = $backendMatches[0].Groups[1].Value.Trim()
+    $policyVal = $policyMatches[0].Groups[1].Value.Trim()
+
+    if ($backendVal -notin @('native', 'deepseek')) {
+        throw "Managed runtime block contains unsupported subagent_backend: '$backendVal'"
+    }
+    if ($policyVal -notin @('balanced', 'aggressive')) {
+        throw "Managed runtime block contains unsupported delegation_policy: '$policyVal'"
+    }
+
+    return [pscustomobject]@{
+        Present = $true
+        Backend = $backendVal
+        Policy = $policyVal
+        Body = $body
+    }
+}
+
+function Format-CodexRuntimeBlock {
+    param(
+        [Parameter(Mandatory)][ValidateSet('native', 'deepseek')][string]$Backend,
+        [Parameter(Mandatory)][ValidateSet('balanced', 'aggressive')][string]$Policy
+    )
+
+    $nl = [Environment]::NewLine
+    return '# BEGIN CODEX-WORKFLOWS-KIT: runtime' + $nl +
+        'subagent_backend = ' + $Backend + $nl +
+        'delegation_policy = ' + $Policy + $nl +
+        '# END CODEX-WORKFLOWS-KIT: runtime'
+}
+
+function Set-CodexAgentsManagedBlockText {
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$ExistingAgentsText,
+        [Parameter(Mandatory)][string]$TemplateText,
+        [Parameter(Mandatory)][ValidateSet('native', 'deepseek')][string]$Backend,
+        [Parameter(Mandatory)][ValidateSet('balanced', 'aggressive')][string]$Policy
+    )
+
+    $nl = [Environment]::NewLine
+    $runtimeBlock = Format-CodexRuntimeBlock -Backend $Backend -Policy $Policy
+    $begin = '# BEGIN CODEX-WORKFLOWS-KIT'
+    $end = '# END CODEX-WORKFLOWS-KIT'
+    $normalizedTemplate = ($TemplateText.Trim() -replace "`r?`n", $nl)
+    $managed = $begin + $nl + $runtimeBlock + $nl + $nl + $normalizedTemplate + $nl + $end + $nl
+
+    $blockRegex = '(?ms)^# BEGIN CODEX-WORKFLOWS-KIT\s*\r?\n.*?^# END CODEX-WORKFLOWS-KIT\s*(?:\r?\n|$)'
+    $match = [regex]::Match($ExistingAgentsText, $blockRegex)
+    if ($match.Success) {
+        $head = $ExistingAgentsText.Substring(0, $match.Index)
+        $tail = $ExistingAgentsText.Substring($match.Index + $match.Length).TrimStart([char[]]@([char]13, [char]10))
+        return ($head + $managed + $tail)
+    }
+    elseif ($ExistingAgentsText.IndexOf($begin, [StringComparison]::Ordinal) -ge 0) {
+        throw "Managed AGENTS.md block is incomplete."
+    }
+    elseif (-not [string]::IsNullOrWhiteSpace($ExistingAgentsText)) {
+        return ($managed + $ExistingAgentsText.TrimStart([char[]]@([char]13, [char]10)))
+    }
+    else {
+        return $managed
+    }
+}
+
+function Assert-CodexAgentsRuntimeBlock {
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Text,
+        [Parameter(Mandatory)][ValidateSet('native', 'deepseek')][string]$Backend,
+        [Parameter(Mandatory)][ValidateSet('balanced', 'aggressive')][string]$Policy
+    )
+
+    $info = Get-CodexRuntimeBlockInfo -Text $Text
+    if (-not $info.Present) {
+        throw 'Installed AGENTS.md is missing the managed runtime block (# BEGIN CODEX-WORKFLOWS-KIT: runtime).'
+    }
+    if ($info.Backend -cne $Backend) {
+        throw "Installed AGENTS.md runtime block has subagent_backend='$($info.Backend)', expected '$Backend'."
+    }
+    if ($info.Policy -cne $Policy) {
+        throw "Installed AGENTS.md runtime block has delegation_policy='$($info.Policy)', expected '$Policy'."
+    }
+}
+
+function Get-CodexDeliveryTargetIdentity {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$RepoPath,
+        [Parameter(Mandatory)][string[]]$OwnedPaths,
+        [string]$Baseline = ''
+    )
+
+    $fullRepoPath = [IO.Path]::GetFullPath($RepoPath)
+    if (-not (Test-Path -LiteralPath $fullRepoPath -PathType Container)) {
+        throw "Repository path does not exist: $fullRepoPath"
+    }
+
+    # 1. Resolve and validate the baseline as an exact commit. Without this
+    # check, an invalid ref makes every cat-file lookup fail and can silently
+    # misclassify all owned files as newly added.
+    $baselineRef = if ([string]::IsNullOrWhiteSpace($Baseline)) { 'HEAD' } else { $Baseline.Trim() }
+    $commitRef = $baselineRef + '^{commit}'
+    $revParse = & git -C $fullRepoPath rev-parse --verify $commitRef 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Invalid delivery baseline '$baselineRef' for repository '$fullRepoPath'."
+    }
+    $baselineSha = (($revParse | ForEach-Object { $_.ToString().Trim() }) -join '').Trim()
+    if ([string]::IsNullOrWhiteSpace($baselineSha)) {
+        throw "Git returned an empty commit identity for delivery baseline '$baselineRef'."
+    }
+
+    # 2. Normalize and sort owned paths
+    $normalizedOwnedPaths = New-Object System.Collections.Generic.List[string]
+    $repoPrefix = $fullRepoPath.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+    foreach ($p in $OwnedPaths) {
+        if (-not [string]::IsNullOrWhiteSpace($p)) {
+            $rawPath = $p.Trim()
+            if ([IO.Path]::IsPathRooted($rawPath)) {
+                throw "Owned delivery path must be repository-relative: '$rawPath'."
+            }
+
+            $norm = $rawPath.Replace('\', '/') -replace '^\./', ''
+            $segments = @($norm -split '/')
+            if ([string]::IsNullOrWhiteSpace($norm) -or $norm.Contains(':') -or $segments -contains '.' -or $segments -contains '..') {
+                throw "Owned delivery path is not canonical and repository-contained: '$rawPath'."
+            }
+
+            $candidatePath = [IO.Path]::GetFullPath([IO.Path]::Combine($fullRepoPath, ($norm -replace '/', [IO.Path]::DirectorySeparatorChar)))
+            if (-not $candidatePath.StartsWith($repoPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+                throw "Owned delivery path escapes the repository: '$rawPath'."
+            }
+
+            if (-not $normalizedOwnedPaths.Contains($norm)) {
+                $normalizedOwnedPaths.Add($norm)
+            }
+        }
+    }
+    $sortedPaths = @($normalizedOwnedPaths.ToArray())
+    [Array]::Sort($sortedPaths, [System.StringComparer]::Ordinal)
+
+    # 3. Compute per-file hashes and HEAD-relative content status
+    $headStatus = [ordered]@{}
+    $fileSha256 = [ordered]@{}
+    $diffChunks = New-Object System.Collections.Generic.List[string]
+
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    $utf8NoBom = New-Object System.Text.UTF8Encoding -ArgumentList $false
+
+    foreach ($relPath in $sortedPaths) {
+        $diskPath = [IO.Path]::Combine($fullRepoPath, ($relPath -replace '/', [IO.Path]::DirectorySeparatorChar))
+        $existsOnDisk = Test-Path -LiteralPath $diskPath -PathType Leaf
+
+        # Check if file exists in HEAD commit
+        $treeRef = $baselineSha + ":" + $relPath
+        $null = & git -C $fullRepoPath cat-file -e $treeRef 2>&1
+        $existsInHead = ($LASTEXITCODE -eq 0)
+
+        if ($existsOnDisk) {
+            $fileBytes = [IO.File]::ReadAllBytes($diskPath)
+            $hashBytes = $sha256.ComputeHash($fileBytes)
+            $hexHash = ([System.BitConverter]::ToString($hashBytes)).Replace('-', '').ToLowerInvariant()
+            $fileSha256[$relPath] = $hexHash
+
+            if ($existsInHead) {
+                # Only patch stdout belongs to the deterministic digest. Git may
+                # emit environment-dependent EOL diagnostics on stderr before
+                # staging and stop emitting them after git add. Windows
+                # PowerShell otherwise decodes the same UTF-8 patch through the
+                # active console code page, so CP850 and UTF-8 would produce
+                # different target identities for non-ASCII content.
+                $originalConsoleOutputEncoding = [Console]::OutputEncoding
+                try {
+                    [Console]::OutputEncoding = $utf8NoBom
+                    $headDiff = & git -C $fullRepoPath diff $baselineSha -- $relPath 2>$null
+                    $headDiffExitCode = $LASTEXITCODE
+                }
+                finally {
+                    [Console]::OutputEncoding = $originalConsoleOutputEncoding
+                }
+                if ($headDiffExitCode -ne 0) {
+                    throw "Failed to compute HEAD-relative diff for owned path '$relPath'."
+                }
+                $headDiffText = ($headDiff | ForEach-Object { $_.ToString() }) -join "`n"
+                if (-not [string]::IsNullOrWhiteSpace($headDiffText)) {
+                    $headStatus[$relPath] = 'M'
+                    $diffChunks.Add(("--- HEAD:" + $relPath + "`n+++ worktree:" + $relPath + "`n" + $headDiffText))
+                }
+                else {
+                    $headStatus[$relPath] = 'unchanged'
+                }
+            }
+            else {
+                $headStatus[$relPath] = 'A'
+                $diffChunks.Add(("+++ new_file:" + $relPath + " sha256:" + $hexHash))
+            }
+        }
+        else {
+            if ($existsInHead) {
+                $headStatus[$relPath] = 'D'
+                $diffChunks.Add(("--- deleted_file:" + $relPath + " in HEAD:" + $baselineSha))
+            }
+            else {
+                $headStatus[$relPath] = 'absent'
+            }
+        }
+    }
+
+    # 4. Integrated diff SHA256
+    $integratedDiffText = ($diffChunks.ToArray()) -join "`n"
+    $diffBytes = $utf8NoBom.GetBytes($integratedDiffText)
+    $diffHashBytes = $sha256.ComputeHash($diffBytes)
+    $diffSha256 = ([System.BitConverter]::ToString($diffHashBytes)).Replace('-', '').ToLowerInvariant()
+
+    # 5. Composite target identity payload (canonical ordered JSON)
+    $identityPayload = [ordered]@{
+        baseline = $baselineSha
+        head_status = $headStatus
+        diff_sha256 = $diffSha256
+        file_sha256 = $fileSha256
+    }
+    $canonicalJson = ConvertTo-Json $identityPayload -Depth 10 -Compress
+    $payloadBytes = $utf8NoBom.GetBytes($canonicalJson)
+    $targetIdBytes = $sha256.ComputeHash($payloadBytes)
+    $targetId = ([System.BitConverter]::ToString($targetIdBytes)).Replace('-', '').ToLowerInvariant()
+
+    # Observational evidence: raw porcelain (outside target_id digest)
+    $rawPorcelainOutput = & git -C $fullRepoPath status --porcelain 2>&1
+    $rawPorcelain = ($rawPorcelainOutput | ForEach-Object { $_.ToString() }) -join "`n"
+
+    return [pscustomobject]@{
+        TargetId = $targetId
+        Baseline = $baselineSha
+        HeadStatus = $headStatus
+        DiffSha256 = $diffSha256
+        FileSha256 = $fileSha256
+        PayloadJson = $canonicalJson
+        RawPorcelain = $rawPorcelain
+    }
+}
+
+function Test-CodexCommitGate {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$RepoPath,
+        [Parameter(Mandatory)][string]$ApprovedTargetId,
+        [Parameter(Mandatory)][string[]]$ApprovedOwnedPaths,
+        [string]$Baseline = ''
+    )
+
+    $fullRepoPath = [IO.Path]::GetFullPath($RepoPath)
+
+    # 1. Recompute staging-invariant delivery target identity
+    $recomputed = Get-CodexDeliveryTargetIdentity -RepoPath $fullRepoPath -OwnedPaths $ApprovedOwnedPaths -Baseline $Baseline
+
+    if ($recomputed.TargetId -cne $ApprovedTargetId) {
+        return [pscustomobject]@{
+            Pass = $false
+            Detail = "Delivery target_id mismatch: approved='$ApprovedTargetId', recomputed='$($recomputed.TargetId)'."
+            RecomputedTarget = $recomputed
+        }
+    }
+
+    # 2. Verify staged path set
+    $stagedOutput = & git -C $fullRepoPath diff --name-only --cached 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        return [pscustomobject]@{
+            Pass = $false
+            Detail = "Failed to inspect git index: $stagedOutput"
+            RecomputedTarget = $recomputed
+        }
+    }
+
+    $actualStagedPaths = New-Object System.Collections.Generic.List[string]
+    foreach ($line in $stagedOutput) {
+        $trimmed = $line.ToString().Trim()
+        if (-not [string]::IsNullOrWhiteSpace($trimmed)) {
+            $norm = $trimmed.Replace('\', '/') -replace '^\./', '' -replace '^/', ''
+            if (-not $actualStagedPaths.Contains($norm)) {
+                $actualStagedPaths.Add($norm)
+            }
+        }
+    }
+    $sortedActualStaged = @($actualStagedPaths.ToArray())
+    [Array]::Sort($sortedActualStaged, [System.StringComparer]::Ordinal)
+
+    $approvedNormalized = New-Object System.Collections.Generic.List[string]
+    foreach ($p in $ApprovedOwnedPaths) {
+        if (-not [string]::IsNullOrWhiteSpace($p)) {
+            $norm = $p.Trim().Replace('\', '/') -replace '^\./', '' -replace '^/', ''
+            if (-not $approvedNormalized.Contains($norm)) {
+                $approvedNormalized.Add($norm)
+            }
+        }
+    }
+    $sortedApproved = @($approvedNormalized.ToArray())
+    [Array]::Sort($sortedApproved, [System.StringComparer]::Ordinal)
+
+    $actualJoined = $sortedActualStaged -join ';'
+    $approvedJoined = $sortedApproved -join ';'
+
+    if ($actualJoined -cne $approvedJoined) {
+        return [pscustomobject]@{
+            Pass = $false
+            Detail = "Staged path set mismatch: expected approved set '[$approvedJoined]', but actual staged set is '[$actualJoined]'."
+            RecomputedTarget = $recomputed
+        }
+    }
+
+    # 3. Verify that the index contains the exact approved worktree content.
+    # Path equality alone is insufficient: an unreviewed blob could be staged and
+    # the working tree restored to the approved content before this gate runs.
+    foreach ($relPath in $sortedApproved) {
+        $diskPath = [IO.Path]::Combine($fullRepoPath, ($relPath -replace '/', [IO.Path]::DirectorySeparatorChar))
+        $existsOnDisk = Test-Path -LiteralPath $diskPath -PathType Leaf
+
+        $indexRef = ':' + $relPath
+        $indexBlobOutput = & git -C $fullRepoPath rev-parse --verify $indexRef 2>$null
+        $indexBlobExists = ($LASTEXITCODE -eq 0)
+        $indexBlob = (($indexBlobOutput | ForEach-Object { $_.ToString().Trim() }) -join '').Trim()
+
+        if (-not $existsOnDisk) {
+            if ($indexBlobExists) {
+                return [pscustomobject]@{
+                    Pass = $false
+                    Detail = "Staged index content mismatch for deleted path '$relPath': the approved working tree is absent but an index blob remains."
+                    RecomputedTarget = $recomputed
+                }
+            }
+            continue
+        }
+
+        if (-not $indexBlobExists -or [string]::IsNullOrWhiteSpace($indexBlob)) {
+            return [pscustomobject]@{
+                Pass = $false
+                Detail = "Staged index content mismatch for '$relPath': no staged blob exists."
+                RecomputedTarget = $recomputed
+            }
+        }
+
+        # hash-object applies the repository's clean filters and EOL rules, so
+        # the would-be worktree blob is comparable with the staged index blob.
+        $worktreeBlobOutput = & git -C $fullRepoPath hash-object --path=$relPath $diskPath 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            return [pscustomobject]@{
+                Pass = $false
+                Detail = "Failed to compute Git-normalized worktree blob for '$relPath'."
+                RecomputedTarget = $recomputed
+            }
+        }
+        $worktreeBlob = (($worktreeBlobOutput | ForEach-Object { $_.ToString().Trim() }) -join '').Trim()
+
+        if ($indexBlob -cne $worktreeBlob) {
+            return [pscustomobject]@{
+                Pass = $false
+                Detail = "Staged index blob content differs from the approved working tree for '$relPath'."
+                RecomputedTarget = $recomputed
+            }
+        }
+    }
+
+    return [pscustomobject]@{
+        Pass = $true
+        Detail = "Commit gate passed: staging-invariant target_id matched '$ApprovedTargetId', staged paths matched the approved set, and every staged blob matched approved content."
+        RecomputedTarget = $recomputed
+    }
+}
+
 Export-ModuleMember -Function @(
     'Get-BackendKeyDefinitions',
     'Get-BackendConfigSnapshot',
@@ -490,5 +938,13 @@ Export-ModuleMember -Function @(
     'Restore-CodexBackendConfigText',
     'Get-BackendFileHash',
     'Write-BackendUtf8NoBom',
-    'Backup-BackendFile'
+    'Backup-BackendFile',
+    'Assert-CodexDelegationState',
+    'New-CodexDelegationState',
+    'Get-CodexRuntimeBlockInfo',
+    'Format-CodexRuntimeBlock',
+    'Set-CodexAgentsManagedBlockText',
+    'Assert-CodexAgentsRuntimeBlock',
+    'Get-CodexDeliveryTargetIdentity',
+    'Test-CodexCommitGate'
 )

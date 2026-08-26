@@ -1,4 +1,4 @@
 interface:
   display_name: "Workflows"
-  short_description: "Canonical workflow modes with DeepSeek Sub-Agent MCP execution."
+  short_description: "Canonical workflow modes with subagent delegation and verification gates."
   default_prompt: "$workflows mode=PLAN.AUTO"
