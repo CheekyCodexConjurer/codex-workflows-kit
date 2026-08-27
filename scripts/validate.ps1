@@ -443,7 +443,19 @@ function Assert-DeliveryReviewContract {
         '(?i)(?:revisor independente [u\u00fa]nico|reviewer independente [u\u00fa]nico|single independent reviewer).{0,60}(?:alvo congelado|target congelado|frozen target)',
         '(?i)reparo consolidado no mesmo writer|consolidated repair in same writer',
         '(?i)closure review de delta|re-revis[a\u00e3]o de delta|delta closure review',
-        '(?i)sem R\.A\.F\.V\. autom[a\u00e1]tico|never auto-run R\.A\.F\.V\.|never automatic R\.A\.F\.V\.'
+        '(?i)sem R\.A\.F\.V\. autom[a\u00e1]tico|never auto-run R\.A\.F\.V\.|never automatic R\.A\.F\.V\.',
+        '(?i)prova operacional|operational proof|runtime proof',
+        '(?i)processo,? daemon ou servi[cç]o ativo|live process/daemon/service',
+        '(?i)persist[eê]ncia de dados ou migra[cç][aã]o|persistence or migration',
+        '(?i)concorr[eê]ncia e sem[aâ]ntica exata|concurrency/exactly-once',
+        '(?i)roteamento de provedores ou modelos|provider/model routing',
+        '(?i)integra[cç][aã]o externa|external integration',
+        '(?i)escala e volume|sens[ií]vel a escala|data volume/resource scale',
+        '(?i)evid[eê]ncia observada|observed runtime evidence|observed evidence',
+        '(?i)lat[eê]ncia|readiness|health',
+        '(?i)falsos?-verdes? est[aá]ticos?|static-only.*false green|test-only.*false green',
+        '(?i)nunca inventar|never invent',
+        '(?i)sem ampliar autoridade|never broaden authority'
     )
 
     foreach ($pattern in $requiredPatterns) {
@@ -468,6 +480,34 @@ function Assert-DeliveryReviewContract {
         if ($Text.IndexOf($token, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
             throw "$Label contains forbidden phrase or obsolete template: $token"
         }
+    }
+}
+
+function Assert-DeliveryReviewPolicy {
+    param(
+        [Parameter(Mandatory)][string]$DeliveryReviewText,
+        [Parameter(Mandatory)][string]$SkillText,
+        [Parameter(Mandatory)][string]$AgentsText,
+        [Parameter(Mandatory)][string]$GeminiText,
+        [string]$LabelPrefix = ''
+    )
+
+    $pfx = if ([string]::IsNullOrWhiteSpace($LabelPrefix)) { '' } else { "$LabelPrefix " }
+    Assert-DeliveryReviewContract -Label "${pfx}delivery-review.md" -Text $DeliveryReviewText
+
+    $skillNorm = [regex]::Replace($SkillText, '\s+', ' ').Trim()
+    if (-not [regex]::IsMatch($skillNorm, '(?i)operational proof|runtime proof|prova operacional')) {
+        throw "${pfx}SKILL.md is missing operational proof gate pattern"
+    }
+
+    $agentsNorm = [regex]::Replace($AgentsText, '\s+', ' ').Trim()
+    if (-not [regex]::IsMatch($agentsNorm, '(?i)prova operacional|operational proof|runtime proof')) {
+        throw "${pfx}codex AGENTS.md is missing operational proof gate pattern"
+    }
+
+    $geminiNorm = [regex]::Replace($GeminiText, '\s+', ' ').Trim()
+    if (-not [regex]::IsMatch($geminiNorm, '(?i)prova operacional|operational proof|runtime proof|delivery review')) {
+        throw "${pfx}antigravity GEMINI.md is missing operational proof gate pattern"
     }
 }
 
@@ -1515,6 +1555,7 @@ Assert-AllContractRules -Checks @(
     { Assert-SupersededSpecContract -Label 'docs/superpowers/specs/2026-08-19-promptpad-superpowers-compatibility-design.md' -Text $supersededSpec },
     { Assert-McpFoundationSkill -Label 'mcp-foundation skill' -Text $mcpSkill },
     { Assert-DeepSeekDaemonRestartPolicy -SkillText $mcpSkill -LifecycleText $mcpLifecycle -AgentsText $agentsText -GeminiText $geminiText },
+    { Assert-DeliveryReviewPolicy -DeliveryReviewText $deliveryReviewRef -SkillText $skill -AgentsText $agentsText -GeminiText $geminiText },
     { Assert-McpTemplateRouting -Label 'codex AGENTS.md' -Text $agentsText },
     { Assert-McpTemplateRouting -Label 'antigravity GEMINI.md' -Text $geminiText }
 )
@@ -1760,6 +1801,14 @@ if (-not $SkipInstalled) {
     Assert-DeepSeekDaemonRestartSkill -Label 'installed mcp-foundation SKILL.md (antigravity 2)' -Text $installedSkillAg2
     Assert-DeepSeekDaemonRestartLifecycle -Label 'installed mcp-foundation lifecycle.md (antigravity 2)' -Text $installedLifecycleAg2
 
+    # Delivery review contract assertions on installed workflows delivery-review.md mirrors
+    $installedDeliveryAgents = Read-RequiredText (Join-Path (Join-Path $workflowsDest 'references') 'delivery-review.md')
+    $installedDeliveryAg1 = Read-RequiredText (Join-Path (Join-Path $agWorkflows1 'references') 'delivery-review.md')
+    $installedDeliveryAg2 = Read-RequiredText (Join-Path (Join-Path $agWorkflows2 'references') 'delivery-review.md')
+    Assert-DeliveryReviewContract -Label 'installed delivery-review.md (agents)' -Text $installedDeliveryAgents
+    Assert-DeliveryReviewContract -Label 'installed delivery-review.md (antigravity 1)' -Text $installedDeliveryAg1
+    Assert-DeliveryReviewContract -Label 'installed delivery-review.md (antigravity 2)' -Text $installedDeliveryAg2
+
     if ([string]$state.profile -eq 'safe') {
         Assert-NoManagedAgentsBlock -Path (Join-Path $codexHome 'config.toml')
         if (-not ($state.PSObject.Properties.Name -contains 'codexBackend')) {
@@ -1780,6 +1829,7 @@ if (-not $SkipInstalled) {
         Assert-McpTemplateRouting -Label 'installed GEMINI.md' -Text $installedGemini
 
         Assert-DeepSeekDaemonRestartPolicy -SkillText $installedSkillAgents -LifecycleText $installedLifecycleAgents -AgentsText $installedAgents -GeminiText $installedGemini -LabelPrefix 'installed (safe profile)'
+        Assert-DeliveryReviewPolicy -DeliveryReviewText $installedDeliveryAgents -SkillText (Read-RequiredText (Join-Path $workflowsDest 'SKILL.md')) -AgentsText $installedAgents -GeminiText $installedGemini -LabelPrefix 'installed (safe profile)'
     }
 
     Assert-MirrorTree -Source $workflowSource -Installed $workflowsDest -Label 'workflows skill (agents)'

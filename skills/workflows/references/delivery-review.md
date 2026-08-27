@@ -8,7 +8,7 @@ Este documento define o módulo invariante de qualidade de entrega (*delivery re
 
 O módulo de qualidade de entrega é um portão de qualidade embutido e invariante, sendo estritamente **ortogonal às flags** de backend (`subagent_backend`) e de delegação (`delegation_policy`), operando de forma invariável independentemente da configuração ativa.
 
-Exige exatamente um revisor independente único por alvo congelado (*single independent reviewer* por *frozen target*). Reparos bloqueantes geram um lote de reparo consolidado no mesmo writer. Revalidações subsequentes realizam uma closure review de delta sobre as correções e o blast radius afetado, revalidando a integridade e target_id. O processo ocorre sem R.A.F.V. automático; o modo `R.A.F.V` permanece estritamente manual sob demanda, nunca automático.
+Exige validação determinística prévia, congelamento formal do alvo com identidade determinística invariante a staging, prova operacional em tempo de execução (*operational/runtime proof*) quando houver gatilho de risco e exatamente um revisor independente único por alvo congelado (*single independent reviewer* por *frozen target*). Reparos bloqueantes geram um lote de reparo consolidado no mesmo writer. Revalidações subsequentes realizam uma closure review de delta sobre as correções e o blast radius afetado, revalidando a integridade e target_id. O processo ocorre sem R.A.F.V. automático; o modo `R.A.F.V` permanece estritamente manual sob demanda, nunca automático.
 
 ### Modos Aplicáveis:
 - `IMPL.AUTO`
@@ -33,7 +33,10 @@ O processo de revisão de entrega ocorre imediatamente após a conclusão do tra
 [Congelamento do Alvo (Frozen Target)]
          │
          ▼
-[Revisão Independente Estruturada (5 Pilares)]
+[Prova Operacional Delimitada (quando houver gatilho de risco)]
+         │
+         ▼
+[Revisão Independente Estruturada (5 Pilares: Alvo + Runtime)]
          │
          ├───► [Veredito: APPROVED] ──► [Commit de Entrega Fechado]
          │
@@ -65,9 +68,39 @@ A árvore de trabalho permanece estritamente congelada durante a revisão. Qualq
 
 ---
 
+## 3.1. Portão de Prova Operacional em Tempo de Execução (*Operational / Runtime Proof Gate*)
+
+Após o congelamento do alvo (`target_id`) e antes da revisão independente, deve ser coletada uma prova operacional delimitada (*bounded scoped operational proof*) no alvo exato congelado sempre que houver gatilho de risco.
+
+### Gatilhos de Risco (*Trigger Conditions*):
+A prova operacional é obrigatória única e exclusivamente quando a entrega congelada afetar:
+1. **Processo, Daemon ou Serviço Ativo (*live process/daemon/service*)**: inicialização de listeners, ciclo de vida, sinais de término, readiness probes e health checks.
+2. **Persistência de Dados ou Migração (*persistence or migration*)**: esquemas relacionais, transações, locks, WAL, integridade referencial e reconciliação com bancos legados.
+3. **Concorrência e Semântica Exata (*concurrency/exactly-once*)**: race conditions, processamento paralelo, spool durável, recuperação e proteção contra duplicidade.
+4. **Roteamento de Provedores ou Modelos (*provider/model routing*)**: matriz de backends, handshakes de transporte, timeouts e tratamento de falhas.
+5. **Integração Externa (*external integration*)**: contratos de APIs externas, protocolos de rede e subprocessos gerenciados.
+6. **Comportamento Sensível a Escala e Volume (*behavior sensitive to realistic data volume/resource scale*)**: algoritmos, filtros, ordenações, starvation de recursos ou operações síncronas sob volume de dados representativo do ambiente real.
+
+### Evidência Observada e Não Configuração (*Observed Evidence, Not Config*):
+A prova operacional deve consistir estritamente em evidência observada em tempo de execução (*observed runtime evidence*), nunca em inspeção estática de configurações ou suposições. Deve capturar:
+- Latência de inicialização e prontidão de processos e rotas (ex.: medição de tempo de resposta de `GET /health` e readiness probes).
+- Estado persistente verificado e comportamento sob volume/escala de dados representativo.
+- Identidade exata do artefato/binário em execução comprovando que corresponde ao `target_id` congelado.
+
+### Regra de Falha Fechada (*Fail Closed on Missing / Unsafe / Unauthorized Proof*):
+Se a prova operacional exigida for indisponível, insegura, não-autorizada pelo usuário ou não-representativa da escala real:
+- É expressamente proibido inventar evidências ou presumir aprovação (*never invent, never assume pass*).
+- O veredito da revisão permanece obrigatoriamente **`BLOCKED`** até que a prova empírica seja apresentada ou o usuário aprove explicitamente a alteração de escopo ou limitação documentada.
+- É estritamente proibido ampliar autoridade implicitamente (*never broaden authority*) ou executar ações destrutivas ou em produção sem autorização explícita.
+
+### Rejeição de Falso-Verde Estático:
+O revisor independente deve obrigatoriamente rejeitar falsos-verdes estáticos (*static-only / test-only false greens*). Cobertura unitária ou validação determinística verde não substitui a prova operacional quando qualquer gatilho de risco estiver presente.
+
+---
+
 ## 4. Revisão Independente e os 5 Pilares Explícitos
 
-O revisor independente deve ser obrigatoriamente um não-autor em um contexto limpo e isolado somente leitura. Ele realiza a reconstrução dos requisitos originais do usuário e do mapa de alegações (*claim-map*) e avalia o alvo congelado cobrindo obrigatoriamente os **5 pilares explícitos**:
+O revisor independente deve ser obrigatoriamente um não-autor em um contexto limpo e isolado somente leitura. Ele realiza a reconstrução dos requisitos originais do usuário e do mapa de alegações (*claim-map*) e avalia o alvo congelado e a prova operacional observada cobrindo obrigatoriamente os **5 pilares explícitos**:
 
 1. **Pilar 1: Requisitos e Completude (*Requirements / Completeness*)**
    - Conformidade rigorosa com a solicitação do usuário e o mapa de alegações.
@@ -81,9 +114,10 @@ O revisor independente deve ser obrigatoriamente um não-autor em um contexto li
    - Tratamento adequado de erros, entradas inválidas e estados de falha.
    - Ausência de condições de corrida, concorrência insegura, comandos destrutivos ou vazamento de segredos.
 
-4. **Pilar 4: Robustez de Testes e Resistência a Falso-Verde (*Test Strength & False-Green Resistance*)**
-   - Cobertura de testes focada no comportamento alterado.
-   - Resistência comprovada a falsos-positivos (*false greens*), garantindo que os testes falhariam diante de regressões reais.
+4. **Pilar 4: Robustez de Testes, Prova Operacional e Resistência a Falso-Verde (*Test Strength, Operational Proof & False-Green Resistance*)**
+   - Cobertura de testes focada no comportamento alterado e validação determinística.
+   - Presença e conformidade da prova operacional em tempo de execução (*operational/runtime proof*) quando acionada por gatilhos de risco (processo ativo, persistência, concorrência, roteamento, integração externa ou escala/volume de dados).
+   - Resistência comprovada a falsos-positivos (*false greens*), rejeitando explicitamente aprovações baseadas apenas em testes estáticos (*static-only/test-only false greens*) diante de mudanças operacionais.
 
 5. **Pilar 5: Integração, Invariantes, Retrocompatibilidade e Escopo (*Integration / Invariants / Backcompat / Scope*)**
    - Preservação de padrões locais e contratos de arquitetura do repositório.
@@ -104,14 +138,20 @@ O revisor emite formalmente um pacote de revisão estruturado contendo:
     "diff_sha256": "sha256-of-integrated-diff",
     "file_sha256": { "path/to/file": "hash..." },
     "validation": "test_command_output_and_commands",
-    "raw_porcelain": "git-status-porcelain-observational-evidence-outside-digest"
+    "raw_porcelain": "git-status-porcelain-observational-evidence-outside-digest",
+    "operational_proof": {
+      "triggered": true,
+      "triggers": ["live process/daemon/service", "data volume/resource scale"],
+      "observed_evidence": "GET /health readiness latency < 500ms observed against 3.3M event store",
+      "artifact_identity": "sha256-of-executed-target"
+    }
   },
   "verdict": "APPROVED | BLOCKED",
   "pillar_checks": {
     "P1_requirements": "PASS | FAIL: justificativa",
     "P2_compatibility_paths": "PASS | FAIL: justificativa",
     "P3_negative_security": "PASS | FAIL: justificativa",
-    "P4_test_strength": "PASS | FAIL: justificativa",
+    "P4_test_strength": "PASS | FAIL: justificativa (inclui prova operacional quando exigida)",
     "P5_integration_scope": "PASS | FAIL: justificativa"
   },
   "blockers": [

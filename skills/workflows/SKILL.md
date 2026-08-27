@@ -74,8 +74,7 @@ FRAME -> FANOUT -> COLLECT -> ACT -> VERIFY -> REVIEW -> DONE
   via `deepseek_continue` (or native follow-up), re-plan, or stop.
 - VERIFY: prove the affected behavior with deterministic validation; inspect the
   integrated diff.
-- REVIEW: after material write output in write modes, run independent review
-  over the frozen target (`references/delivery-review.md`).
+- REVIEW: after material write output in write modes, collect bounded operational proof on the frozen target when risk-triggered (live process/daemon/service, persistence/migration, concurrency/exactly-once, routing, external integration, or scale/volume), and run independent review over target and runtime evidence (`references/delivery-review.md`).
 - DONE: run the final audit and close the local commit series before the
   final response.
 
@@ -164,9 +163,14 @@ commit series; never push. `references/delivery-review.md` and
   changes.
 - Freeze target with staging- and host-code-page-invariant identity (baseline, owned HEAD-relative
   content status, integrated diff against HEAD, per-file hashes; raw porcelain
-  captured as evidence outside digest), run structured review, and issue
-  APPROVED/BLOCKED verdict; blocked verdicts use at most 2 consolidated repair
-  rounds and fail closed if blockers persist.
+  captured as evidence outside digest). When touching live processes/daemons/services,
+  persistence/migration, concurrency/exactly-once, routing, external integration, or realistic data
+  volume/resource scale, capture bounded operational proof (observed runtime evidence, health/readiness
+  latency, persistent scale state, and artifact identity) on that exact target before review;
+  independent review consumes both target and runtime evidence, rejecting static-only false greens
+  and issuing an APPROVED/BLOCKED verdict; blocked on unavailable/unauthorized proof without implicit
+  authority broadening; blocked verdicts use at most 2 consolidated repair rounds and fail closed if
+  blockers persist.
 - Block without changing the index on ambiguous overlap, secrets, or
   generated/cache/local/ignored candidates.
 - Build a coherent commit-map with separate commits; run targeted and
@@ -186,7 +190,7 @@ Before the final response, prove and report: every required job consumed
 (`completed`, `completed_partial`, `failed`, `timed_out`, `aborted`, or
 `explicitly unavailable-blocked`), deterministic validation run, exact frozen
 target (staging- and host-code-page-invariant identity: baseline, HEAD-relative status, diff, hashes),
-approved delivery review with zero blockers, repaired findings revalidated, local
+approved delivery review with zero blockers and verified operational proof when triggered, repaired findings revalidated, local
 commit series closed without push, and remaining risks. Never declare success with
 an open required gate.
 
