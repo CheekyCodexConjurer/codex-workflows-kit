@@ -2,13 +2,14 @@
 
 Kit local, Windows-first, para instalar uma única interface de workflow:
 $workflows. Ele inclui a skill condicional evidence-first e um prompt pad
-AutoHotkey opcional. Possui dois seletores globais ortogonais para novas tarefas/sessões:
-`subagent_backend` (`native` | `deepseek`) e `delegation_policy` (`balanced` | `aggressive`).
+AutoHotkey opcional. Possui três seletores globais ortogonais para novas tarefas/sessões:
+`subagent_backend` (`native` | `deepseek`), `delegation_policy` (`balanced` | `aggressive`) e
+`subagent_strategy` (`worker` | `critical`).
 O parent GPT é o maestro que delega, integra, valida e decide. Tudo parte de uma
 worktree versionada, com backup antes de sobrescrever, alternâncias transacionais com rollback,
 diagnóstico e remoção segura.
 
-O seletor global de backend define o executor de sub-agentes (`native` com `gpt-5.6-luna` ou `deepseek` via DeepSeek Sub-Agent MCP). A política de delegação define o equilíbrio operacional (`balanced` otimizando wall-clock time ou `aggressive` otimizando desoneração de tokens). Em modos de escrita, o módulo invariante de qualidade de entrega congela o alvo e exige revisão estruturada independente com veredito APPROVED antes do commit local fechado.
+O seletor global de backend define o executor de sub-agentes (`native` com `gpt-5.6-luna` ou backend técnico `deepseek` via SubAgents MCP). A política de delegação define o equilíbrio operacional (`balanced` otimizando wall-clock time ou `aggressive` otimizando desoneração de tokens). A estratégia de subagentes define o modelo de cooperação (`worker` padrão onde worker preserva o fluxo atual, ou `critical` com análise independente, identificação de contradições e lacunas, síntese GPT mandatória, fencing e sem edição concorrente; a estratégia nunca concede escrita). Em modos de escrita, o módulo invariante de qualidade de entrega congela o alvo e exige revisão estruturada independente com veredito APPROVED antes do commit local fechado.
 
 > **Segurança primeiro.** Nunca instale por pipeline remoto. Clone ou baixe o
 > repositório, revise os scripts em scripts/ e execute-os do seu próprio
@@ -40,7 +41,7 @@ validation, commit e quality-ratchet).
 
 - Windows 10 ou 11;
 - PowerShell 5.1+ ou PowerShell 7+;
-- Codex (o perfil safe gerencia o seletor `subagent_backend` — `native` com `gpt-5.6-luna` ou `deepseek` via DeepSeek Sub-Agent MCP);
+- Codex (o perfil safe gerencia o seletor `subagent_backend` — `native` com `gpt-5.6-luna` ou `deepseek` via SubAgents MCP);
 - opcionalmente, AutoHotkey v2 para o prompt pad.
 
 Se a política de execução exigir, permita apenas o escopo do usuário depois de
@@ -141,11 +142,12 @@ conclusão ou cancelamento explícito, retornando ao ALINHAMENTO após o fechame
 Consulte skills/workflows/SKILL.md para os 16 modos (tripla capacidades | permissão |
 gate de pronto) e o ciclo de vida; referências especializadas são abertas sob
 demanda. O executor de sub-agentes é governado pelo seletor `subagent_backend`
-(`native` com `gpt-5.6-luna` ou `deepseek` via DeepSeek Sub-Agent MCP), sob a
-estratégia de `delegation_policy` (`balanced` ou `aggressive`); o parent GPT
+(`native` com `gpt-5.6-luna` ou backend técnico `deepseek` via SubAgents MCP), sob a
+estratégia de `delegation_policy` (`balanced` ou `aggressive`) e `subagent_strategy`
+(`worker` ou `critical`); o parent GPT
 interpreta imagens, integra, valida e decide.
 
-## Alternância de Backend e Política
+## Alternância de Backend, Política e Estratégia
 
 O kit oferece comandos transacionais com verificação de drift (divergências na projeção gerenciada falham fechado; campos de configuração não relacionados são preservados e reconciliados), backups automáticos e rollback em caso de falha:
 
@@ -158,9 +160,14 @@ O kit oferece comandos transacionais com verificação de drift (divergências n
 .\scripts\switch-subagent-policy.ps1 -Policy balanced
 .\scripts\switch-subagent-policy.ps1 -Policy aggressive
 
+# Alternar estratégia de subagentes (worker ou critical)
+.\scripts\switch-subagent-strategy.ps1 -Strategy worker
+.\scripts\switch-subagent-strategy.ps1 -Strategy critical
+
 # Consultar status ativo
 .\scripts\switch-subagent-backend.ps1 -Status
 .\scripts\switch-subagent-policy.ps1 -Status
+.\scripts\switch-subagent-strategy.ps1 -Status
 ~~~
 
 ### Prompt Pad (AutoHotkey)

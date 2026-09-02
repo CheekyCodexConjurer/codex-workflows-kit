@@ -3,6 +3,8 @@ param(
     [int]$Scenario = 0
 )
 
+$targetScenario = $Scenario
+
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
@@ -384,10 +386,40 @@ function Get-AgentsRuntimeBlock {
 
     $backendMatch = [regex]::Match($Text, '(?m)^\s*subagent_backend\s*=\s*([a-zA-Z0-9_-]+)\s*(?:#.*)?$')
     $policyMatch = [regex]::Match($Text, '(?m)^\s*delegation_policy\s*=\s*([a-zA-Z0-9_-]+)\s*(?:#.*)?$')
+    $strategyMatch = [regex]::Match($Text, '(?m)^\s*subagent_strategy\s*=\s*([a-zA-Z0-9_-]+)\s*(?:#.*)?$')
     return [pscustomobject]@{
         Backend = if ($backendMatch.Success) { $backendMatch.Groups[1].Value } else { $null }
         Policy = if ($policyMatch.Success) { $policyMatch.Groups[1].Value } else { $null }
+        Strategy = if ($strategyMatch.Success) { $strategyMatch.Groups[1].Value } else { $null }
     }
+}
+
+function Invoke-StrategySwitch {
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [Parameter(Mandatory)][ValidateSet('worker', 'critical')][string]$Strategy
+    )
+
+    $switchScript = Join-Path $repo 'scripts\switch-subagent-strategy.ps1'
+    return Invoke-ProcessCapture -FilePath 'pwsh' -ArgumentList @('-NoProfile', '-File', $switchScript, '-Strategy', $Strategy, '-CodexHome', (Get-CodexHome $Root))
+}
+
+function Invoke-StrategyStatus {
+    param([Parameter(Mandatory)][string]$Root)
+
+    $switchScript = Join-Path $repo 'scripts\switch-subagent-strategy.ps1'
+    return Invoke-ProcessCapture -FilePath 'pwsh' -ArgumentList @('-NoProfile', '-File', $switchScript, '-Status', '-CodexHome', (Get-CodexHome $Root))
+}
+
+function Invoke-StrategySwitchWithHost {
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [Parameter(Mandatory)][ValidateSet('worker', 'critical')][string]$Strategy,
+        [Parameter(Mandatory)][object]$HostInfo
+    )
+
+    $switchScript = Join-Path $repo 'scripts\switch-subagent-strategy.ps1'
+    return Invoke-ProcessCapture -FilePath $HostInfo.Path -ArgumentList @('-NoProfile', '-File', $switchScript, '-Strategy', $Strategy, '-CodexHome', (Get-CodexHome $Root))
 }
 
 function Get-SwitchHosts {
@@ -511,7 +543,7 @@ function Test-AgentsOrchestrationSemantics {
     if (-not [regex]::IsMatch($normalized, '(?i)consuma cada job e feche cada agente ap[o\u00f3]s a integra[c\u00e7][\u00e3a]o')) {
         return $false
     }
-    if (-not [regex]::IsMatch($normalized, '(?i)deepseek_continue.{0,80}allow_respawn')) {
+    if (-not [regex]::IsMatch($normalized, '(?i)(?:subagents_continue|deepseek_continue).{0,80}allow_respawn')) {
         return $false
     }
     if (-not [regex]::IsMatch($normalized, '(?i)sem pedir nova permiss[\u00e3a]o')) {
@@ -878,11 +910,121 @@ function Test-AlinhamentoPolicySemantics {
     return $true
 }
 
-$scenario = 0
+function Test-CriticalStrategySemantics {
+    param(
+        [Parameter(Mandatory)][string]$AgentsText,
+        [Parameter(Mandatory)][string]$GeminiText,
+        [Parameter(Mandatory)][string]$SkillText,
+        [Parameter(Mandatory)][string]$DelegationText,
+        [Parameter(Mandatory)][string]$ReadmeText
+    )
+
+    $agentsNorm = [regex]::Replace($AgentsText, '\s+', ' ').Trim()
+    $geminiNorm = [regex]::Replace($GeminiText, '\s+', ' ').Trim()
+    $skillNorm = [regex]::Replace($SkillText, '\s+', ' ').Trim()
+    $delegationNorm = [regex]::Replace($DelegationText, '\s+', ' ').Trim()
+    $readmeNorm = [regex]::Replace($ReadmeText, '\s+', ' ').Trim()
+
+    $agentsRequired = @(
+        '(?i)subagent_strategy',
+        '(?i)worker',
+        '(?i)critical',
+        '(?i)an[a\u00e1]lise independente',
+        '(?i)contradi[c\u00e7][o\u00f5]es.{0,30}lacunas',
+        '(?i)s[i\u00ed]ntese GPT',
+        '(?i)fencing.{0,30}ownership',
+        '(?i)sem edi[c\u00e7][a\u00e3]o concorrente',
+        '(?i)worker preserva o fluxo atual',
+        '(?i)estrat[e\u00e9]gia nunca concede escrita',
+        '(?i)SubAgents MCP|subagents_'
+    )
+    foreach ($pattern in $agentsRequired) {
+        if (-not [regex]::IsMatch($agentsNorm, $pattern)) {
+            return $false
+        }
+    }
+
+    $geminiRequired = @(
+        '(?i)estrat[e\u00e9]gia nunca concede escrita'
+    )
+    foreach ($pattern in $geminiRequired) {
+        if (-not [regex]::IsMatch($geminiNorm, $pattern)) {
+            return $false
+        }
+    }
+
+    $skillRequired = @(
+        '(?i)subagent_strategy',
+        '(?i)worker',
+        '(?i)critical',
+        '(?i)an[a\u00e1]lise independente|independent analysis',
+        '(?i)contradi[c\u00e7][o\u00f5]es|contradictions',
+        '(?i)s[i\u00ed]ntese GPT|GPT synthesis',
+        '(?i)fencing.{0,30}ownership',
+        '(?i)sem edi[c\u00e7][a\u00e3]o concorrente|no concurrent edit',
+        '(?i)estrat[e\u00e9]gia nunca concede escrita|strategy never grants write',
+        '(?i)subagents_spawn'
+    )
+    foreach ($pattern in $skillRequired) {
+        if (-not [regex]::IsMatch($skillNorm, $pattern)) {
+            return $false
+        }
+    }
+
+    $delegationRequired = @(
+        '(?i)subagent_strategy',
+        '(?i)worker',
+        '(?i)critical',
+        '(?i)an[a\u00e1]lise independente|independent analysis',
+        '(?i)contradi[c\u00e7][o\u00f5]es|contradictions',
+        '(?i)s[i\u00ed]ntese GPT|GPT synthesis',
+        '(?i)fencing.{0,30}ownership',
+        '(?i)sem edi[c\u00e7][a\u00e3]o concorrente|no concurrent edit',
+        '(?i)worker preserva o fluxo atual|worker preserves',
+        '(?i)estrat[e\u00e9]gia nunca concede escrita|strategy never grants write',
+        '(?i)SubAgents MCP',
+        '(?i)subagents_spawn'
+    )
+    foreach ($pattern in $delegationRequired) {
+        if (-not [regex]::IsMatch($delegationNorm, $pattern)) {
+            return $false
+        }
+    }
+
+    $readmeRequired = @(
+        '(?i)subagent_strategy',
+        '(?i)worker',
+        '(?i)critical',
+        '(?i)SubAgents MCP'
+    )
+    foreach ($pattern in $readmeRequired) {
+        if (-not [regex]::IsMatch($readmeNorm, $pattern)) {
+            return $false
+        }
+    }
+
+    $forbidden = @(
+        '(?i)\b(?:estrat[e\u00e9]gia|critical)\b[^.;]*\b(?:concede|autoriza|permite|grants?)\b[^.;]*\bescrita\b[^.;]*(?:no ALINHAMENTO|em ALINHAMENTO|under ALINHAMENTO)',
+        '(?i)(?:no ALINHAMENTO|em ALINHAMENTO|under ALINHAMENTO)[^.;]*\b(?:estrat[e\u00e9]gia|critical)\b[^.;]*\b(?:concede|autoriza|permite|grants?)\b[^.;]*\bescrita',
+        '(?i)\b(?:permite|autoriza|allows?)\b[^.;]*\bedi[c\u00e7][a\u00e3]o concorrente\b',
+        '(?i)\bdeepseek_spawn\b',
+        '(?i)\bdeepseek_follow\b'
+    )
+    foreach ($pattern in $forbidden) {
+        if ([regex]::IsMatch($agentsNorm, $pattern) -or [regex]::IsMatch($geminiNorm, $pattern) -or [regex]::IsMatch($skillNorm, $pattern) -or [regex]::IsMatch($delegationNorm, $pattern)) {
+            return $false
+        }
+    }
+
+    return $true
+}
+
+$currentScenario = 0
 $fixtures = New-Object System.Collections.Generic.List[string]
 
 try {
-    $scenario = 1
+    if ($targetScenario -eq 0 -or $targetScenario -lt 37) {
+    $currentScenario = 1
     Write-Host 'Scenario 1: absent [features] table, rerun idempotence, uninstall restore' -ForegroundColor Cyan
     $root = New-FixtureHome
     $fixtures.Add($root)
@@ -1366,7 +1508,9 @@ command = "sample"
     Assert-Condition 'S15 enables native multi-agent matrix' ((Get-MultiAgentValue $nativeConfig) -ceq 'true') $nativeConfig
     Assert-Condition 'S15 explicitly disables fast mode' ($nativeConfig -match '(?m)^\s*fast_mode\s*=\s*false\s*(?:#.*)?$') $nativeConfig
     Assert-Condition 'S15 pins native model and max reasoning' ($nativeConfig -match '(?m)^\s*default_subagent_model\s*=\s*"gpt-5\.6-luna"\s*(?:#.*)?$' -and $nativeConfig -match '(?m)^\s*default_subagent_reasoning_effort\s*=\s*"max"\s*(?:#.*)?$') $nativeConfig
-    Assert-Condition 'S15 disables the DeepSeek MCP without deleting its table' ($nativeConfig -match '(?ms)\[mcp_servers\.deepseek-subagent\].*?enabled\s*=\s*false' -and $nativeConfig -match '(?ms)\[mcp_servers\.sample\].*?command\s*=\s*"sample"') $nativeConfig
+    $hasCanonicalMcp = ($nativeConfig -match '(?ms)\[mcp_servers\.subagents\].*?enabled\s*=\s*false' -and $nativeConfig -notmatch '\[mcp_servers\.deepseek-subagent\]')
+    $hasLegacyMcp = ($nativeConfig -match '(?ms)\[mcp_servers\.deepseek-subagent\].*?enabled\s*=\s*false' -and $nativeConfig -notmatch '\[mcp_servers\.subagents\]')
+    Assert-Condition 'S15 disables the DeepSeek MCP without deleting its table' (($hasCanonicalMcp -or $hasLegacyMcp) -and $nativeConfig -match '(?ms)\[mcp_servers\.sample\].*?command\s*=\s*"sample"') $nativeConfig
     Assert-Condition 'S15 preserves top-level model/reasoning/service tier and unrelated MCP' ($nativeConfig -match 'model = "top-level-model"' -and $nativeConfig -match 'reasoning_effort = "top-level-reasoning"' -and $nativeConfig -match 'service_tier = "default"' -and $nativeConfig -match 'command = "sample"') $nativeConfig
 
     $scenario = 16
@@ -2724,6 +2868,178 @@ enabled = true
     Invoke-SafeInstall -Root $root36
     $valHealed36 = Invoke-Validate -Root $root36
     Assert-Condition 'S36 reinstall heals delegation mirror and passes validation' ($valHealed36.ExitCode -eq 0 -and $valHealed36.Output -match 'Validation OK') $valHealed36.Output
+    }
+
+    $currentScenario = 37
+    if ($targetScenario -eq 0 -or $targetScenario -eq 37) {
+        Write-Host 'Scenario 37: subagent_strategy flag (worker|critical), default worker, orthogonal switching, ALINHAMENTO no-write invariant, and multi-host regression' -ForegroundColor Cyan
+        $root37 = New-FixtureHome
+        $fixtures.Add($root37)
+
+        # 1. Semantic tests on canonical files
+        $canonicalAgents37 = Get-Content -LiteralPath (Join-Path $repo 'codex\AGENTS.md') -Raw -Encoding UTF8
+        $canonicalGemini37 = Get-Content -LiteralPath (Join-Path $repo 'antigravity\GEMINI.md') -Raw -Encoding UTF8
+        $canonicalSkill37 = Get-Content -LiteralPath (Join-Path $repo 'skills\workflows\SKILL.md') -Raw -Encoding UTF8
+        $canonicalDelegation37 = Get-Content -LiteralPath (Join-Path $repo 'skills\workflows\references\delegation.md') -Raw -Encoding UTF8
+        $canonicalReadme37 = Get-Content -LiteralPath (Join-Path $repo 'README.md') -Raw -Encoding UTF8
+
+        Assert-Condition 'S37 canonical policies satisfy critical strategy semantics' (Test-CriticalStrategySemantics -AgentsText $canonicalAgents37 -GeminiText $canonicalGemini37 -SkillText $canonicalSkill37 -DelegationText $canonicalDelegation37 -ReadmeText $canonicalReadme37) ''
+
+        # Tampers
+        $tamperWriteInAlinhamento = $canonicalAgents37 + $nl + 'A estratégia critical concede escrita no ALINHAMENTO para correções.'
+        Assert-Condition 'S37 detects strategy write permission tamper in ALINHAMENTO' (-not (Test-CriticalStrategySemantics -AgentsText $tamperWriteInAlinhamento -GeminiText $canonicalGemini37 -SkillText $canonicalSkill37 -DelegationText $canonicalDelegation37 -ReadmeText $canonicalReadme37)) ''
+
+        $tamperConcurrentEdit = $canonicalAgents37 -replace '(?i)sem edi[c\u00e7][a\u00e3]o concorrente', 'permite edição concorrente entre agentes'
+        Assert-Condition 'S37 detects concurrent edit tamper in critical strategy' (-not (Test-CriticalStrategySemantics -AgentsText $tamperConcurrentEdit -GeminiText $canonicalGemini37 -SkillText $canonicalSkill37 -DelegationText $canonicalDelegation37 -ReadmeText $canonicalReadme37)) ''
+
+        $tamperMissingSynthesis = $canonicalAgents37 -replace '(?i)s[i\u00ed]ntese GPT', 'síntese delegada'
+        Assert-Condition 'S37 detects missing GPT synthesis tamper' (-not (Test-CriticalStrategySemantics -AgentsText $tamperMissingSynthesis -GeminiText $canonicalGemini37 -SkillText $canonicalSkill37 -DelegationText $canonicalDelegation37 -ReadmeText $canonicalReadme37)) ''
+
+        # 2. Installation establishes worker by default
+        $originalConfig37 = '[features]' + $nl + 'multi_agent = false' + $nl + $nl + '[mcp_servers.subagents]' + $nl + 'command = "pwsh"' + $nl
+        Write-FixtureFile -Path (Join-Path (Get-CodexHome $root37) 'config.toml') -Content $originalConfig37
+        Invoke-SafeInstall -Root $root37
+
+        $state37 = Get-InstallState $root37
+        Assert-Condition 'S37 safe install records default worker strategy in state' ($null -ne $state37 -and $state37.PSObject.Properties.Name -contains 'codexStrategy' -and [string]$state37.codexStrategy.selected -ceq 'worker') ''
+
+        $agents37 = Get-Content -LiteralPath (Join-Path (Get-CodexHome $root37) 'AGENTS.md') -Raw -Encoding UTF8
+        $rt37 = Get-AgentsRuntimeBlock -Text $agents37
+        Assert-Condition 'S37 safe install establishes subagent_strategy = worker in AGENTS.md' ($rt37.Strategy -ceq 'worker') $rt37.Strategy
+
+        # 3. Strategy switch to critical
+        $critResult = Invoke-StrategySwitch -Root $root37 -Strategy critical
+        Assert-Condition 'S37 switch to critical succeeds' ($critResult.ExitCode -eq 0) $critResult.Output
+        $state37AfterCrit = Get-InstallState $root37
+        Assert-Condition 'S37 state updated to critical strategy' ($null -ne $state37AfterCrit.codexStrategy -and [string]$state37AfterCrit.codexStrategy.selected -ceq 'critical') ''
+        $agents37AfterCrit = Get-Content -LiteralPath (Join-Path (Get-CodexHome $root37) 'AGENTS.md') -Raw -Encoding UTF8
+        $rt37AfterCrit = Get-AgentsRuntimeBlock -Text $agents37AfterCrit
+        Assert-Condition 'S37 AGENTS.md runtime block updated to subagent_strategy = critical' ($rt37AfterCrit.Strategy -ceq 'critical') $rt37AfterCrit.Strategy
+        $config37AfterCrit = Read-Config $root37
+        Assert-Condition 'S37 strategy switch leaves config.toml untouched' ($config37AfterCrit -ceq ($originalConfig37 -replace "`r?`n", "`r`n")) ''
+
+        # 4. Status reporting
+        $statusResult = Invoke-StrategyStatus -Root $root37
+        Assert-Condition 'S37 strategy status reports active critical strategy' ($statusResult.ExitCode -eq 0 -and $statusResult.Output -match '(?i)Active subagent strategy:\s*critical') $statusResult.Output
+        $backendStatus = Invoke-BackendStatus -Root $root37
+        Assert-Condition 'S37 backend status reports active strategy' ($backendStatus.ExitCode -eq 0 -and $backendStatus.Output -match '(?i)Active subagent strategy:\s*critical') $backendStatus.Output
+        $policyStatus = Invoke-PolicyStatus -Root $root37
+        Assert-Condition 'S37 policy status reports active strategy' ($policyStatus.ExitCode -eq 0 -and $policyStatus.Output -match '(?i)Active subagent strategy:\s*critical') $policyStatus.Output
+
+        # 5. Idempotence
+        $critRerun = Invoke-StrategySwitch -Root $root37 -Strategy critical
+        $agents37Rerun = Get-Content -LiteralPath (Join-Path (Get-CodexHome $root37) 'AGENTS.md') -Raw -Encoding UTF8
+        Assert-Condition 'S37 repeated switch to critical is byte-identical' ($critRerun.ExitCode -eq 0 -and $agents37Rerun -ceq $agents37AfterCrit) $critRerun.Output
+
+        # 6. Switch back to worker
+        $workerResult = Invoke-StrategySwitch -Root $root37 -Strategy worker
+        Assert-Condition 'S37 switch back to worker succeeds' ($workerResult.ExitCode -eq 0) $workerResult.Output
+        $state37Worker = Get-InstallState $root37
+        Assert-Condition 'S37 state updated to worker strategy' ([string]$state37Worker.codexStrategy.selected -ceq 'worker') ''
+        $agents37Worker = Get-Content -LiteralPath (Join-Path (Get-CodexHome $root37) 'AGENTS.md') -Raw -Encoding UTF8
+        $rt37Worker = Get-AgentsRuntimeBlock -Text $agents37Worker
+        Assert-Condition 'S37 AGENTS.md runtime block updated to subagent_strategy = worker' ($rt37Worker.Strategy -ceq 'worker') $rt37Worker.Strategy
+
+        # 7. Multi-host strategy switch
+        foreach ($hostInfo in (Get-SwitchHosts)) {
+            $hCrit = Invoke-StrategySwitchWithHost -Root $root37 -Strategy critical -HostInfo $hostInfo
+            Assert-Condition "S37 $($hostInfo.Name) switch to critical succeeds" ($hCrit.ExitCode -eq 0) $hCrit.Output
+            $hWorker = Invoke-StrategySwitchWithHost -Root $root37 -Strategy worker -HostInfo $hostInfo
+            Assert-Condition "S37 $($hostInfo.Name) switch to worker succeeds" ($hWorker.ExitCode -eq 0) $hWorker.Output
+        }
+
+        # 8. Cross-selector preservation
+        Invoke-StrategySwitch -Root $root37 -Strategy critical | Out-Null
+        Invoke-BackendSwitch -Root $root37 -Backend native | Out-Null
+        $rtAfterBackend = Get-AgentsRuntimeBlock -Text (Get-Content -LiteralPath (Join-Path (Get-CodexHome $root37) 'AGENTS.md') -Raw -Encoding UTF8)
+        Assert-Condition 'S37 backend switch preserves active critical strategy' ($rtAfterBackend.Strategy -ceq 'critical' -and $rtAfterBackend.Backend -ceq 'native') ''
+        $stateAfterBackend = Get-InstallState $root37
+        Assert-Condition 'S37 backend switch preserves critical strategy in state' ([string]$stateAfterBackend.codexStrategy.selected -ceq 'critical') ''
+
+        Invoke-PolicySwitch -Root $root37 -Policy aggressive | Out-Null
+        $rtAfterPolicy = Get-AgentsRuntimeBlock -Text (Get-Content -LiteralPath (Join-Path (Get-CodexHome $root37) 'AGENTS.md') -Raw -Encoding UTF8)
+        Assert-Condition 'S37 policy switch preserves active critical strategy' ($rtAfterPolicy.Strategy -ceq 'critical' -and $rtAfterPolicy.Policy -ceq 'aggressive') ''
+        $stateAfterPolicy = Get-InstallState $root37
+        Assert-Condition 'S37 policy switch preserves critical strategy in state' ([string]$stateAfterPolicy.codexStrategy.selected -ceq 'critical') ''
+
+        # 9. Reinstall preserves strategy
+        Invoke-SafeInstall -Root $root37
+        $rtAfterReinstall = Get-AgentsRuntimeBlock -Text (Get-Content -LiteralPath (Join-Path (Get-CodexHome $root37) 'AGENTS.md') -Raw -Encoding UTF8)
+        Assert-Condition 'S37 safe reinstall preserves active critical strategy in AGENTS.md' ($rtAfterReinstall.Strategy -ceq 'critical') ''
+        $stateAfterReinstall = Get-InstallState $root37
+        Assert-Condition 'S37 safe reinstall preserves active critical strategy in state' ([string]$stateAfterReinstall.codexStrategy.selected -ceq 'critical') ''
+    }
+
+    $currentScenario = 38
+    if ($targetScenario -eq 0 -or $targetScenario -eq 38) {
+        Write-Host 'Scenario 38: SubAgents MCP canonical key ([mcp_servers.subagents]), tool names (subagents_*), and legacy alias migration' -ForegroundColor Cyan
+        $root38 = New-FixtureHome
+        $fixtures.Add($root38)
+
+        # 1. Config with canonical key [mcp_servers.subagents]
+        $canonicalMcpConfig = '[features]' + $nl +
+            'multi_agent = false' + $nl +
+            'fast_mode = true' + $nl + $nl +
+            '[agents]' + $nl +
+            'default_subagent_model = "test-model"' + $nl +
+            'default_subagent_reasoning_effort = "high"' + $nl + $nl +
+            '[mcp_servers.subagents]' + $nl +
+            'command = "subagents-bridge"' + $nl +
+            'args = ["--port", "4000"]' + $nl +
+            'enabled = true' + $nl
+
+        Write-FixtureFile -Path (Join-Path (Get-CodexHome $root38) 'config.toml') -Content $canonicalMcpConfig
+        Invoke-SafeInstall -Root $root38
+
+        # Verify state captures canonical key
+        $state38 = Get-InstallState $root38
+        $prior38 = @($state38.codexBackend.prior)
+        $mcpPrior = $prior38 | Where-Object { $_.path -eq 'mcp_servers.subagents.enabled' }
+        Assert-Condition 'S38 state captures canonical mcp_servers.subagents.enabled path' ($null -ne $mcpPrior -and $mcpPrior.present -eq $true -and $mcpPrior.value -ceq 'true') ''
+
+        # Native switch disables canonical subagents MCP table
+        $nativeSwitch38 = Invoke-BackendSwitch -Root $root38 -Backend native
+        Assert-Condition 'S38 native switch succeeds with canonical key' ($nativeSwitch38.ExitCode -eq 0) $nativeSwitch38.Output
+        $configNative38 = Read-Config $root38
+        Assert-Condition 'S38 native switch sets enabled = false under [mcp_servers.subagents]' ($configNative38 -match '(?ms)\[mcp_servers\.subagents\].*?enabled\s*=\s*false') $configNative38
+        Assert-Condition 'S38 native switch does not create legacy alias table' ($configNative38 -notmatch '\[mcp_servers\.deepseek-subagent\]') $configNative38
+
+        # Deepseek switch restores canonical subagents MCP table
+        $deepseekSwitch38 = Invoke-BackendSwitch -Root $root38 -Backend deepseek
+        Assert-Condition 'S38 deepseek switch succeeds with canonical key' ($deepseekSwitch38.ExitCode -eq 0) $deepseekSwitch38.Output
+        $configDeepseek38 = Read-Config $root38
+        Assert-Condition 'S38 deepseek switch restores enabled = true under [mcp_servers.subagents]' ($configDeepseek38 -match '(?ms)\[mcp_servers\.subagents\].*?enabled\s*=\s*true') $configDeepseek38
+
+        # Doctor check detects canonical SubAgents MCP
+        $docResult38 = Invoke-Doctor -Root $root38
+        Assert-Condition 'S38 doctor reports SubAgents MCP configured' ($docResult38.ExitCode -eq 0 -and $docResult38.Output -match '(?i)SubAgents MCP:\s*Configured') $docResult38.Output
+
+        # 2. Backward compatibility: existing config with legacy alias [mcp_servers.deepseek-subagent]
+        $root38Legacy = New-FixtureHome
+        $fixtures.Add($root38Legacy)
+        $legacyMcpConfig = '[features]' + $nl +
+            'multi_agent = false' + $nl + $nl +
+            '[mcp_servers.deepseek-subagent]' + $nl +
+            'command = "legacy-bridge"' + $nl +
+            'enabled = true' + $nl
+        Write-FixtureFile -Path (Join-Path (Get-CodexHome $root38Legacy) 'config.toml') -Content $legacyMcpConfig
+        Invoke-SafeInstall -Root $root38Legacy
+
+        # Native switch modifies existing legacy table in-place without breaking it
+        $nativeLegacy = Invoke-BackendSwitch -Root $root38Legacy -Backend native
+        Assert-Condition 'S38 native switch succeeds with legacy alias config' ($nativeLegacy.ExitCode -eq 0) $nativeLegacy.Output
+        $configNativeLegacy = Read-Config $root38Legacy
+        Assert-Condition 'S38 native switch sets enabled = false under legacy [mcp_servers.deepseek-subagent]' ($configNativeLegacy -match '(?ms)\[mcp_servers\.deepseek-subagent\].*?enabled\s*=\s*false') $configNativeLegacy
+        Assert-Condition 'S38 native switch does not create duplicate canonical table' ($configNativeLegacy -notmatch '\[mcp_servers\.subagents\]') $configNativeLegacy
+
+        # Deepseek switch restores legacy table
+        $deepseekLegacy = Invoke-BackendSwitch -Root $root38Legacy -Backend deepseek
+        Assert-Condition 'S38 deepseek switch restores legacy table' ($deepseekLegacy.ExitCode -eq 0 -and (Read-Config $root38Legacy) -match '(?ms)\[mcp_servers\.deepseek-subagent\].*?enabled\s*=\s*true') ''
+
+        # Doctor check detects SubAgents MCP via legacy alias
+        $docLegacy = Invoke-Doctor -Root $root38Legacy
+        Assert-Condition 'S38 doctor reports SubAgents MCP configured via legacy alias' ($docLegacy.ExitCode -eq 0 -and $docLegacy.Output -match '(?i)SubAgents MCP:\s*Configured') $docLegacy.Output
+    }
 }
 finally {
     foreach ($fixture in $fixtures) {

@@ -17,13 +17,18 @@ selected mode or an open gate requires it.
 - Without an active mode (`$workflows mode=<MODE>`), the system operates in the
   implicit user-facing state `ALINHAMENTO`: conversational no-write discussion, idea
   refinement, and doubts without workflow ceremony (no formal plan, spec, todo list,
-  approval gates, or delivery classification); do not narrate internal
-  routing/skills/tools (beyond a short notice if the platform requires it);
-  repository inspection occurs only when the answer materially depends on it (smallest
-  sufficient read); forbidden to trigger tools or activations known to create
-  workspace metadata or local state (if a read route requires mutation, fail closed
-  and respond without it); no file creation/edit/deletion, no tests/builds, no Git
-  index/commit, and no stateful mutation. Imperative verbs never infer a mode.
+  approval gates, or delivery classification); standard output in compact pt-BR
+  with short understanding confirmation; for noisy audio transcripts, normalize
+  obvious noise with explicit premises and ask only if material ambiguity alters
+  the answer or routing; do not narrate internal routing/skills/tools (beyond a
+  short notice if the platform requires it); repository inspection occurs only when
+  the answer materially depends on it (smallest sufficient read); conditional subagent
+  delegation is limited to inspection without mutation (somente leitura); forbidden to trigger tools or
+  activations known to create workspace metadata or local state (if a read route
+  requires mutation, fail closed and respond without it); no file creation/edit/deletion,
+  no tests/builds, no Git index/commit, and no stateful mutation. Imperative verbs
+  never infer a mode. When action is the next step, recommend the exact explicit
+  workflow mode.
 - An explicit workflow mode remains active for the same execution through
   unprefixed clarifications and follow-ups until its done gate, explicit
   cancellation, or explicit permitted replacement. Cancellation does not
@@ -43,8 +48,8 @@ selected mode or an open gate requires it.
 ## Division of work
 
 - Decompose, route, prioritize, synthesize, integrate, validate, and decide.
-  Delegation is governed by the two orthogonal selectors (`subagent_backend` and
-  `delegation_policy`); see `references/delegation.md`.
+  Delegation is governed by the orthogonal selectors (`subagent_backend`,
+  `delegation_policy`, and `subagent_strategy`); see `references/delegation.md`.
 - Under `balanced` (default; wall-clock optimization): parent directly performs
   cohesive, sequential, critical-path material work when delegation round-trip
   would not help; delegates for concrete independent parallelism, specialization,
@@ -55,14 +60,21 @@ selected mode or an open gate requires it.
   regions, test/review evidence, conflicts). Maintains one persistent track per
   cohesive front; no microdelegation; new track only for an independently
   acceptable deliverable.
+- Under `subagent_strategy`: `worker` (default) preserves the existing workflow
+  where worker subagents assist the main agent under the active delegation policy (worker mantém o fluxo atual);
+  `critical` requires that GPT and Gemini analyze independently, exchange evidence and
+  surface contradictions/gaps, and only then synthesize (análise independente rigorosa,
+  troca de evidências e contradições, lacunas, e posterior síntese GPT mandatória pelo parent),
+  with strict fencing, scope ownership, and no concurrent edit across agents (sem edição concorrente).
+  Strategy never grants write; under ALINHAMENTO, no-write rules strictly govern (vigora somente leitura).
 - Native mode uses native Codex subagents for delegated material fronts; each
   native spawn passes `model="gpt-5.6-luna"` and `reasoning_effort="max"`
   explicitly, states normal/default mode, and never selects Flash/Fast. Forbids
-  DeepSeek MCP.
-- DeepSeek mode uses `deepseek_spawn`/`deepseek_continue`/`deepseek_follow` for
+  SubAgents MCP.
+- Under technical backend `deepseek`, use SubAgents MCP (`subagents_spawn`/`subagents_continue`/`subagents_follow`; compatibilidade com aliases `deepseek_*`) for
   delegated material fronts — one agent per front, never duplicate a front, never
   repeat a delegated front locally. DeepSeek-specific daemon recovery is allowed
-  only in this selected mode and only under the MCP foundation exception.
+  only when this technical backend is selected and only under the MCP foundation exception.
   Forbids native work tools.
 - The parent owns vision: inspect the image yourself and pass a concise
   `visual_context` to the delegated agent (direct observations, visible
@@ -86,7 +98,7 @@ FRAME -> FANOUT -> COLLECT -> ACT -> VERIFY -> REVIEW -> DONE
 - COLLECT: consume a result when a gate depends on it or no useful work
   remains; consume every job and close each agent after integration.
 - ACT: decide from collected evidence; route defects back to the same front
-  via `deepseek_continue` (or native follow-up), re-plan, or stop.
+  via `subagents_continue` (or native follow-up), re-plan, or stop.
 - VERIFY: prove the affected behavior with deterministic validation; inspect the
   integrated diff.
 - REVIEW: after material write output in write modes, collect bounded operational proof on the frozen target when risk-triggered (live process/daemon/service, persistence/migration, concurrency/exactly-once, routing, external integration, or scale/volume), and run independent review over target and runtime evidence (`references/delivery-review.md`).
@@ -95,15 +107,15 @@ FRAME -> FANOUT -> COLLECT -> ACT -> VERIFY -> REVIEW -> DONE
 
 ## Backend tool semantics
 
-- In DeepSeek mode, `deepseek_spawn` opens one independent front;
-  `deepseek_continue` follows the same open front after a result, correction, or
-  review; and `deepseek_follow` consumes a result when a gate depends on it.
-- In DeepSeek mode, `deepseek_consult` is an exceptional snapshot of a
-  running agent and never a poll; `deepseek_abort` is only for an obsolete or
-  explicitly stopped front; `deepseek_close` retires an agent after its result
-  is consumed; and `deepseek_recover_result` is delivery recovery only.
-- A persistent DeepSeek lane normally continues the same open agent with
-  `deepseek_continue`, without `allow_respawn`. A DeepSeek correction after a
+- Under technical backend `deepseek` via SubAgents MCP, `subagents_spawn` opens one independent front;
+  `subagents_continue` follows the same open front after a result, correction, or
+  review; and `subagents_follow` consumes a result when a gate depends on it.
+- Under technical backend `deepseek`, `subagents_consult` is an exceptional snapshot of a
+  running agent and never a poll; `subagents_abort` is only for an obsolete or
+  explicitly stopped front; `subagents_close` retires an agent after its result
+  is consumed; and `subagents_recover_result` is delivery recovery only.
+- A persistent lane under technical backend DeepSeek normally continues the same open agent with
+  `subagents_continue`, without `allow_respawn`. A DeepSeek correction after a
   premature close is limited to `allow_respawn=true` for the same
   request/scope/cwd/ownership/model route, with a new session/agent with lineage,
   no new consent prompt, and never a fake continuation. A terminal result is
@@ -113,7 +125,7 @@ FRAME -> FANOUT -> COLLECT -> ACT -> VERIFY -> REVIEW -> DONE
   only allow recovery when all have proven durable spool/recovery; stale-running
   with absent daemon reconciles only with installed durable capacity.
 - In native mode, use native subagents with the same completion,
-  review, and no-fallback rules; do not contact the DeepSeek MCP.
+  review, and no-fallback rules; do not contact the SubAgents MCP.
 
 ## Completion contract
 
@@ -122,6 +134,14 @@ Completion contract: for every required job, the parent must wait for a
 do not send an `interruptive follow-up` or `replace` it. `interrupted`,
 `errored`, `timed out`, or `missing final response` means unavailable: keep
 the gate `open/BLOCKED`; do not use a `silent fallback`.
+
+Liveness and status contract:
+- 900s é apenas janela mínima e limite de espera (timeout window), nunca prova de morte do agente ou processo.
+- Consultar status/heartbeat/lease para verificar liveness antes de inferir indisponibilidade.
+- Takeover só é autorizado com morte provada do executor anterior; estado unknown bloqueia o avanço (gate open/BLOCKED).
+- Fence tokens, attempt counters e PID impedem stale writes em transições de execução.
+- Quiescência deve ser provada antes de liberar recursos ou abrir nova tentativa.
+- Sem fallback silencioso de rota, modelo ou provedor.
 
 Slices are designed to close terminally within the window. Upon timeout or
 missing closure (ausência de fechamento), continue on the same track (mesma trilha):

@@ -90,6 +90,12 @@ function Read-ExistingInstallState {
         }
         Assert-CodexDelegationState -DelegationState $state.codexDelegation
     }
+    if ($state.PSObject.Properties.Name -contains 'codexStrategy') {
+        if ($null -eq $state.codexStrategy) {
+            throw "Install state contains invalid codexStrategy property; switching is blocked."
+        }
+        Assert-CodexStrategyState -StrategyState $state.codexStrategy
+    }
     if ([string]$state.schemaVersion -eq '5') {
         if (-not ($state.PSObject.Properties.Name -contains 'codexBackend') -or $null -eq $state.codexBackend) {
             throw "Schema 5 install state is missing required codexBackend; switching is blocked."
@@ -175,12 +181,21 @@ if ($Status) {
     else {
         throw 'Install state is missing codexDelegation.'
     }
+    $stateStrategy = if ($existingState.PSObject.Properties.Name -contains 'codexStrategy') {
+        [string]$existingState.codexStrategy.selected
+    }
+    else {
+        'worker'
+    }
 
     if ($stateBackend -notin @('native', 'deepseek')) {
         throw "Install state has invalid selected backend: $stateBackend"
     }
     if ($statePolicy -notin @('balanced', 'aggressive')) {
         throw "Install state has invalid selected policy: $statePolicy"
+    }
+    if ($stateStrategy -notin @('worker', 'critical')) {
+        throw "Install state has invalid selected strategy: $stateStrategy"
     }
 
     $agentsText = Get-Content -LiteralPath $agentsMdPath -Raw -Encoding UTF8
@@ -194,12 +209,16 @@ if ($Status) {
     if ($rtInfo.Policy -cne $statePolicy) {
         throw "Active delegation policy mismatch: state has '$statePolicy', but AGENTS.md runtime block has '$($rtInfo.Policy)'."
     }
+    if ($rtInfo.Strategy -cne $stateStrategy) {
+        throw "Active subagent strategy mismatch: state has '$stateStrategy', but AGENTS.md runtime block has '$($rtInfo.Strategy)'."
+    }
 
     $configText = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8
     Assert-CodexBackendMatrix -Text $configText -Backend $stateBackend -BackendState $existingState.codexBackend | Out-Null
 
     Write-Host "Active subagent backend: $stateBackend"
     Write-Host "Active delegation policy: $statePolicy"
+    Write-Host "Active subagent strategy: $stateStrategy"
     Write-Host "Codex home: $CodexHome"
     return
 }
@@ -260,7 +279,27 @@ else {
 Assert-CodexBackendState -BackendState $backendState
 Assert-CodexBackendMatrix -Text $configText -Backend $currentBackend -BackendState $backendState | Out-Null
 
-$nextAgentsText = Set-CodexAgentsManagedBlockText -ExistingAgentsText $existingAgentsText -TemplateText $templateText -Backend $currentBackend -Policy $Policy
+$currentStrategy = if ($null -ne $existingState -and ($existingState.PSObject.Properties.Name -contains 'codexStrategy')) {
+    Assert-CodexStrategyState -StrategyState $existingState.codexStrategy
+    [string]$existingState.codexStrategy.selected
+}
+else {
+    $rtInfo = Get-CodexRuntimeBlockInfo -Text $existingAgentsText
+    if ($rtInfo.Present -and -not [string]::IsNullOrWhiteSpace($rtInfo.Strategy)) {
+        if ($rtInfo.Strategy -notin @('worker', 'critical')) {
+            throw "Invalid subagent strategy '$($rtInfo.Strategy)' in AGENTS.md runtime block."
+        }
+        $rtInfo.Strategy
+    }
+    else {
+        'worker'
+    }
+}
+if ($currentStrategy -notin @('worker', 'critical')) {
+    throw "Invalid subagent strategy '$currentStrategy'; switching is blocked."
+}
+
+$nextAgentsText = Set-CodexAgentsManagedBlockText -ExistingAgentsText $existingAgentsText -TemplateText $templateText -Backend $currentBackend -Policy $Policy -Strategy $currentStrategy
 $agentsChanged = $nextAgentsText -cne $existingAgentsText
 
 $nextAgentsHash = if ($agentsChanged) {
@@ -283,8 +322,12 @@ $nextDelegationState = [ordered]@{
 }
 Assert-CodexDelegationState -DelegationState $nextDelegationState
 
+$nextStrategyState = New-CodexStrategyState -ExistingInstallState $existingState
+Assert-CodexStrategyState -StrategyState $nextStrategyState
+
 $stateNeedsWrite = $null -eq $existingState -or
     -not ($existingState.PSObject.Properties.Name -contains 'codexDelegation') -or
+    -not ($existingState.PSObject.Properties.Name -contains 'codexStrategy') -or
     [string]$existingState.schemaVersion -ne '5' -or
     [string]$existingState.codexDelegation.selected -cne $Policy -or
     $null -eq $trackedAgents -or
@@ -332,6 +375,7 @@ try {
         }
         $nextState.codexBackend = $backendState
         $nextState.codexDelegation = $nextDelegationState
+        $nextState.codexStrategy = $nextStrategyState
 
         if ($preExisting[$statePath]) {
             $b2 = Backup-BackendFile -Path $statePath -BackupRoot $backupRoot
@@ -345,7 +389,7 @@ try {
 
     # Verify written runtime block
     if (Test-Path -LiteralPath $agentsMdPath -PathType Leaf) {
-        Assert-CodexAgentsRuntimeBlock -Text (Get-Content -LiteralPath $agentsMdPath -Raw -Encoding UTF8) -Backend $currentBackend -Policy $Policy
+        Assert-CodexAgentsRuntimeBlock -Text (Get-Content -LiteralPath $agentsMdPath -Raw -Encoding UTF8) -Backend $currentBackend -Policy $Policy -Strategy $currentStrategy
     }
 }
 catch {
@@ -386,6 +430,7 @@ else {
     Write-Host 'Aggressive policy: optimizes parent token offload. All material read/research/write/test/review work is delegated to the selected backend.'
 }
 Write-Host "Active subagent backend: $currentBackend"
+Write-Host "Active subagent strategy: $currentStrategy"
 Write-Host 'Scope: new Codex tasks and sessions.'
 Write-Host 'Already-running tasks are unchanged. No restart or MCP was contacted.'
 if ($agentsChanged -or $stateNeedsWrite) {

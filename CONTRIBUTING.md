@@ -29,7 +29,7 @@ mudança de contrato deve manter código, documentação e validação alinhados
 - A interface de workflow é $workflows; não crie um segundo prefixo.
 - skills/workflows/SKILL.md é a única política detalhada; não duplique o
   contrato em AGENTS.md, na documentação ou em novas referências.
-- O executor principal é o DeepSeek Sub-Agent MCP; o parent GPT delega,
+- O executor de sub-agentes é o SubAgents MCP (ou subagentes nativos conforme o backend selecionado); o parent GPT delega,
   integra, valida e decide.
 - Toda mudança autorizada precisa de preflight, validação proporcional e
   inspeção do diff integrado.

@@ -155,6 +155,12 @@ function Assert-InstallState {
         }
         Assert-CodexDelegationState -DelegationState $State.codexDelegation
     }
+    if ($State.PSObject.Properties.Name -contains 'codexStrategy') {
+        if ($null -eq $State.codexStrategy) {
+            throw "Install state contains an invalid codexStrategy property."
+        }
+        Assert-CodexStrategyState -StrategyState $State.codexStrategy
+    }
 
     if ($schema -ge 5) {
         if (-not ($State.PSObject.Properties.Name -contains 'codexBackend') -or $null -eq $State.codexBackend) {

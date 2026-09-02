@@ -144,6 +144,12 @@ function Assert-InstallState {
         }
         Assert-CodexDelegationState -DelegationState $State.codexDelegation
     }
+    if ($State.PSObject.Properties.Name -contains 'codexStrategy') {
+        if ($null -eq $State.codexStrategy) {
+            throw "Install state contains an invalid codexStrategy property."
+        }
+        Assert-CodexStrategyState -StrategyState $State.codexStrategy
+    }
 
     if ($schema -ge 5) {
         if (-not ($State.PSObject.Properties.Name -contains 'codexBackend') -or $null -eq $State.codexBackend) {
@@ -466,9 +472,10 @@ if ($installedProfile -eq 'safe') {
 
     $expectedBackend = if ($null -ne $state -and ($state.PSObject.Properties.Name -contains 'codexBackend')) { [string]$state.codexBackend.selected } else { 'deepseek' }
     $expectedPolicy = if ($null -ne $state -and ($state.PSObject.Properties.Name -contains 'codexDelegation')) { [string]$state.codexDelegation.selected } else { 'balanced' }
+    $expectedStrategy = if ($null -ne $state -and ($state.PSObject.Properties.Name -contains 'codexStrategy')) { [string]$state.codexStrategy.selected } else { 'worker' }
     try {
-        Assert-CodexAgentsRuntimeBlock -Text $agentsMdContent -Backend $expectedBackend -Policy $expectedPolicy
-        Write-Check -Name 'Managed AGENTS runtime' -Passed $true -Detail "Exact runtime block matches (backend=$expectedBackend, policy=$expectedPolicy)"
+        Assert-CodexAgentsRuntimeBlock -Text $agentsMdContent -Backend $expectedBackend -Policy $expectedPolicy -Strategy $expectedStrategy
+        Write-Check -Name 'Managed AGENTS runtime' -Passed $true -Detail "Exact runtime block matches (backend=$expectedBackend, policy=$expectedPolicy, strategy=$expectedStrategy)"
     }
     catch {
         Write-Check -Name 'Managed AGENTS runtime' -Passed $false -Detail $_.Exception.Message
@@ -711,13 +718,15 @@ else {
     Write-Check -Name 'MCP registrations' -Passed $true -Detail "No legacy registrations ($($mcpServers.Count) server(s) configured)"
 }
 
-$currentMcp = $mcpServers | Where-Object { $_.Name -eq 'deepseek-subagent' }
+$canonicalMcp = $mcpServers | Where-Object { $_.Name -eq 'subagents' }
+$legacyMcp = $mcpServers | Where-Object { $_.Name -eq 'deepseek-subagent' }
+$currentMcp = if ($null -ne $canonicalMcp) { $canonicalMcp } else { $legacyMcp }
 if ($null -eq $currentMcp) {
     if ($selectedBackend -eq 'deepseek') {
-        Write-Check -Name 'DeepSeek Sub-Agent MCP' -Passed $false -Detail 'Not configured in config.toml'
+        Write-Check -Name 'SubAgents MCP' -Passed $false -Detail 'Not configured in config.toml'
     }
     else {
-        Write-Check -Name 'DeepSeek Sub-Agent MCP' -Passed $true -Detail 'Not active (native subagent backend selected)'
+        Write-Check -Name 'SubAgents MCP' -Passed $true -Detail 'Not active (native subagent backend selected)'
     }
 }
 else {
@@ -727,10 +736,10 @@ else {
         $enabledDetail = if ($enabledMatch.Success) { "; enabled=$($enabledMatch.Groups[1].Value)" } else { '; enabled=default' }
         $detail = if ([string]::IsNullOrWhiteSpace($mcStatus.Entry)) { 'Configured' } else { "Configured; entry script present: $($mcStatus.Entry)" }
         $detail += $enabledDetail
-        Write-Check -Name 'DeepSeek Sub-Agent MCP' -Passed $true -Detail $detail
+        Write-Check -Name 'SubAgents MCP' -Passed $true -Detail $detail
     }
     else {
-        Write-Check -Name 'DeepSeek Sub-Agent MCP' -Passed $false -Detail ("Configured but entry script is missing: {0}" -f ($mcStatus.Missing -join '; '))
+        Write-Check -Name 'SubAgents MCP' -Passed $false -Detail ("Configured but entry script is missing: {0}" -f ($mcStatus.Missing -join '; '))
     }
 }
 

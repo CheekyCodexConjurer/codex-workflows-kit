@@ -151,8 +151,10 @@ $script:RemovedParents = New-Object System.Collections.Generic.List[string]
 $script:PriorFeaturesRecord = $null
 $script:PriorBackendState = $null
 $script:PriorDelegationState = $null
+$script:PriorStrategyState = $null
 $script:SelectedBackend = 'deepseek'
 $script:SelectedPolicy = 'balanced'
+$script:SelectedStrategy = 'worker'
 $script:FeaturesGateApplied = $false
 $script:FeaturesPrior = [ordered]@{ present = $false; value = $null }
 $script:ConfigModified = $false
@@ -223,6 +225,12 @@ function Assert-InstallState {
             throw "Install state contains an invalid codexDelegation property."
         }
         Assert-CodexDelegationState -DelegationState $State.codexDelegation
+    }
+    if ($State.PSObject.Properties.Name -contains 'codexStrategy') {
+        if ($null -eq $State.codexStrategy) {
+            throw "Install state contains an invalid codexStrategy property."
+        }
+        Assert-CodexStrategyState -StrategyState $State.codexStrategy
     }
 
     if ($schema -ge 5) {
@@ -308,6 +316,11 @@ function Initialize-PriorState {
                 $script:PriorDelegationState = $state.codexDelegation
                 $script:SelectedPolicy = [string]$state.codexDelegation.selected
             }
+            if ($state.PSObject.Properties.Name -contains 'codexStrategy') {
+                Assert-CodexStrategyState -StrategyState $state.codexStrategy
+                $script:PriorStrategyState = $state.codexStrategy
+                $script:SelectedStrategy = [string]$state.codexStrategy.selected
+            }
         }
         catch {
             throw "Previous install state is invalid: $($_.Exception.Message)"
@@ -325,6 +338,11 @@ function Initialize-PriorState {
     if ($null -eq $script:PriorDelegationState) {
         $script:PriorDelegationState = New-CodexDelegationState -ExistingInstallState $existingState
         $script:SelectedPolicy = [string]$script:PriorDelegationState.selected
+    }
+
+    if ($null -eq $script:PriorStrategyState) {
+        $script:PriorStrategyState = New-CodexStrategyState -ExistingInstallState $existingState
+        $script:SelectedStrategy = [string]$script:PriorStrategyState.selected
     }
 }
 
@@ -495,7 +513,7 @@ function Install-GlobalAgentsFile {
         throw "An unmanaged AGENTS.md already exists. Review it and use -Force to replace it: $agentsMdDest"
     }
 
-    $content = Set-CodexAgentsManagedBlockText -ExistingAgentsText $existing -TemplateText $raw -Backend $script:SelectedBackend -Policy $script:SelectedPolicy
+    $content = Set-CodexAgentsManagedBlockText -ExistingAgentsText $existing -TemplateText $raw -Backend $script:SelectedBackend -Policy $script:SelectedPolicy -Strategy $script:SelectedStrategy
 
     Install-ManagedContent -Destination $agentsMdDest -Content $content
 }
@@ -939,6 +957,7 @@ function Save-InstallState {
 
     $backendState = $script:PriorBackendState
     $delegationState = $script:PriorDelegationState
+    $strategyState = $script:PriorStrategyState
 
     $state = [ordered]@{
         schemaVersion = 5
@@ -950,6 +969,7 @@ function Save-InstallState {
         codexFeaturesPrior = $featuresPrior
         codexBackend = $backendState
         codexDelegation = $delegationState
+        codexStrategy = $strategyState
     }
 
     Install-ManagedContent -Destination $statePath -Content (($state | ConvertTo-Json -Depth 8) + $nl)
@@ -1069,6 +1089,8 @@ if ($Profile -eq 'safe' -and -not $WhatIfPreference) {
     $policyLabel = if ($null -ne $script:PriorDelegationState) { [string]$script:PriorDelegationState.selected } else { $script:SelectedPolicy }
     Write-Host "Subagent backend: $backendLabel"
     Write-Host "Delegation policy: $policyLabel"
+    $strategyLabel = if ($null -ne $script:PriorStrategyState) { [string]$script:PriorStrategyState.selected } else { $script:SelectedStrategy }
+    Write-Host "Subagent strategy: $strategyLabel"
     Write-Host "Backend matrix: $backendLabel active in $configPath"
 }
 if ($InstallAhk) { Write-Host "AHK: $AhkDestination" }

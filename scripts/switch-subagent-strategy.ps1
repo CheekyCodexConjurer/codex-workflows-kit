@@ -1,8 +1,8 @@
 [CmdletBinding(DefaultParameterSetName = 'Switch')]
 param(
     [Parameter(ParameterSetName = 'Switch', Mandatory = $true, Position = 0)]
-    [ValidateSet('native', 'deepseek')]
-    [string]$Backend,
+    [ValidateSet('worker', 'critical')]
+    [string]$Strategy,
 
     [Parameter(ParameterSetName = 'Status', Mandatory = $true)]
     [switch]$Status,
@@ -28,7 +28,7 @@ $configPath = Join-Path $CodexHome 'config.toml'
 $agentsMdPath = Join-Path $CodexHome 'AGENTS.md'
 $templatePath = Join-Path $repo 'codex\AGENTS.md'
 $statePath = Join-Path $CodexHome 'codex-workflows-kit\install-state.json'
-$backupRoot = Join-Path $CodexHome ('backups\codex-workflows-kit\backend-switch-{0}' -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+$backupRoot = Join-Path $CodexHome ('backups\codex-workflows-kit\strat-{0}' -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
 
 function Get-StateEntryByPath {
     param([object]$State, [Parameter(Mandatory)][string]$TargetFilePath)
@@ -109,30 +109,30 @@ function Read-ExistingInstallState {
     return $state
 }
 
-function Get-UpdatedFilesWithEntries {
+function Get-UpdatedFilesWithEntry {
     param(
         [object]$State,
-        [Parameter(Mandatory)][hashtable]$UpdatedMap
+        [Parameter(Mandatory)][string]$FilePath,
+        [Parameter(Mandatory)][string]$FileHash
     )
 
     $files = New-Object System.Collections.Generic.List[object]
-    $seen = @{}
+    $found = $false
+    $fullFilePath = [IO.Path]::GetFullPath($FilePath)
     if ($null -ne $State -and $State.PSObject.Properties.Name -contains 'files') {
         foreach ($entry in @($State.files)) {
             if ($null -eq $entry) { continue }
             $path = [IO.Path]::GetFullPath([string]$entry.path)
             $hash = [string]$entry.sha256
-            if ($UpdatedMap.ContainsKey($path)) {
-                $hash = $UpdatedMap[$path]
-                $seen[$path] = $true
+            if ($path -eq $fullFilePath) {
+                $hash = $FileHash
+                $found = $true
             }
             $files.Add([ordered]@{ path = $path; sha256 = $hash })
         }
     }
-    foreach ($path in $UpdatedMap.Keys) {
-        if (-not $seen.ContainsKey($path)) {
-            $files.Add([ordered]@{ path = $path; sha256 = $UpdatedMap[$path] })
-        }
+    if (-not $found) {
+        $files.Add([ordered]@{ path = $fullFilePath; sha256 = $FileHash })
     }
     return @($files.ToArray())
 }
@@ -223,13 +223,7 @@ if ($Status) {
     return
 }
 
-# --- Backend Switch ---
-$configText = if (Test-Path -LiteralPath $configPath -PathType Leaf) {
-    Get-Content -LiteralPath $configPath -Raw -Encoding UTF8
-}
-else {
-    ''
-}
+# --- Strategy Switch ---
 $existingAgentsText = if (Test-Path -LiteralPath $agentsMdPath -PathType Leaf) {
     Get-Content -LiteralPath $agentsMdPath -Raw -Encoding UTF8
 }
@@ -238,27 +232,37 @@ else {
 }
 $templateText = Get-Content -LiteralPath $templatePath -Raw -Encoding UTF8
 
-$trackedConfig = Get-StateEntryByPath -State $existingState -TargetFilePath $configPath
-$currentConfigHash = Get-BackendFileHash -Path $configPath
-
 $trackedAgents = Get-StateEntryByPath -State $existingState -TargetFilePath $agentsMdPath
 $currentAgentsHash = Get-BackendFileHash -Path $agentsMdPath
 if ($null -ne $trackedAgents -and $null -ne $currentAgentsHash -and $currentAgentsHash -cne [string]$trackedAgents.sha256) {
     throw "Configuration drift detected at $agentsMdPath; review the user change before switching."
 }
 
-$snapshot = Get-BackendConfigSnapshot -Text $configText
-$backendState = New-CodexBackendState -Snapshot $snapshot -ExistingInstallState $existingState
-if ($null -ne $existingState -and ($existingState.PSObject.Properties.Name -contains 'codexBackend')) {
-    $currentSelected = [string]$backendState.selected
-    try {
-        Assert-CodexBackendMatrix -Text $configText -Backend $currentSelected -BackendState $backendState | Out-Null
+# Determine active backend
+$currentBackend = if ($null -ne $existingState -and ($existingState.PSObject.Properties.Name -contains 'codexBackend')) {
+    Assert-CodexBackendState -BackendState $existingState.codexBackend
+    [string]$existingState.codexBackend.selected
+}
+else {
+    $rtInfo = Get-CodexRuntimeBlockInfo -Text $existingAgentsText
+    if ($rtInfo.Present -and -not [string]::IsNullOrWhiteSpace($rtInfo.Backend)) {
+        if ($rtInfo.Backend -notin @('native', 'deepseek')) {
+            throw "Invalid subagent backend '$($rtInfo.Backend)' in AGENTS.md runtime block."
+        }
+        $rtInfo.Backend
     }
-    catch {
-        throw "Configuration drift detected at $configPath; review the user change before switching: $($_.Exception.Message)"
+    elseif ($null -eq $existingState -or [int]$existingState.schemaVersion -lt 5) {
+        'deepseek'
+    }
+    else {
+        throw 'Install state is missing backend selector.'
     }
 }
+if ($currentBackend -notin @('native', 'deepseek')) {
+    throw "Invalid subagent backend '$currentBackend'; switching is blocked."
+}
 
+# Determine active policy
 $currentPolicy = if ($null -ne $existingState -and ($existingState.PSObject.Properties.Name -contains 'codexDelegation')) {
     Assert-CodexDelegationState -DelegationState $existingState.codexDelegation
     [string]$existingState.codexDelegation.selected
@@ -282,62 +286,26 @@ if ($currentPolicy -notin @('balanced', 'aggressive')) {
     throw "Invalid delegation policy '$currentPolicy'; switching is blocked."
 }
 
-$currentStrategy = if ($null -ne $existingState -and ($existingState.PSObject.Properties.Name -contains 'codexStrategy')) {
-    Assert-CodexStrategyState -StrategyState $existingState.codexStrategy
-    [string]$existingState.codexStrategy.selected
+$configText = if (Test-Path -LiteralPath $configPath -PathType Leaf) {
+    Get-Content -LiteralPath $configPath -Raw -Encoding UTF8
 }
 else {
-    $rtInfo = Get-CodexRuntimeBlockInfo -Text $existingAgentsText
-    if ($rtInfo.Present -and -not [string]::IsNullOrWhiteSpace($rtInfo.Strategy)) {
-        if ($rtInfo.Strategy -notin @('worker', 'critical')) {
-            throw "Invalid subagent strategy '$($rtInfo.Strategy)' in AGENTS.md runtime block."
-        }
-        $rtInfo.Strategy
-    }
-    else {
-        'worker'
-    }
-}
-if ($currentStrategy -notin @('worker', 'critical')) {
-    throw "Invalid subagent strategy '$currentStrategy'; switching is blocked."
+    ''
 }
 
-$nextConfigText = Set-CodexBackendConfigText -Text $configText -Backend $Backend -BackendState $backendState
-$configChanged = $nextConfigText -cne $configText
-
-$nextBackendState = [ordered]@{
-    version = 1
-    selected = $Backend
-    prior = @(
-        foreach ($definition in (Get-BackendKeyDefinitions)) {
-            Get-BackendPriorRecord -BackendState $backendState -Path $definition.Path
-        }
-    )
-}
-Assert-CodexBackendState -BackendState $nextBackendState
-
-$nextDelegationState = New-CodexDelegationState -ExistingInstallState $existingState
-Assert-CodexDelegationState -DelegationState $nextDelegationState
-
-$nextStrategyState = New-CodexStrategyState -ExistingInstallState $existingState
-Assert-CodexStrategyState -StrategyState $nextStrategyState
-
-$nextConfigHash = if ($configChanged) {
-    $sha = [System.Security.Cryptography.SHA256]::Create()
-    try {
-        $bytes = [Text.Encoding]::UTF8.GetBytes($nextConfigText)
-        [BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-', '')
-    }
-    finally {
-        $sha.Dispose()
-    }
+$backendState = if ($null -ne $existingState -and ($existingState.PSObject.Properties.Name -contains 'codexBackend')) {
+    $existingState.codexBackend
 }
 else {
-    $currentConfigHash
+    $snap = Get-BackendConfigSnapshot -Text $configText
+    New-CodexBackendState -Snapshot $snap -ExistingInstallState $existingState
 }
+Assert-CodexBackendState -BackendState $backendState
+Assert-CodexBackendMatrix -Text $configText -Backend $currentBackend -BackendState $backendState | Out-Null
 
-$nextAgentsText = Set-CodexAgentsManagedBlockText -ExistingAgentsText $existingAgentsText -TemplateText $templateText -Backend $Backend -Policy $currentPolicy -Strategy $currentStrategy
+$nextAgentsText = Set-CodexAgentsManagedBlockText -ExistingAgentsText $existingAgentsText -TemplateText $templateText -Backend $currentBackend -Policy $currentPolicy -Strategy $Strategy
 $agentsChanged = $nextAgentsText -cne $existingAgentsText
+
 $nextAgentsHash = if ($agentsChanged) {
     $sha = [System.Security.Cryptography.SHA256]::Create()
     try {
@@ -352,38 +320,30 @@ else {
     $currentAgentsHash
 }
 
+$nextStrategyState = [ordered]@{
+    version = 1
+    selected = $Strategy
+}
+Assert-CodexStrategyState -StrategyState $nextStrategyState
+
 $stateNeedsWrite = $null -eq $existingState -or
-    -not ($existingState.PSObject.Properties.Name -contains 'codexBackend') -or
-    -not ($existingState.PSObject.Properties.Name -contains 'codexDelegation') -or
     -not ($existingState.PSObject.Properties.Name -contains 'codexStrategy') -or
     [string]$existingState.schemaVersion -ne '5' -or
-    [string]$existingState.codexBackend.selected -cne $Backend -or
-    $null -eq $trackedConfig -or [string]$trackedConfig.sha256 -cne [string]$nextConfigHash -or
-    $null -eq $trackedAgents -or [string]$trackedAgents.sha256 -cne [string]$nextAgentsHash
+    [string]$existingState.codexStrategy.selected -cne $Strategy -or
+    $null -eq $trackedAgents -or
+    [string]$trackedAgents.sha256 -cne [string]$nextAgentsHash
 
 $preExisting = @{
-    $configPath = Test-Path -LiteralPath $configPath -PathType Leaf
     $agentsMdPath = Test-Path -LiteralPath $agentsMdPath -PathType Leaf
     $statePath = Test-Path -LiteralPath $statePath -PathType Leaf
 }
 $newlyCreatedFiles = New-Object System.Collections.Generic.List[string]
 $backedUpFiles = @{}
 try {
-    if ($configChanged) {
-        if ($preExisting[$configPath]) {
-            $bConfig = Backup-BackendFile -Path $configPath -BackupRoot $backupRoot
-            if ($null -ne $bConfig) { $backedUpFiles[$configPath] = $bConfig }
-        }
-        else {
-            $newlyCreatedFiles.Add($configPath)
-        }
-        Write-BackendUtf8NoBom -Path $configPath -Content $nextConfigText
-    }
-
     if ($agentsChanged) {
         if ($preExisting[$agentsMdPath]) {
-            $bAgents = Backup-BackendFile -Path $agentsMdPath -BackupRoot $backupRoot
-            if ($null -ne $bAgents) { $backedUpFiles[$agentsMdPath] = $bAgents }
+            $b1 = Backup-BackendFile -Path $agentsMdPath -BackupRoot $backupRoot
+            if ($null -ne $b1) { $backedUpFiles[$agentsMdPath] = $b1 }
         }
         else {
             $newlyCreatedFiles.Add($agentsMdPath)
@@ -404,26 +364,27 @@ try {
             $nextState.profile = 'safe'
         }
         $nextState.installedAtUtc = [datetime]::UtcNow.ToString('o')
-        $updateMap = @{}
-        if ($null -ne $nextConfigHash) { $updateMap[[IO.Path]::GetFullPath($configPath)] = $nextConfigHash }
-        if ($null -ne $nextAgentsHash) { $updateMap[[IO.Path]::GetFullPath($agentsMdPath)] = $nextAgentsHash }
-        $nextState.files = @(Get-UpdatedFilesWithEntries -State $existingState -UpdatedMap $updateMap)
+        $nextState.files = @(Get-UpdatedFilesWithEntry -State $existingState -FilePath $agentsMdPath -FileHash $nextAgentsHash)
         $nextState.pendingFiles = @(Get-ExistingPendingFiles -State $existingState)
-
-        $multiPrior = Get-BackendPriorRecord -BackendState $nextBackendState -Path 'features.multi_agent'
+        $multiPrior = Get-BackendPriorRecord -BackendState $backendState -Path 'features.multi_agent'
         $nextState.codexFeaturesPrior = [ordered]@{
             multi_agent = [ordered]@{
                 present = [bool]$multiPrior.present
                 value = if ([bool]$multiPrior.present) { [string]$multiPrior.value } else { $null }
             }
         }
-        $nextState.codexBackend = $nextBackendState
-        $nextState.codexDelegation = $nextDelegationState
+        $nextState.codexBackend = $backendState
+        $nextState.codexDelegation = if ($null -ne $existingState -and ($existingState.PSObject.Properties.Name -contains 'codexDelegation')) {
+            $existingState.codexDelegation
+        }
+        else {
+            New-CodexDelegationState -ExistingInstallState $existingState
+        }
         $nextState.codexStrategy = $nextStrategyState
 
         if ($preExisting[$statePath]) {
-            $bState = Backup-BackendFile -Path $statePath -BackupRoot $backupRoot
-            if ($null -ne $bState) { $backedUpFiles[$statePath] = $bState }
+            $b2 = Backup-BackendFile -Path $statePath -BackupRoot $backupRoot
+            if ($null -ne $b2) { $backedUpFiles[$statePath] = $b2 }
         }
         else {
             $newlyCreatedFiles.Add($statePath)
@@ -431,12 +392,9 @@ try {
         Write-BackendUtf8NoBom -Path $statePath -Content (($nextState | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
     }
 
-    # Verify written surfaces
-    if (Test-Path -LiteralPath $configPath -PathType Leaf) {
-        Assert-CodexBackendMatrix -Text (Get-Content -LiteralPath $configPath -Raw -Encoding UTF8) -Backend $Backend -BackendState $nextBackendState | Out-Null
-    }
+    # Verify written runtime block
     if (Test-Path -LiteralPath $agentsMdPath -PathType Leaf) {
-        Assert-CodexAgentsRuntimeBlock -Text (Get-Content -LiteralPath $agentsMdPath -Raw -Encoding UTF8) -Backend $Backend -Policy $currentPolicy -Strategy $currentStrategy
+        Assert-CodexAgentsRuntimeBlock -Text (Get-Content -LiteralPath $agentsMdPath -Raw -Encoding UTF8) -Backend $currentBackend -Policy $currentPolicy -Strategy $Strategy
     }
 }
 catch {
@@ -464,25 +422,25 @@ catch {
         }
     }
     if ($rollbackFailed) {
-        throw "Backend switch failed and rollback was incomplete: $($_.Exception.Message)"
+        throw "Strategy switch failed and rollback was incomplete: $($_.Exception.Message)"
     }
-    throw "Backend switch failed and was rolled back: $($_.Exception.Message)"
+    throw "Strategy switch failed and was rolled back: $($_.Exception.Message)"
 }
 
-Write-Host "Selected subagent backend: $Backend"
-if ($Backend -ceq 'native') {
-    Write-Host 'Native children: model="gpt-5.6-luna", reasoning_effort="max", normal/default mode; Fast mode disabled.'
+Write-Host "Selected subagent strategy: $Strategy"
+if ($Strategy -ceq 'worker') {
+    Write-Host 'Worker strategy: worker subagents assist the main agent under the active delegation policy.'
 }
 else {
-    Write-Host 'DeepSeek/Gemini bridge route restored from its captured configuration values.'
+    Write-Host 'Critical strategy: critical analysis and verification with fencing and independent review.'
 }
+Write-Host "Active subagent backend: $currentBackend"
 Write-Host "Active delegation policy: $currentPolicy"
-Write-Host "Active subagent strategy: $currentStrategy"
 Write-Host 'Scope: new Codex tasks and sessions.'
 Write-Host 'Already-running tasks are unchanged. No restart or MCP was contacted.'
-if ($configChanged -or $agentsChanged -or $stateNeedsWrite) {
+if ($agentsChanged -or $stateNeedsWrite) {
     Write-Host "Configuration and routing state updated under: $CodexHome"
 }
 else {
-    Write-Host 'The selected backend was already active; no files changed.'
+    Write-Host 'The selected subagent strategy was already active; no files changed.'
 }

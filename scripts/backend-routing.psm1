@@ -5,7 +5,7 @@ $script:BackendKeyDefinitions = @(
     [ordered]@{ Path = 'features.fast_mode'; Table = 'features'; Key = 'fast_mode'; NativeValue = 'false'; ValueKind = 'bool' },
     [ordered]@{ Path = 'agents.default_subagent_model'; Table = 'agents'; Key = 'default_subagent_model'; NativeValue = '"gpt-5.6-luna"'; ValueKind = 'string' },
     [ordered]@{ Path = 'agents.default_subagent_reasoning_effort'; Table = 'agents'; Key = 'default_subagent_reasoning_effort'; NativeValue = '"max"'; ValueKind = 'string' },
-    [ordered]@{ Path = 'mcp_servers.deepseek-subagent.enabled'; Table = 'mcp_servers.deepseek-subagent'; Key = 'enabled'; NativeValue = 'false'; ValueKind = 'bool' }
+    [ordered]@{ Path = 'mcp_servers.subagents.enabled'; Table = 'mcp_servers.subagents'; Key = 'enabled'; NativeValue = 'false'; ValueKind = 'bool'; AliasPath = 'mcp_servers.deepseek-subagent.enabled'; AliasTable = 'mcp_servers.deepseek-subagent' }
 )
 
 function Get-BackendKeyDefinitions {
@@ -99,9 +99,22 @@ function Get-BackendConfigSnapshot {
 
     $records = [ordered]@{}
     foreach ($definition in $script:BackendKeyDefinitions) {
-        $table = if ($tables.ContainsKey($definition.Table)) { $tables[$definition.Table] } else { $null }
+        $matchedTable = $null
+        $table = if ($tables.ContainsKey($definition.Table)) {
+            $matchedTable = $definition.Table
+            $tables[$definition.Table]
+        }
+        elseif ($definition.Contains('AliasTable') -and $tables.ContainsKey($definition.AliasTable)) {
+            $matchedTable = $definition.AliasTable
+            $tables[$definition.AliasTable]
+        }
+        else { $null }
+
+        $resolvedTable = if ($null -ne $matchedTable) { $matchedTable } else { $definition.Table }
         $record = [ordered]@{
             path = $definition.Path
+            resolvedPath = if ($null -ne $matchedTable -and $definition.Contains('AliasTable') -and $matchedTable -eq $definition.AliasTable) { $definition.AliasPath } else { $definition.Path }
+            resolvedTable = $resolvedTable
             tablePresent = $null -ne $table
             present = $false
             value = $null
@@ -117,7 +130,7 @@ function Get-BackendConfigSnapshot {
                 }
             }
             if ($matches.Count -gt 1) {
-                throw "Backend configuration contains duplicate key '$($definition.Key)' under [$($definition.Table)]"
+                throw "Backend configuration contains duplicate key '$($definition.Key)' under [$resolvedTable]"
             }
             if ($matches.Count -eq 1) {
                 $valueMatch = [regex]::Match(
@@ -134,6 +147,9 @@ function Get-BackendConfigSnapshot {
         }
 
         $records[$definition.Path] = $record
+        if ($definition.Contains('AliasPath')) {
+            $records[$definition.AliasPath] = $record
+        }
     }
 
     return [pscustomobject]@{
@@ -161,9 +177,24 @@ function Get-BackendPriorRecord {
         [Parameter(Mandatory)][string]$Path
     )
 
+    $alias = $null
+    foreach ($definition in $script:BackendKeyDefinitions) {
+        if ($definition.Path -ceq $Path -and $definition.Contains('AliasPath')) {
+            $alias = $definition.AliasPath
+            break
+        }
+        elseif ($definition.Contains('AliasPath') -and $definition.AliasPath -ceq $Path) {
+            $alias = $definition.Path
+            break
+        }
+    }
+
     foreach ($record in @((Get-ObjectPropertyValue -Object $BackendState -Name 'prior'))) {
-        if ($null -ne $record -and [string](Get-ObjectPropertyValue -Object $record -Name 'path') -ceq $Path) {
-            return $record
+        if ($null -ne $record) {
+            $p = [string](Get-ObjectPropertyValue -Object $record -Name 'path')
+            if ($p -ceq $Path -or ($null -ne $alias -and $p -ceq $alias)) {
+                return $record
+            }
         }
     }
     return $null
@@ -189,8 +220,13 @@ function Assert-CodexBackendState {
         throw "Backend state must contain exactly $($script:BackendKeyDefinitions.Count) prior managed-key records."
     }
     $knownPaths = @{}
+    $aliasToCanonical = @{}
     foreach ($definition in $script:BackendKeyDefinitions) {
         $knownPaths[$definition.Path] = $true
+        if ($definition.Contains('AliasPath')) {
+            $knownPaths[$definition.AliasPath] = $true
+            $aliasToCanonical[$definition.AliasPath] = $definition.Path
+        }
     }
     $recordsByPath = @{}
     foreach ($record in $records) {
@@ -201,10 +237,11 @@ function Assert-CodexBackendState {
         if (-not $knownPaths.ContainsKey($path)) {
             throw "Backend state contains an unmanaged prior record: $path"
         }
-        if ($recordsByPath.ContainsKey($path)) {
+        $canonicalPath = if ($aliasToCanonical.ContainsKey($path)) { $aliasToCanonical[$path] } else { $path }
+        if ($recordsByPath.ContainsKey($canonicalPath)) {
             throw "Backend state contains duplicate prior record: $path"
         }
-        $recordsByPath[$path] = $record
+        $recordsByPath[$canonicalPath] = $record
     }
 
     foreach ($definition in $script:BackendKeyDefinitions) {
@@ -354,7 +391,8 @@ function Set-BackendKeyText {
         }
     }
     elseif ($Present) {
-        $table = $snapshot.Tables[$Definition.Table]
+        $targetTableName = if ($record.Contains('resolvedTable')) { [string]$record.resolvedTable } else { $Definition.Table }
+        $table = $snapshot.Tables[$targetTableName]
         $lines.Insert(([int]$table.HeaderIndex + 1), $Definition.Key + ' = ' + $Value)
     }
 
@@ -509,6 +547,38 @@ function New-CodexDelegationState {
     return $state
 }
 
+function Assert-CodexStrategyState {
+    param([Parameter(Mandatory)][object]$StrategyState)
+
+    if (-not (Test-ObjectProperty -Object $StrategyState -Name 'selected')) {
+        throw 'Strategy state is missing selected strategy.'
+    }
+    $selected = [string](Get-ObjectPropertyValue -Object $StrategyState -Name 'selected')
+    if ($selected -notin @('worker', 'critical')) {
+        throw "Strategy state has unsupported selected strategy: $selected"
+    }
+}
+
+function New-CodexStrategyState {
+    param([object]$ExistingInstallState)
+
+    if ($null -ne $ExistingInstallState -and (Test-ObjectProperty -Object $ExistingInstallState -Name 'codexStrategy')) {
+        $existingStrategy = Get-ObjectPropertyValue -Object $ExistingInstallState -Name 'codexStrategy'
+        Assert-CodexStrategyState -StrategyState $existingStrategy
+        return [ordered]@{
+            version = 1
+            selected = [string](Get-ObjectPropertyValue -Object $existingStrategy -Name 'selected')
+        }
+    }
+
+    $state = [ordered]@{
+        version = 1
+        selected = 'worker'
+    }
+    Assert-CodexStrategyState -StrategyState $state
+    return $state
+}
+
 function Get-CodexRuntimeBlockInfo {
     param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
 
@@ -524,6 +594,8 @@ function Get-CodexRuntimeBlockInfo {
             Present = $false
             Backend = $null
             Policy = $null
+            Strategy = $null
+            HasStrategyKey = $false
             Body = ''
         }
     }
@@ -545,12 +617,16 @@ function Get-CodexRuntimeBlockInfo {
     $body = $match.Groups['body'].Value
     $backendMatches = @([regex]::Matches($body, '(?m)^\s*subagent_backend\s*=\s*([^\r\n#]+?)\s*(?:#.*)?$'))
     $policyMatches = @([regex]::Matches($body, '(?m)^\s*delegation_policy\s*=\s*([^\r\n#]+?)\s*(?:#.*)?$'))
+    $strategyMatches = @([regex]::Matches($body, '(?m)^\s*subagent_strategy\s*=\s*([^\r\n#]+?)\s*(?:#.*)?$'))
 
     if ($backendMatches.Count -gt 1) {
         throw "Managed runtime block contains duplicate 'subagent_backend' keys."
     }
     if ($policyMatches.Count -gt 1) {
         throw "Managed runtime block contains duplicate 'delegation_policy' keys."
+    }
+    if ($strategyMatches.Count -gt 1) {
+        throw "Managed runtime block contains duplicate 'subagent_strategy' keys."
     }
     if ($backendMatches.Count -eq 0) {
         throw "Managed runtime block is missing 'subagent_backend' key."
@@ -561,6 +637,7 @@ function Get-CodexRuntimeBlockInfo {
 
     $backendVal = $backendMatches[0].Groups[1].Value.Trim()
     $policyVal = $policyMatches[0].Groups[1].Value.Trim()
+    $strategyVal = if ($strategyMatches.Count -eq 1) { $strategyMatches[0].Groups[1].Value.Trim() } else { 'worker' }
 
     if ($backendVal -notin @('native', 'deepseek')) {
         throw "Managed runtime block contains unsupported subagent_backend: '$backendVal'"
@@ -568,11 +645,16 @@ function Get-CodexRuntimeBlockInfo {
     if ($policyVal -notin @('balanced', 'aggressive')) {
         throw "Managed runtime block contains unsupported delegation_policy: '$policyVal'"
     }
+    if ($strategyVal -notin @('worker', 'critical')) {
+        throw "Managed runtime block contains unsupported subagent_strategy: '$strategyVal'"
+    }
 
     return [pscustomobject]@{
         Present = $true
         Backend = $backendVal
         Policy = $policyVal
+        Strategy = $strategyVal
+        HasStrategyKey = ($strategyMatches.Count -eq 1)
         Body = $body
     }
 }
@@ -580,13 +662,15 @@ function Get-CodexRuntimeBlockInfo {
 function Format-CodexRuntimeBlock {
     param(
         [Parameter(Mandatory)][ValidateSet('native', 'deepseek')][string]$Backend,
-        [Parameter(Mandatory)][ValidateSet('balanced', 'aggressive')][string]$Policy
+        [Parameter(Mandatory)][ValidateSet('balanced', 'aggressive')][string]$Policy,
+        [Parameter()][ValidateSet('worker', 'critical')][string]$Strategy = 'worker'
     )
 
     $nl = [Environment]::NewLine
     return '# BEGIN CODEX-WORKFLOWS-KIT: runtime' + $nl +
         'subagent_backend = ' + $Backend + $nl +
         'delegation_policy = ' + $Policy + $nl +
+        'subagent_strategy = ' + $Strategy + $nl +
         '# END CODEX-WORKFLOWS-KIT: runtime'
 }
 
@@ -595,11 +679,12 @@ function Set-CodexAgentsManagedBlockText {
         [Parameter(Mandatory)][AllowEmptyString()][string]$ExistingAgentsText,
         [Parameter(Mandatory)][string]$TemplateText,
         [Parameter(Mandatory)][ValidateSet('native', 'deepseek')][string]$Backend,
-        [Parameter(Mandatory)][ValidateSet('balanced', 'aggressive')][string]$Policy
+        [Parameter(Mandatory)][ValidateSet('balanced', 'aggressive')][string]$Policy,
+        [Parameter()][ValidateSet('worker', 'critical')][string]$Strategy = 'worker'
     )
 
     $nl = [Environment]::NewLine
-    $runtimeBlock = Format-CodexRuntimeBlock -Backend $Backend -Policy $Policy
+    $runtimeBlock = Format-CodexRuntimeBlock -Backend $Backend -Policy $Policy -Strategy $Strategy
     $begin = '# BEGIN CODEX-WORKFLOWS-KIT'
     $end = '# END CODEX-WORKFLOWS-KIT'
     $normalizedTemplate = ($TemplateText.Trim() -replace "`r?`n", $nl)
@@ -627,7 +712,8 @@ function Assert-CodexAgentsRuntimeBlock {
     param(
         [Parameter(Mandatory)][AllowEmptyString()][string]$Text,
         [Parameter(Mandatory)][ValidateSet('native', 'deepseek')][string]$Backend,
-        [Parameter(Mandatory)][ValidateSet('balanced', 'aggressive')][string]$Policy
+        [Parameter(Mandatory)][ValidateSet('balanced', 'aggressive')][string]$Policy,
+        [Parameter()][ValidateSet('worker', 'critical')][string]$Strategy = 'worker'
     )
 
     $info = Get-CodexRuntimeBlockInfo -Text $Text
@@ -639,6 +725,9 @@ function Assert-CodexAgentsRuntimeBlock {
     }
     if ($info.Policy -cne $Policy) {
         throw "Installed AGENTS.md runtime block has delegation_policy='$($info.Policy)', expected '$Policy'."
+    }
+    if ($info.Strategy -cne $Strategy) {
+        throw "Installed AGENTS.md runtime block has subagent_strategy='$($info.Strategy)', expected '$Strategy'."
     }
 }
 
@@ -941,6 +1030,8 @@ Export-ModuleMember -Function @(
     'Backup-BackendFile',
     'Assert-CodexDelegationState',
     'New-CodexDelegationState',
+    'Assert-CodexStrategyState',
+    'New-CodexStrategyState',
     'Get-CodexRuntimeBlockInfo',
     'Format-CodexRuntimeBlock',
     'Set-CodexAgentsManagedBlockText',

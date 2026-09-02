@@ -5,9 +5,10 @@
 - Execute somente o checkout local revisado.
 - Preserve mudanças existentes e evite operações destrutivas.
 - O padrão para logs novos é none; qualquer exceção exige obs-gate.
-- A governança de subagentes é regida por dois seletores globais ortogonais:
-  `subagent_backend` (`native` com `gpt-5.6-luna` ou `deepseek` via DeepSeek Sub-Agent MCP) e
-  `delegation_policy` (`balanced` otimizando wall-clock time ou `aggressive` otimizando desoneração de tokens).
+- A governança de subagentes é regida por três seletores globais ortogonais:
+  `subagent_backend` (`native` com `gpt-5.6-luna` ou `deepseek` técnico via SubAgents MCP),
+  `delegation_policy` (`balanced` otimizando wall-clock time ou `aggressive` otimizando desoneração de tokens), e
+  `subagent_strategy` (`worker` padrão ou `critical` com análise independente, identificação de contradições/lacunas, síntese GPT, fencing e sem edição concorrente; a estratégia nunca concede escrita).
 - A orquestração falha fechado: matriz ausente, inválida ou indisponibilidade de ferramentas bloqueia a execução sem fallback silencioso entre provedores.
 - O parent GPT é o maestro que delega, integra, valida e decide.
 - Modos de escrita exigem o módulo de entrega com alvo congelado (frozen target), validação determinística e revisão independente obrigatória com veredito APPROVED antes do commit local fechado.

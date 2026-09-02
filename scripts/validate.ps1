@@ -33,12 +33,40 @@ function Assert-Contains {
     param(
         [Parameter(Mandatory)][string]$Label,
         [Parameter(Mandatory)][string]$Text,
-        [Parameter(Mandatory)][string[]]$Needles
+        [Parameter(Mandatory)][object[]]$Needles
     )
 
     foreach ($needle in $Needles) {
-        if ($Text.IndexOf($needle, [StringComparison]::Ordinal) -lt 0) {
-            throw "$Label is missing required text: $needle"
+        if ($needle -is [System.Collections.IEnumerable] -and $needle -isnot [string]) {
+            $options = @($needle | ForEach-Object { [string]$_ })
+            $found = $false
+            foreach ($opt in $options) {
+                if ($Text.IndexOf($opt, [StringComparison]::Ordinal) -ge 0) {
+                    $found = $true
+                    break
+                }
+            }
+            if (-not $found) {
+                throw "$Label is missing required text: ($($options -join ' | '))"
+            }
+        }
+        elseif ([string]$needle -match '\|') {
+            $options = [string]$needle -split '\|'
+            $found = $false
+            foreach ($opt in $options) {
+                if ($Text.IndexOf($opt, [StringComparison]::Ordinal) -ge 0) {
+                    $found = $true
+                    break
+                }
+            }
+            if (-not $found) {
+                throw "$Label is missing required text: $needle"
+            }
+        }
+        else {
+            if ($Text.IndexOf([string]$needle, [StringComparison]::Ordinal) -lt 0) {
+                throw "$Label is missing required text: $needle"
+            }
         }
     }
 }
@@ -652,7 +680,7 @@ function Assert-DelegationContract {
         '(?i)aggressive',
         '(?i)wall-clock|wall time',
         '(?i)token offload|desonera[c\u00e7][a\u00e3]o de tokens',
-        '(?i)deepseek_continue',
+        '(?i)(?:subagents_continue|deepseek_continue)',
         '(?i)allow_respawn\s*=\s*true',
         '(?i)terminal result|resultado terminal',
         '(?i)aggressive.{0,80}(?:parent|orquestrador).{0,60}(?:arquiteto|decisor|integrador|gatekeeper|architect|decider|integrator|gatekeeper)',
@@ -941,7 +969,7 @@ function Test-OrchestrationPolicy {
         '(?i)seletor global de backend.{0,120}autorit(?:[a\u00e1]rio|ativa|ativo)',
         '(?i)matriz ausente,? inv[a\u00e1]lida ou inconsistente bloqueia.{0,80}fallback silencioso',
         '(?i)native.{0,180}gpt-5\.6-luna.{0,100}reasoning_effort.{0,80}normal/default',
-        '(?i)deepseek.{0,120}deepseek_spawn.{0,100}deepseek_continue.{0,100}deepseek_follow',
+        '(?i)deepseek.{0,120}(?:subagents_spawn|deepseek_spawn).{0,100}(?:subagents_continue|deepseek_continue).{0,100}(?:subagents_follow|deepseek_follow)',
         '(?i)delegation_policy',
         '(?i)balanced',
         '(?i)aggressive',
@@ -961,7 +989,7 @@ function Test-OrchestrationPolicy {
         '(?i)enquanto aguarda,? fa[c\u00e7]a orquestra[c\u00e7][\u00e3a]o independente [u\u00fa]til',
         '(?i)ledger est[a\u00e1]vel de request_id.{0,60}frente,? agente,? job,? estado,? consumido e fechado',
         '(?i)consuma cada job e feche cada agente ap[o\u00f3]s a integra[c\u00e7][\u00e3a]o',
-        '(?i)deepseek_continue.{0,80}allow_respawn',
+        '(?i)(?:subagents_continue|deepseek_continue).{0,80}allow_respawn',
         '(?i)sem pedir nova permiss[\u00e3a]o',
         '(?i)cria sess[\u00e3a]o.{0,60}lineage',
         '(?i)nunca recupere job running',
@@ -1476,6 +1504,12 @@ function Assert-InstalledState {
         }
         Assert-CodexDelegationState -DelegationState $State.codexDelegation
     }
+    if ($State.PSObject.Properties.Name -contains 'codexStrategy') {
+        if ($null -eq $State.codexStrategy) {
+            throw "Installed state contains an invalid codexStrategy property."
+        }
+        Assert-CodexStrategyState -StrategyState $State.codexStrategy
+    }
 
     if ($schema -ge 5) {
         if (-not ($State.PSObject.Properties.Name -contains 'codexBackend') -or $null -eq $State.codexBackend) {
@@ -1554,13 +1588,13 @@ foreach ($mode in $allModes) {
 Assert-Contains -Label 'workflow skill' -Text $skill -Needles @(
     'name: workflows',
     'FRAME -> FANOUT -> COLLECT -> ACT -> VERIFY -> REVIEW -> DONE',
-    'deepseek_spawn',
-    'deepseek_continue',
-    'deepseek_follow',
-    'deepseek_consult',
-    'deepseek_abort',
-    'deepseek_close',
-    'deepseek_recover_result',
+    'subagents_spawn|deepseek_spawn',
+    'subagents_continue|deepseek_continue',
+    'subagents_follow|deepseek_follow',
+    'subagents_consult|deepseek_consult',
+    'subagents_abort|deepseek_abort',
+    'subagents_close|deepseek_close',
+    'subagents_recover_result|deepseek_recover_result',
     'allow_respawn',
     'capabilities | change permission | done gate',
     'visual_context',
@@ -1590,7 +1624,6 @@ Assert-Forbidden -Label 'workflow skill' -Text $skill -Tokens @(
     'researcher',
     'writer',
     'reviewer',
-    'worker',
     'Review-And-Fix-Vigorously',
     'not the repository workforce'
 )
@@ -1613,9 +1646,9 @@ Assert-Contains -Label 'codex AGENTS.md' -Text $agentsText -Needles @(
     'delega',
     'job',
     'visual_context',
-    'deepseek_spawn',
-    'deepseek_continue',
-    'deepseek_follow',
+    'subagents_spawn|deepseek_spawn',
+    'subagents_continue|deepseek_continue',
+    'subagents_follow|deepseek_follow',
     'multi_agent_v1__spawn_agent',
     'spawn_agent',
     'wait_agent',
@@ -1735,7 +1768,7 @@ foreach ($relativePath in @(git -C $repo ls-files)) {
 
     if ($relativePath -ne 'CHANGELOG.md' -and $relativePath -ne 'scripts/validate.ps1') {
         foreach ($token in $legacyTokens) {
-            if (($relativePath -eq 'codex/AGENTS.md' -or $relativePath -eq 'skills/workflows/references/delivery-review.md') -and $token -in @('writer', 'reviewer', 'worker')) {
+            if (($relativePath.StartsWith('scripts/') -or $relativePath -eq 'codex/AGENTS.md' -or $relativePath -eq 'skills/workflows/references/delivery-review.md' -or $relativePath -eq 'README.md' -or $relativePath -eq 'docs/security.md' -or $relativePath -eq 'skills/workflows/SKILL.md' -or $relativePath -eq 'skills/workflows/references/delegation.md') -and $token -in @('writer', 'reviewer', 'worker')) {
                 continue
             }
             if ($text.IndexOf($token, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
@@ -1950,7 +1983,8 @@ if (-not $SkipInstalled) {
 
         $expectedBackend = if ($state.PSObject.Properties.Name -contains 'codexBackend') { [string]$state.codexBackend.selected } else { 'deepseek' }
         $expectedPolicy = if ($state.PSObject.Properties.Name -contains 'codexDelegation') { [string]$state.codexDelegation.selected } else { 'balanced' }
-        Assert-CodexAgentsRuntimeBlock -Text $installedAgents -Backend $expectedBackend -Policy $expectedPolicy
+        $expectedStrategy = if ($state.PSObject.Properties.Name -contains 'codexStrategy') { [string]$state.codexStrategy.selected } else { 'worker' }
+        Assert-CodexAgentsRuntimeBlock -Text $installedAgents -Backend $expectedBackend -Policy $expectedPolicy -Strategy $expectedStrategy
 
         $installedGemini = Read-RequiredText (Join-Path (Join-Path $antigravityHome 'config') 'GEMINI.md')
         Assert-DeepSeekDaemonRestartGemini -Label 'installed GEMINI.md' -Text $installedGemini

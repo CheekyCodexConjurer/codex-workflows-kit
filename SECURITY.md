@@ -33,5 +33,6 @@ forma privada:
 - O kit não registra telemetria e não coleta dados do usuário.
 - A instalação é local; execute apenas o checkout revisado.
 - Backups com timestamp são criados antes de sobrescrever destinos.
-- Trabalho material e delimitável é delegado ao DeepSeek Sub-Agent MCP; o
-  parent GPT integra, valida e decide.
+- Trabalho material e delimitável é delegado ao SubAgents MCP (ou
+  subagentes nativos conforme o backend configurado); o parent GPT integra,
+  valida e decide.
