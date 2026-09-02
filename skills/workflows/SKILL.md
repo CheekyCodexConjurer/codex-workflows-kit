@@ -14,6 +14,21 @@ selected mode or an open gate requires it.
 - `$workflows mode=<MODE>` is the complete contract: the mode defines the
   capabilities, the change permission, the validation, and the done gate.
   Treat trailing text as task context.
+- Without an active mode (`$workflows mode=<MODE>`), the system operates in the
+  implicit user-facing state `ALINHAMENTO`: conversational no-write discussion, idea
+  refinement, and doubts without workflow ceremony (no formal plan, spec, todo list,
+  approval gates, or delivery classification); do not narrate internal
+  routing/skills/tools (beyond a short notice if the platform requires it);
+  repository inspection occurs only when the answer materially depends on it (smallest
+  sufficient read); forbidden to trigger tools or activations known to create
+  workspace metadata or local state (if a read route requires mutation, fail closed
+  and respond without it); no file creation/edit/deletion, no tests/builds, no Git
+  index/commit, and no stateful mutation. Imperative verbs never infer a mode.
+- An explicit workflow mode remains active for the same execution through
+  unprefixed clarifications and follow-ups until its done gate, explicit
+  cancellation, or explicit permitted replacement. Cancellation does not
+  authorize process kills, destructive rollback, or new mutation. Upon closure,
+  subsequent demands without an active mode return to ALINHAMENTO.
 - Preserve existing work. Define the failure signature and validation before
   editing. No instrumentation without an explicit `obs-gate` contract
   (`observability.md`).

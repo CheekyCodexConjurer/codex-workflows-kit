@@ -752,6 +752,132 @@ function Test-DeliveryReviewPolicySemantics {
     return $true
 }
 
+function Test-AlinhamentoPolicySemantics {
+    param(
+        [Parameter(Mandatory)][string]$AgentsText,
+        [Parameter(Mandatory)][string]$GeminiText,
+        [Parameter(Mandatory)][string]$SkillText,
+        [Parameter(Mandatory)][string]$DelegationText,
+        [Parameter(Mandatory)][string]$ReadmeText
+    )
+
+    $agentsNorm = [regex]::Replace($AgentsText, '\s+', ' ').Trim()
+    $geminiNorm = [regex]::Replace($GeminiText, '\s+', ' ').Trim()
+    $skillNorm = [regex]::Replace($SkillText, '\s+', ' ').Trim()
+    $delegationNorm = [regex]::Replace($DelegationText, '\s+', ' ').Trim()
+    $readmeNorm = [regex]::Replace($ReadmeText, '\s+', ' ').Trim()
+
+    $agentsRequired = @(
+        '(?i)\bALINHAMENTO\b',
+        '(?i)(?:sem modo ativo|aus[e\u00ea]ncia de modo|no active mode).{0,80}\bALINHAMENTO\b|\bALINHAMENTO\b.{0,80}(?:sem modo ativo|aus[e\u00ea]ncia de modo|no active mode)',
+        '(?i)somente leitura',
+        '(?i)(?:proibid[oa]|sem|nunca|no).{0,40}(?:criar|editar|apagar|modificar|alterar|gravar|create|edit|delete).{0,40}(?:arquivos?|c[o\u00f3]digo|files?)',
+        '(?i)verbos imperativos nunca inferem modo|verbos imperativos n[a\u00e3]o inferem modo|imperative verbs never infer a mode',
+        '(?i)conversa simples.{0,40}direta|conversa simples permanece direta',
+        '(?i)(?:sem cerim[o\u00f4]nia|sem planos? formais?|sem todo list|no (?:workflow )?ceremony)',
+        '(?i)(?:inspe[c\u00e7][a\u00e3]o|leitura).{0,80}(?:depender materialmente|depend[e\u00ea]ncia material|materially depends?)',
+        '(?i)(?:pro[i\u00ed]bem-se|proibid[oa]|n[a\u00e3]o acionar|forbidden).{0,80}(?:metadados|metadata|estado local|local state).{0,80}(?:workspace|falha fechad|fail closed|sem ela)',
+        '(?i)(?:consumo e encerramento|consumo e fechamento).{0,40}ledger',
+        '(?i)(?:portugu[e\u00ea]s do brasil|pt-BR|portugu[e\u00ea]s).*compacto',
+        '(?i)confirma[c\u00e7][a\u00e3]o (?:curta )?de entendimento|short understanding confirmation',
+        '(?i)(?:transcri[c\u00e7][o\u00f5]es? de [a\u00e1]udio|[a\u00e1]udio|audio).{0,80}(?:ru[i\u00ed]do|premissas?|ambiguidade)',
+        '(?i)(?:quando a[c\u00e7][a\u00e3]o for o pr[o\u00f3]ximo passo|quando for necess[a\u00e1]ria a[c\u00e7][a\u00e3]o|when action is the next step).{0,80}(?:recomende|recomendar|recommend).{0,80}(?:modo exato|modo expl[i\u00ed]cito|exact explicit workflow mode)',
+        '(?i)(?:modo expl[i\u00ed]cito permanece ativo|modo ativo permanece ativo|permanece ativo na mesma execu[c\u00e7][a\u00e3]o|explicit mode remains active).{0,100}(?:gate de conclus[a\u00e3]o|done gate|cancelamento expl[i\u00ed]cito|explicit cancellation)',
+        '(?i)(?:cancelamento n[a\u00e3]o autoriza|cancelamento pro[i\u00ed]be|cancellation does not authorize).{0,80}(?:kill|destrutiv|muta[c\u00e7][a\u00e3]o|destructive)',
+        '(?i)(?:retorna|volta|retorno)\s+a[o]?\s+ALINHAMENTO|returns? to ALINHAMENTO'
+    )
+    foreach ($pattern in $agentsRequired) {
+        if (-not [regex]::IsMatch($agentsNorm, $pattern)) {
+            return $false
+        }
+    }
+
+    $geminiRequired = @(
+        '(?i)\bALINHAMENTO\b',
+        '(?i)somente leitura',
+        '(?i)verbos imperativos nunca inferem modo|verbos imperativos n[a\u00e3]o inferem modo|imperative verbs never infer a mode',
+        '(?i)(?:sem cerim[o\u00f4]nia|sem planos? formais?|sem todo list|no (?:workflow )?ceremony)',
+        '(?i)(?:inspe[c\u00e7][a\u00e3]o|leitura).{0,80}(?:depender materialmente|depend[e\u00ea]ncia material|materially depends?)',
+        '(?i)(?:pro[i\u00ed]bem-se|proibid[oa]|n[a\u00e3]o acionar|forbidden).{0,80}(?:metadados|metadata|estado local|local state).{0,80}(?:workspace|falha fechad|fail closed|sem ela)',
+        '(?i)confirma[c\u00e7][a\u00e3]o (?:curta )?de entendimento|short understanding confirmation',
+        '(?i)modo expl[i\u00ed]cito|retorna a ALINHAMENTO|volta a ALINHAMENTO|returns? to ALINHAMENTO'
+    )
+    foreach ($pattern in $geminiRequired) {
+        if (-not [regex]::IsMatch($geminiNorm, $pattern)) {
+            return $false
+        }
+    }
+
+    $skillRequired = @(
+        '(?i)\bALINHAMENTO\b',
+        '(?i)(?:without an active mode|absence of an active mode|sem modo ativo|no active mode).{0,80}\bALINHAMENTO\b|\bALINHAMENTO\b.{0,80}(?:without an active mode|absence of an active mode|sem modo ativo)',
+        '(?i)(?:no (?:workflow )?ceremony|sem cerim[o\u00f4]nia|no formal plan|sem plano formal)',
+        '(?i)(?:materially depends?|depender materialmente|depend[e\u00ea]ncia material).{0,80}(?:repository|repo|reposit[o\u00f3]rio|read|leitura|inspection)',
+        '(?i)(?:forbidden|proibid[oa]|no).{0,80}(?:metadata|metadados|local state|estado local).{0,100}(?:workspace|fail closed|falha fechad|without it|sem ela)',
+        '(?i)(?:remains active|permanece ativo).{0,100}(?:unprefixed|clarifications|esclarecimentos|done gate|cancellation)',
+        '(?i)returns? to ALINHAMENTO|retorna a[o]? ALINHAMENTO'
+    )
+    foreach ($pattern in $skillRequired) {
+        if (-not [regex]::IsMatch($skillNorm, $pattern)) {
+            return $false
+        }
+    }
+
+    $delegationRequired = @(
+        '(?i)\bALINHAMENTO\b',
+        '(?i)(?:under ALINHAMENTO|no ALINHAMENTO|em ALINHAMENTO|sob ALINHAMENTO|no estado.*?ALINHAMENTO).{0,120}(?:somente leitura|inspe[c\u00e7][a\u00e3]o|conversa simples)',
+        '(?i)(?:sem cerim[o\u00f4]nia|no (?:workflow )?ceremony|sem planos? formais?|no formal plan)',
+        '(?i)(?:depend[e\u00ea]ncia material|materially depends?|depender materialmente)',
+        '(?i)somente leitura',
+        '(?i)(?:metadados|metadata|estado|state).{0,80}(?:workspace|falha fechad|fail closed)',
+        '(?i)(?:ciclo normal de ledger|ledger de requisi[c\u00e7][o\u00f5]es|consumo e fechamento|consumo e encerramento).{0,80}(?:ledger|lifecycle|fechamento|encerramento)',
+        '(?i)(?:narrowing|estreitamento|exce[c\u00e7][a\u00e3]o|scoped).{0,80}(?:aggressive|delega[c\u00e7][a\u00e3]o agressiva)'
+    )
+    foreach ($pattern in $delegationRequired) {
+        if (-not [regex]::IsMatch($delegationNorm, $pattern)) {
+            return $false
+        }
+    }
+
+    $readmeRequired = @(
+        '(?i)\bALINHAMENTO\b',
+        '(?i)(?:sem modo ativo|aus[e\u00ea]ncia de modo|sem \$workflows).{0,100}\bALINHAMENTO\b|\bALINHAMENTO\b.{0,100}(?:sem modo ativo|somente leitura|discuss[a\u00e3]o)',
+        '(?i)(?:sem cerim[o\u00f4]nia|sem planos? formais?|sem todo list|no (?:workflow )?ceremony)',
+        '(?i)(?:depend[e\u00ea]ncia material|material dependency)',
+        '(?i)verbos imperativos nunca inferem modo|verbos imperativos n[a\u00e3]o inferem modo|imperative verbs never infer a mode'
+    )
+    foreach ($pattern in $readmeRequired) {
+        if (-not [regex]::IsMatch($readmeNorm, $pattern)) {
+            return $false
+        }
+    }
+
+    $forbidden = @(
+        '(?i)\bmode\s*=\s*ALINHAMENTO\b',
+        '(?i)\bmode\s*=\s*DISCUSS\b',
+        '(?i)\b(?:pode|deve|autorizado a|is allowed to|may)\b[^.;]*\b(?:criar|editar|escrever|alterar|modificar|gravar|write|edit|create)\b[^.;]*(?:arquivos?|c[o\u00f3]digo|files?)\b[^.;]*(?:no ALINHAMENTO|em ALINHAMENTO|under ALINHAMENTO)',
+        '(?i)(?:no ALINHAMENTO|em ALINHAMENTO|under ALINHAMENTO)[^.;]*\b(?:pode|deve|autorizado a|is allowed to|may)\b[^.;]*\b(?:criar|editar|escrever|alterar|modificar|gravar|write|edit|create)\b[^.;]*(?:arquivos?|c[o\u00f3]digo|files?)',
+        '(?i)\b(?:verbos imperativos inferem modo|imperative verbs infer a mode|inferir modo por verbo imperativo)\b',
+        '(?i)\b(?:pode|deve|autorizado a|is allowed to|may)\b[^.;]*\b(?:matar processos|taskkill|Stop-Process|rollback destrutivo)\b[^.;]*(?:ao cancelar|no cancelamento|on cancellation|upon cancel)',
+        '(?i)(?:ao cancelar|no cancelamento|on cancellation|upon cancel)[^.;]*\b(?:pode|deve|autorizado a|is allowed to|may)\b[^.;]*\b(?:matar processos|taskkill|Stop-Process|rollback destrutivo)',
+        '(?i)\b(?:pode|deve|autorizado a|is allowed to|may)\b[^.;]*\b(?:criar planos? formais?|todo lists?|specs? formais?|formal plans?|classificar delivery)\b[^.;]*(?:no ALINHAMENTO|em ALINHAMENTO|under ALINHAMENTO)',
+        '(?i)(?:no ALINHAMENTO|em ALINHAMENTO|under ALINHAMENTO)[^.;]*\b(?:pode|deve|autorizado a|is allowed to|may)\b[^.;]*\b(?:criar planos? formais?|todo lists?|specs? formais?|formal plans?|classificar delivery)',
+        '(?i)\b(?:pode|deve|autorizado a|is allowed to|may)\b[^.;]*\b(?:inspecionar o repo|ler arquivos?|inspecionar o reposit[o\u00f3]rio|read files?)\b[^.;]*(?:sem depend[e\u00ea]ncia material|incondicionalmente|sempre|sem necessidade)\b[^.;]*(?:no ALINHAMENTO|em ALINHAMENTO|under ALINHAMENTO)',
+        '(?i)(?:no ALINHAMENTO|em ALINHAMENTO|under ALINHAMENTO)[^.;]*\b(?:pode|deve|autorizado a|is allowed to|may)\b[^.;]*\b(?:inspecionar o repo|ler arquivos?|inspecionar o reposit[o\u00f3]rio|read files?)\b[^.;]*(?:sem depend[e\u00ea]ncia material|incondicionalmente|sempre|sem necessidade)',
+        '(?i)\b(?:pode|deve|autorizado a|is allowed to|may)\b[^.;]*\b(?:criar metadados|gravar metadados|criar estado local|mutar workspace|create metadata|create state)\b[^.;]*(?:ao ler|em leitura|em ALINHAMENTO|no ALINHAMENTO|under ALINHAMENTO)',
+        '(?i)(?:ao ler|em leitura|em ALINHAMENTO|no ALINHAMENTO|under ALINHAMENTO)[^.;]*\b(?:pode|deve|autorizado a|is allowed to|may)\b[^.;]*\b(?:criar metadados|gravar metadados|criar estado local|mutar workspace|create metadata|create state)',
+        '(?i)\b(?:pode|deve|autorizado a|is allowed to|may)\b[^.;]*\b(?:ignorar o ledger|sem consumo|sem fechar subagentes?|manter subagentes? abertos?|ignorar fechamento|bypass ledger)\b[^.;]*(?:no ALINHAMENTO|em ALINHAMENTO|under ALINHAMENTO)',
+        '(?i)(?:no ALINHAMENTO|em ALINHAMENTO|under ALINHAMENTO)[^.;]*\b(?:pode|deve|autorizado a|is allowed to|may)\b[^.;]*\b(?:ignorar o ledger|sem consumo|sem fechar subagentes?|manter subagentes? abertos?|ignorar fechamento|bypass ledger)'
+    )
+    foreach ($pattern in $forbidden) {
+        if ([regex]::IsMatch($agentsNorm, $pattern) -or [regex]::IsMatch($geminiNorm, $pattern) -or [regex]::IsMatch($skillNorm, $pattern) -or [regex]::IsMatch($delegationNorm, $pattern)) {
+            return $false
+        }
+    }
+
+    return $true
+}
+
 $scenario = 0
 $fixtures = New-Object System.Collections.Generic.List[string]
 
@@ -2482,6 +2608,122 @@ enabled = true
     Invoke-SafeInstall -Root $root35
     $valHealed35 = Invoke-Validate -Root $root35
     Assert-Condition 'S35 reinstall heals delivery-review mirrors and passes validation' ($valHealed35.ExitCode -eq 0 -and $valHealed35.Output -match 'Validation OK') $valHealed35.Output
+
+    $scenario = 36
+    Write-Host 'Scenario 36: ALINHAMENTO implicit state enforces read-only discussion, no mutation, imperative verb boundaries, conditional read-only delegation, mode persistence, pt-BR/audio defaults, and mirror healing' -ForegroundColor Cyan
+    $root36 = New-FixtureHome
+    $fixtures.Add($root36)
+    $canonicalAgents36 = Get-Content -LiteralPath (Join-Path $repo 'codex\AGENTS.md') -Raw -Encoding UTF8
+    $canonicalGemini36 = Get-Content -LiteralPath (Join-Path $repo 'antigravity\GEMINI.md') -Raw -Encoding UTF8
+    $canonicalSkill36 = Get-Content -LiteralPath (Join-Path $repo 'skills\workflows\SKILL.md') -Raw -Encoding UTF8
+    $canonicalDelegation36 = Get-Content -LiteralPath (Join-Path $repo 'skills\workflows\references\delegation.md') -Raw -Encoding UTF8
+    $canonicalReadme36 = Get-Content -LiteralPath (Join-Path $repo 'README.md') -Raw -Encoding UTF8
+
+    Assert-Condition 'S36 canonical policies satisfy ALINHAMENTO state semantics' (Test-AlinhamentoPolicySemantics -AgentsText $canonicalAgents36 -GeminiText $canonicalGemini36 -SkillText $canonicalSkill36 -DelegationText $canonicalDelegation36 -ReadmeText $canonicalReadme36) ''
+
+    # Tamper 1: No-write boundary tamper (allowing file edits in ALINHAMENTO)
+    $tamperNoWrite = $canonicalAgents36 + $nl + 'No ALINHAMENTO, o parent pode editar arquivos pequenos diretamente se o usuário pedir.'
+    Assert-Condition 'S36 detects no-write boundary tamper' (-not (Test-AlinhamentoPolicySemantics -AgentsText $tamperNoWrite -GeminiText $canonicalGemini36 -SkillText $canonicalSkill36 -DelegationText $canonicalDelegation36 -ReadmeText $canonicalReadme36)) ''
+
+    # Tamper 2: Imperative verbs boundary tamper (inferring mode from imperative verbs)
+    $tamperImperative = $canonicalAgents36 + $nl + 'Verbos imperativos inferem modo automaticamente.'
+    Assert-Condition 'S36 detects imperative verbs inference tamper' (-not (Test-AlinhamentoPolicySemantics -AgentsText $tamperImperative -GeminiText $canonicalGemini36 -SkillText $canonicalSkill36 -DelegationText $canonicalDelegation36 -ReadmeText $canonicalReadme36)) ''
+
+    # Tamper 3: Conditional read-only delegation tamper (allowing write subagents or fallback)
+    $tamperDelegation = $canonicalDelegation36 -replace '(?i)read-only|somente leitura', 'write-enabled execution'
+    Assert-Condition 'S36 detects delegation boundary tamper' (-not (Test-AlinhamentoPolicySemantics -AgentsText $canonicalAgents36 -GeminiText $canonicalGemini36 -SkillText $canonicalSkill36 -DelegationText $tamperDelegation -ReadmeText $canonicalReadme36)) ''
+
+    # Tamper 4: Cancellation process kill tamper
+    $tamperCancellation = $canonicalAgents36 + $nl + 'Ao cancelar, o parent pode matar processos com taskkill.'
+    Assert-Condition 'S36 detects cancellation process kill tamper' (-not (Test-AlinhamentoPolicySemantics -AgentsText $tamperCancellation -GeminiText $canonicalGemini36 -SkillText $canonicalSkill36 -DelegationText $canonicalDelegation36 -ReadmeText $canonicalReadme36)) ''
+
+    # Tamper 5: Active-mode persistence contract tamper (removing or breaking persistence across unprefixed follow-ups)
+    $tamperPersistence = $canonicalAgents36 -replace '(?i)permanece ativo na mesma execu[c\u00e7][a\u00e3]o', 'expira imediatamente a cada turno'
+    Assert-Condition 'S36 detects active-mode persistence contract tamper' (-not (Test-AlinhamentoPolicySemantics -AgentsText $tamperPersistence -GeminiText $canonicalGemini36 -SkillText $canonicalSkill36 -DelegationText $canonicalDelegation36 -ReadmeText $canonicalReadme36)) ''
+
+    # Tamper 6: pt-BR output language default tamper
+    $tamperPtBr = $canonicalAgents36 -replace '(?i)portugu[e\u00ea]s do brasil|pt-BR|portugu[e\u00ea]s', 'English only'
+    Assert-Condition 'S36 detects pt-BR output language default tamper' (-not (Test-AlinhamentoPolicySemantics -AgentsText $tamperPtBr -GeminiText $canonicalGemini36 -SkillText $canonicalSkill36 -DelegationText $canonicalDelegation36 -ReadmeText $canonicalReadme36)) ''
+
+    # Tamper 7: Audio transcript handling tamper (removing audio/noise/assumptions handling while keeping pt-BR intact)
+    $tamperAudio = $canonicalAgents36 -replace '(?i)em transcri[c\u00e7][o\u00f5]es? de [a\u00e1]udio,[^;]*;', ''
+    Assert-Condition 'S36 detects audio transcript handling tamper' (-not (Test-AlinhamentoPolicySemantics -AgentsText $tamperAudio -GeminiText $canonicalGemini36 -SkillText $canonicalSkill36 -DelegationText $canonicalDelegation36 -ReadmeText $canonicalReadme36)) ''
+
+    # Tamper 8: Missing ALINHAMENTO in AGENTS.md
+    $tamperMissingAgents = $canonicalAgents36 -replace '(?i)ALINHAMENTO', 'DISCUSS_STATE'
+    Assert-Condition 'S36 detects missing ALINHAMENTO in AGENTS.md' (-not (Test-AlinhamentoPolicySemantics -AgentsText $tamperMissingAgents -GeminiText $canonicalGemini36 -SkillText $canonicalSkill36 -DelegationText $canonicalDelegation36 -ReadmeText $canonicalReadme36)) ''
+
+    # Tamper 9: Missing ALINHAMENTO in GEMINI.md
+    $tamperMissingGemini = $canonicalGemini36 -replace '(?i)ALINHAMENTO', 'DISCUSS_STATE'
+    Assert-Condition 'S36 detects missing ALINHAMENTO in GEMINI.md' (-not (Test-AlinhamentoPolicySemantics -AgentsText $canonicalAgents36 -GeminiText $tamperMissingGemini -SkillText $canonicalSkill36 -DelegationText $canonicalDelegation36 -ReadmeText $canonicalReadme36)) ''
+
+    # Tamper 10: Missing ALINHAMENTO in SKILL.md
+    $tamperMissingSkill = $canonicalSkill36 -replace '(?i)ALINHAMENTO', 'DISCUSS_STATE'
+    Assert-Condition 'S36 detects missing ALINHAMENTO in SKILL.md' (-not (Test-AlinhamentoPolicySemantics -AgentsText $canonicalAgents36 -GeminiText $canonicalGemini36 -SkillText $tamperMissingSkill -DelegationText $canonicalDelegation36 -ReadmeText $canonicalReadme36)) ''
+
+    # Tamper 11: Missing ALINHAMENTO in delegation.md
+    $tamperMissingDelegation = $canonicalDelegation36 -replace '(?i)ALINHAMENTO', 'DISCUSS_STATE'
+    Assert-Condition 'S36 detects missing ALINHAMENTO in delegation.md' (-not (Test-AlinhamentoPolicySemantics -AgentsText $canonicalAgents36 -GeminiText $canonicalGemini36 -SkillText $canonicalSkill36 -DelegationText $tamperMissingDelegation -ReadmeText $canonicalReadme36)) ''
+
+    # Tamper 12: Missing ALINHAMENTO in README.md
+    $tamperMissingReadme = $canonicalReadme36 -replace '(?i)ALINHAMENTO', 'DISCUSS_STATE'
+    Assert-Condition 'S36 detects missing ALINHAMENTO in README.md' (-not (Test-AlinhamentoPolicySemantics -AgentsText $canonicalAgents36 -GeminiText $canonicalGemini36 -SkillText $canonicalSkill36 -DelegationText $canonicalDelegation36 -ReadmeText $tamperMissingReadme)) ''
+
+    # Tamper 13: Ceremony and formal plan tamper (introducing formal plans or todo lists in ALINHAMENTO)
+    $tamperCeremony = $canonicalAgents36 + $nl + 'No ALINHAMENTO, o parent pode criar planos formais e todo lists para organizar ideias.'
+    Assert-Condition 'S36 detects ceremony and formal plan tamper' (-not (Test-AlinhamentoPolicySemantics -AgentsText $tamperCeremony -GeminiText $canonicalGemini36 -SkillText $canonicalSkill36 -DelegationText $canonicalDelegation36 -ReadmeText $canonicalReadme36)) ''
+
+    # Tamper 14: Unnecessary repo inspection tamper (allowing repo reads without material dependency)
+    $tamperInspection = $canonicalAgents36 + $nl + 'No ALINHAMENTO, o parent pode ler arquivos sem dependencia material para se antecipar.'
+    Assert-Condition 'S36 detects unnecessary repo inspection tamper' (-not (Test-AlinhamentoPolicySemantics -AgentsText $tamperInspection -GeminiText $canonicalGemini36 -SkillText $canonicalSkill36 -DelegationText $canonicalDelegation36 -ReadmeText $canonicalReadme36)) ''
+
+    # Tamper 15: Stateful read tool and workspace metadata tamper (allowing metadata or local state creation on read tools)
+    $tamperStatefulRead = $canonicalAgents36 + $nl + 'Em ALINHAMENTO, o parent pode criar metadados no workspace ao ler arquivos.'
+    Assert-Condition 'S36 detects stateful read tool and metadata tamper' (-not (Test-AlinhamentoPolicySemantics -AgentsText $tamperStatefulRead -GeminiText $canonicalGemini36 -SkillText $canonicalSkill36 -DelegationText $canonicalDelegation36 -ReadmeText $canonicalReadme36)) ''
+
+    # Tamper 16: Imperative verbs boundary tamper in README.md
+    $tamperReadmeImperative = $canonicalReadme36 -replace '(?i)verbos imperativos nunca inferem modo', 'verbos imperativos podem inferir modo'
+    Assert-Condition 'S36 detects imperative verbs tamper in README.md' (-not (Test-AlinhamentoPolicySemantics -AgentsText $canonicalAgents36 -GeminiText $canonicalGemini36 -SkillText $canonicalSkill36 -DelegationText $canonicalDelegation36 -ReadmeText $tamperReadmeImperative)) ''
+
+    # Tamper 17: ALINHAMENTO subagent ledger lifecycle tamper in delegation.md
+    $tamperLedgerDelegation = $canonicalDelegation36 -replace '(?i)seguindo o ciclo normal de ledger de requisi[c\u00e7][o\u00f5]es, consumo e fechamento de lifecycle', 'sem consumo no ledger ou fechamento de lifecycle'
+    Assert-Condition 'S36 detects ALINHAMENTO subagent ledger lifecycle tamper in delegation.md' (-not (Test-AlinhamentoPolicySemantics -AgentsText $canonicalAgents36 -GeminiText $canonicalGemini36 -SkillText $canonicalSkill36 -DelegationText $tamperLedgerDelegation -ReadmeText $canonicalReadme36)) ''
+
+    # Tamper 18: ALINHAMENTO subagent ledger lifecycle tamper in AGENTS.md
+    $tamperLedgerAgents = $canonicalAgents36 -replace '(?i)com consumo e encerramento normais no ledger', 'sem consumo ou encerramento no ledger'
+    Assert-Condition 'S36 detects ALINHAMENTO subagent ledger lifecycle tamper in AGENTS.md' (-not (Test-AlinhamentoPolicySemantics -AgentsText $tamperLedgerAgents -GeminiText $canonicalGemini36 -SkillText $canonicalSkill36 -DelegationText $canonicalDelegation36 -ReadmeText $canonicalReadme36)) ''
+
+    # Tamper 19: ALINHAMENTO subagent ledger bypass anti-pattern tamper
+    $tamperLedgerBypass = $canonicalAgents36 + $nl + 'No ALINHAMENTO, o parent pode ignorar o ledger e deixar subagentes abertos.'
+    Assert-Condition 'S36 detects ALINHAMENTO subagent ledger bypass anti-pattern' (-not (Test-AlinhamentoPolicySemantics -AgentsText $tamperLedgerBypass -GeminiText $canonicalGemini36 -SkillText $canonicalSkill36 -DelegationText $canonicalDelegation36 -ReadmeText $canonicalReadme36)) ''
+
+    # Installed mirror verification and tamper healing in fixture
+    $originalConfig36 = '[features]' + $nl + 'multi_agent = false' + $nl + $nl + '[mcp_servers.deepseek-subagent]' + $nl + 'command = "pwsh"' + $nl
+    Write-FixtureFile -Path (Join-Path (Get-CodexHome $root36) 'config.toml') -Content $originalConfig36
+    Invoke-SafeInstall -Root $root36
+
+    $installedAgents36 = Join-Path (Get-CodexHome $root36) 'AGENTS.md'
+    $installedGemini36 = Join-Path (Get-AntigravityHome $root36) 'config\GEMINI.md'
+    $installedSkill36 = Join-Path (Get-AgentsHome $root36) 'skills\workflows\SKILL.md'
+    $installedDelegation36 = Join-Path (Get-AgentsHome $root36) 'skills\workflows\references\delegation.md'
+
+    Assert-Condition 'S36 AGENTS.md installed in codex home' (Test-Path -LiteralPath $installedAgents36 -PathType Leaf) $installedAgents36
+    Assert-Condition 'S36 GEMINI.md installed in antigravity config' (Test-Path -LiteralPath $installedGemini36 -PathType Leaf) $installedGemini36
+    Assert-Condition 'S36 SKILL.md installed in agents home' (Test-Path -LiteralPath $installedSkill36 -PathType Leaf) $installedSkill36
+    Assert-Condition 'S36 delegation.md installed in agents home' (Test-Path -LiteralPath $installedDelegation36 -PathType Leaf) $installedDelegation36
+
+    # Tamper installed delegation.md in agents
+    $tamperInstalledDelegation = (Get-Content -LiteralPath $installedDelegation36 -Raw -Encoding UTF8) -replace '(?i)ALINHAMENTO', 'DISCUSS_STATE'
+    Write-FixtureFile -Path $installedDelegation36 -Content $tamperInstalledDelegation
+    $valTamperInstalled36 = Invoke-Validate -Root $root36
+    Assert-Condition 'S36 validate rejects tampered installed delegation mirror' ($valTamperInstalled36.ExitCode -ne 0) $valTamperInstalled36.Output
+    $docTamperInstalled36 = Invoke-Doctor -Root $root36
+    Assert-Condition 'S36 doctor rejects tampered installed delegation mirror hash' ($docTamperInstalled36.ExitCode -ne 0) $docTamperInstalled36.Output
+
+    # Reinstall heals all mirrors
+    Invoke-SafeInstall -Root $root36
+    $valHealed36 = Invoke-Validate -Root $root36
+    Assert-Condition 'S36 reinstall heals delegation mirror and passes validation' ($valHealed36.ExitCode -eq 0 -and $valHealed36.Output -match 'Validation OK') $valHealed36.Output
 }
 finally {
     foreach ($fixture in $fixtures) {

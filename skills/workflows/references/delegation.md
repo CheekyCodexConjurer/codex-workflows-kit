@@ -58,7 +58,17 @@ Existem dois seletores globais ortogonais e independentes:
 
 ---
 
-## 4. Persistência de Sessão vs. Recuperação
+## 4. Delegação no Estado Implícito ALINHAMENTO
+
+No ALINHAMENTO (estado implícito quando não há modo explícito de workflow ativo):
+- **Conversa Simples e Sem Cerimônia**: Permanece direta no parent GPT sem spawn de subagentes, sem cerimônia de workflow (sem planos formais, specs, todo lists, gates ou classificação de delivery), sem narrar roteamento interno e sem inspeção do repositório a menos que haja dependência material real.
+- **Delegação Condicional Somente Leitura**: Subagentes são autorizados condicionalmente exclusivamente para tarefas de inspeção somente leitura do repositório quando a resposta depender materialmente do repositório e a escala do repositório, frentes de busca concorrentes e independentes ou compressão volumosa de contexto trouxerem ganho material de velocidade ou qualidade.
+- **Escopo e Restrições**: Devem utilizar estritamente o backend global selecionado (`subagent_backend`), capacidade estritamente `analyze`/`read`, sem fallback de backend, sem acionar ferramentas/ativações que criem metadados ou estado no workspace (falha fechado se a leitura exigir mutação), seguindo o ciclo normal de ledger de requisições, consumo e fechamento de lifecycle.
+- **Estreitamento da Política**: Esta regra constitui um estreitamento delimitado e uma exceção à política `aggressive` apenas sob `ALINHAMENTO`; execuções sob modos explícitos de workflow retêm integralmente a política configurada (`balanced` ou `aggressive`).
+
+---
+
+## 5. Persistência de Sessão vs. Recuperação
 
 - **Continuação Normal (Persistência de Trilha)**:
   - Uma trilha persistente continua normalmente o mesmo agente/sessão aberto com `deepseek_continue`, sem usar `allow_respawn`.
@@ -70,14 +80,14 @@ Existem dois seletores globais ortogonais e independentes:
 
 ---
 
-## 5. Instalação e Escopo de Configuração
+## 6. Instalação e Escopo de Configuração
 
 - A instalação global preserva/instala a flag selecionada como aggressive (ou balanced) na configuração de usuário (`~/.codex/config.toml`).
 - Não injeta flags em repos consumidores: repositórios de trabalho e projetos dos usuários nunca recebem flags injetadas ou arquivos de configuração no workspace.
 
 ---
 
-## 6. Matriz de Decisão Rápida
+## 7. Matriz de Decisão Rápida
 
 | Critério | `balanced` (Padrão) | `aggressive` |
 | :--- | :--- | :--- |

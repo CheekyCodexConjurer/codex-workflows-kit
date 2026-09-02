@@ -63,8 +63,10 @@ docs/                     Documentação pública
 
 | Perfil | Escopo |
 |---|---|
-| minimal | skills workflows e evidence-first |
+| minimal | skills workflows, evidence-first e mcp-foundation |
 | safe (padrão) | skills, regras globais (AGENTS.md, GEMINI.md) e a imposição do backend selecionado |
+
+O comportamento global em qualquer repositório é fornecido pelo perfil `safe`, que injeta as regras globais universais (`~/.codex/AGENTS.md` e `~/.gemini/config/GEMINI.md`). O perfil `minimal` instala apenas as skills e, por definição, não injeta as regras globais.
 
 ~~~powershell
 .\scripts\install.ps1 -Profile safe
@@ -118,20 +120,30 @@ registrado ainda corresponde, preservando atalhos modificados ou não gerenciado
 
 ~~~mermaid
 flowchart LR
-    USER["Usuário"] --> WF["$workflows mode=<MODE>"]
+    USER["Usuário"] -->|mensagem sem modo| ALIGN["ALINHAMENTO (discussão/leitura)"]
+    USER -->|prefixo explícito| WF["$workflows mode=<MODE>"]
     PAD["Prompt pad"] --> WF
+    ALIGN --> PARENT["parent GPT (maestro)"]
     WF --> RULES["SKILL.md (política única)"]
     RULES --> BACKEND["Backend Selecionado (native | deepseek)"]
-    BACKEND --> PARENT["parent GPT (maestro)"]
+    BACKEND --> PARENT
     PARENT --> GATE["diff + validação + frozen target"]
 ~~~
 
-O único prefixo de workflow é $workflows. Consulte skills/workflows/SKILL.md
-para os 16 modos (tripla capacidades | permissão | gate de pronto) e o ciclo
-de vida; referências especializadas são abertas sob demanda. O executor de
-sub-agentes é governado pelo seletor `subagent_backend` (`native` com `gpt-5.6-luna` ou
-`deepseek` via DeepSeek Sub-Agent MCP), sob a estratégia de `delegation_policy` (`balanced`
-ou `aggressive`); o parent GPT interpreta imagens, integra, valida e decide.
+O único prefixo de workflow é $workflows. Sem modo ativo (`$workflows mode=<MODE>`),
+vigora o estado implícito `ALINHAMENTO`: conversa direta e discussão somente leitura,
+refinamento de ideias e dúvidas, sem cerimônia de workflow (sem planos formais, specs,
+todo lists ou gates) e sem narrar roteamento interno; inspeção do repositório ocorre
+apenas sob dependência material (sem ferramentas que criem metadados ou estado local)
+e sem mutações ou edição de arquivos, onde verbos imperativos nunca inferem modo. Um
+modo explícito ativo persiste através de esclarecimentos sem prefixo até seu gate de
+conclusão ou cancelamento explícito, retornando ao ALINHAMENTO após o fechamento.
+Consulte skills/workflows/SKILL.md para os 16 modos (tripla capacidades | permissão |
+gate de pronto) e o ciclo de vida; referências especializadas são abertas sob
+demanda. O executor de sub-agentes é governado pelo seletor `subagent_backend`
+(`native` com `gpt-5.6-luna` ou `deepseek` via DeepSeek Sub-Agent MCP), sob a
+estratégia de `delegation_policy` (`balanced` ou `aggressive`); o parent GPT
+interpreta imagens, integra, valida e decide.
 
 ## Alternância de Backend e Política
 
