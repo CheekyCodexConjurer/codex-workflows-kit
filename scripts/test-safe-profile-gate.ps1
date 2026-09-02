@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [int]$Scenario = 0
 )
@@ -137,12 +137,32 @@ function Invoke-ProcessCapture {
         if (-not [string]::IsNullOrEmpty($userPsModule)) { $parts.Add($userPsModule) }
         if (-not [string]::IsNullOrEmpty($machinePsModule)) { $parts.Add($machinePsModule) }
         if ($parts.Count -gt 0) {
-            $psi.Environment['PSModulePath'] = ($parts -join [IO.Path]::PathSeparator)
+            $joined = ($parts -join [IO.Path]::PathSeparator)
+            if ($null -ne $psi.PSObject.Properties['Environment']) {
+                $psi.Environment['PSModulePath'] = $joined
+            }
+            else {
+                $psi.EnvironmentVariables['PSModulePath'] = $joined
+            }
         }
     }
 
-    foreach ($arg in $ArgumentList) {
-        $psi.ArgumentList.Add([string]$arg)
+    if ($null -ne $psi.PSObject.Properties['ArgumentList']) {
+        foreach ($arg in $ArgumentList) {
+            $psi.ArgumentList.Add([string]$arg)
+        }
+    }
+    else {
+        $escapedArgs = New-Object System.Collections.Generic.List[string]
+        foreach ($arg in $ArgumentList) {
+            if ($arg -match '[\s"]') {
+                $escapedArgs.Add('"' + ($arg -replace '(\\*)(")', '$1$1\"' -replace '(\\+)$', '$1$1') + '"')
+            }
+            else {
+                $escapedArgs.Add($arg)
+            }
+        }
+        $psi.Arguments = ($escapedArgs -join ' ')
     }
 
     $process = New-Object System.Diagnostics.Process
@@ -3039,6 +3059,141 @@ enabled = true
         # Doctor check detects SubAgents MCP via legacy alias
         $docLegacy = Invoke-Doctor -Root $root38Legacy
         Assert-Condition 'S38 doctor reports SubAgents MCP configured via legacy alias' ($docLegacy.ExitCode -eq 0 -and $docLegacy.Output -match '(?i)SubAgents MCP:\s*Configured') $docLegacy.Output
+    }
+
+    $currentScenario = 39
+    if ($targetScenario -eq 0 -or $targetScenario -eq 39) {
+        Write-Host 'Scenario 39: Serena & CodeGraph operational contract, COMMIT candidate classifier, and mirror tree' -ForegroundColor Cyan
+        Import-Module (Join-Path $repo 'scripts\backend-routing.psm1') -Force
+
+        # 1. Test candidate classifier
+        $clean1 = Get-CodexCommitCandidateClassification -Path 'src/main.py'
+        Assert-Condition 'S39 clean python path is clean' ($clean1.Category -ceq 'clean' -and -not $clean1.IsBlocked) ''
+
+        $dbFile = Get-CodexCommitCandidateClassification -Path 'data/app.db'
+        Assert-Condition 'S39 *.db is not globally blocked' ($dbFile.Category -ceq 'clean' -and -not $dbFile.IsBlocked) ''
+
+        $sqliteFile = Get-CodexCommitCandidateClassification -Path 'bridge.sqlite'
+        Assert-Condition 'S39 bridge.sqlite is not blocked' ($sqliteFile.Category -ceq 'clean' -and -not $sqliteFile.IsBlocked) ''
+
+        $cacheFile = Get-CodexCommitCandidateClassification -Path '.serena/cache/ast.bin'
+        Assert-Condition 'S39 .serena/cache is classified as cache' ($cacheFile.Category -ceq 'cache' -and $cacheFile.IsBlocked) ''
+
+        $pycacheFile = Get-CodexCommitCandidateClassification -Path '__pycache__/module.pyc'
+        Assert-Condition 'S39 __pycache__ is classified as cache' ($pycacheFile.Category -ceq 'cache' -and $pycacheFile.IsBlocked) ''
+
+        $localFile = Get-CodexCommitCandidateClassification -Path '.serena/project.local.yml'
+        Assert-Condition 'S39 project.local.yml is classified as local' ($localFile.Category -ceq 'local' -and $localFile.IsBlocked) ''
+
+        $localGenFile = Get-CodexCommitCandidateClassification -Path 'settings.local.json'
+        Assert-Condition 'S39 *.local.* is classified as local' ($localGenFile.Category -ceq 'local' -and $localGenFile.IsBlocked) ''
+
+        $genBak = Get-CodexCommitCandidateClassification -Path 'backup.bak'
+        Assert-Condition 'S39 *.bak is classified as generated' ($genBak.Category -ceq 'generated' -and $genBak.IsBlocked) ''
+
+        $genTmp = Get-CodexCommitCandidateClassification -Path 'scratch.tmp'
+        Assert-Condition 'S39 *.tmp is classified as generated' ($genTmp.Category -ceq 'generated' -and $genTmp.IsBlocked) ''
+
+        $genCg = Get-CodexCommitCandidateClassification -Path '.codegraph/index.db'
+        Assert-Condition 'S39 .codegraph is classified as generated' ($genCg.Category -ceq 'generated' -and $genCg.IsBlocked) ''
+
+        $genMem = Get-CodexCommitCandidateClassification -Path '.serena/memories/idea.md'
+        Assert-Condition 'S39 .serena/memories is classified as generated' ($genMem.Category -ceq 'generated' -and $genMem.IsBlocked) ''
+
+        $thumbs = Get-CodexCommitCandidateClassification -Path 'Thumbs.db'
+        Assert-Condition 'S39 Thumbs.db is classified as generated' ($thumbs.Category -ceq 'generated' -and $thumbs.IsBlocked) ''
+
+        $secretEnv = Get-CodexCommitCandidateClassification -Path '.env'
+        Assert-Condition 'S39 .env is classified as secret' ($secretEnv.Category -ceq 'secret' -and $secretEnv.IsBlocked) ''
+
+        $secretPem = Get-CodexCommitCandidateClassification -Path 'certs/server.key'
+        Assert-Condition 'S39 *.key is classified as secret' ($secretPem.Category -ceq 'secret' -and $secretPem.IsBlocked) ''
+
+        $secretEnvProduction = Get-CodexCommitCandidateClassification -Path '.env.production'
+        Assert-Condition 'S39 .env.<suffix> is classified as secret' ($secretEnvProduction.Category -ceq 'secret' -and $secretEnvProduction.IsBlocked) ''
+
+        $exampleEnv = Get-CodexCommitCandidateClassification -Path '.env.example'
+        Assert-Condition 'S39 .env.example remains clean' ($exampleEnv.Category -ceq 'clean' -and -not $exampleEnv.IsBlocked) ''
+
+        $localCode = Get-CodexCommitCandidateClassification -Path 'src/storage.local.js'
+        Assert-Condition 'S39 arbitrary *.local.* source code remains clean' ($localCode.Category -ceq 'clean' -and -not $localCode.IsBlocked) ''
+
+        $hasCandidateEnumerator = $null -ne (Get-Command -Name Get-CodexCommitCandidates -ErrorAction SilentlyContinue)
+        Assert-Condition 'S39 exports a real staged/unstaged/untracked candidate enumerator' $hasCandidateEnumerator ''
+
+        $hasCodeGraphDecision = $null -ne (Get-Command -Name Get-CodexCodeGraphMaintenanceDecision -ErrorAction SilentlyContinue)
+        Assert-Condition 'S39 exports deterministic CodeGraph maintenance decisions' $hasCodeGraphDecision ''
+
+        if ($hasCodeGraphDecision) {
+            $decisionFresh = Get-CodexCodeGraphMaintenanceDecision -Status ([pscustomobject]@{ state = 'fresh' }) -WriteMode
+            $decisionStale = Get-CodexCodeGraphMaintenanceDecision -Status ([pscustomobject]@{ state = 'stale' }) -WriteMode
+            $decisionPending = Get-CodexCodeGraphMaintenanceDecision -Status ([pscustomobject]@{ state = 'pending' }) -WriteMode
+            $decisionFailure = Get-CodexCodeGraphMaintenanceDecision -Status ([pscustomobject]@{ state = 'failure' }) -WriteMode
+            $decisionUnknown = Get-CodexCodeGraphMaintenanceDecision -Status ([pscustomobject]@{}) -WriteMode
+            $decisionReadOnly = Get-CodexCodeGraphMaintenanceDecision -Status ([pscustomobject]@{ state = 'stale' })
+            Assert-Condition 'S39 CodeGraph fresh status skips sync' ($decisionFresh.Action -ceq 'none') ($decisionFresh | Out-String)
+            Assert-Condition 'S39 CodeGraph stale status requests sync' ($decisionStale.Action -ceq 'sync') ($decisionStale | Out-String)
+            Assert-Condition 'S39 CodeGraph pending status requests sync' ($decisionPending.Action -ceq 'sync') ($decisionPending | Out-String)
+            Assert-Condition 'S39 CodeGraph failure falls back safely' ($decisionFailure.Action -ceq 'fallback') ($decisionFailure | Out-String)
+            Assert-Condition 'S39 CodeGraph unknown falls back safely' ($decisionUnknown.Action -ceq 'fallback') ($decisionUnknown | Out-String)
+            Assert-Condition 'S39 CodeGraph read-only stale status only inspects' ($decisionReadOnly.Action -ceq 'inspect') ($decisionReadOnly | Out-String)
+        }
+
+        # 2. Test Commit Gate rejection of blocked candidate in approved owned paths
+        $root39 = New-FixtureHome
+        $fixtures.Add($root39)
+        $gitRepoDir39 = Join-Path $root39 'git-repo'
+        New-Item -ItemType Directory -Path $gitRepoDir39 -Force | Out-Null
+        $null = Invoke-GitCapture -RepoDir $gitRepoDir39 -ArgumentList @('init', '-b', 'main')
+        $null = Invoke-GitCapture -RepoDir $gitRepoDir39 -ArgumentList @('config', 'user.name', 'Test')
+        $null = Invoke-GitCapture -RepoDir $gitRepoDir39 -ArgumentList @('config', 'user.email', 'test@example.com')
+        $baseFile = Join-Path $gitRepoDir39 'base.txt'
+        Write-FixtureFile -Path $baseFile -Content 'base'
+        $null = Invoke-GitCapture -RepoDir $gitRepoDir39 -ArgumentList @('add', 'base.txt')
+        $null = Invoke-GitCapture -RepoDir $gitRepoDir39 -ArgumentList @('commit', '-m', 'base')
+
+        $tmpFile = Join-Path $gitRepoDir39 'notes.tmp'
+        Write-FixtureFile -Path $tmpFile -Content 'temp data'
+        $null = Invoke-GitCapture -RepoDir $gitRepoDir39 -ArgumentList @('add', 'notes.tmp')
+        $targetTmp = Invoke-DeliveryTargetIdentityCapture -RepoPath $gitRepoDir39 -OwnedPaths @('notes.tmp')
+        $gateTmpResult = Invoke-CommitGateCapture -RepoPath $gitRepoDir39 -ApprovedTargetId $targetTmp.TargetId -ApprovedOwnedPaths @('notes.tmp')
+        Assert-Condition 'S39 commit gate rejects blocked candidate in approved owned paths' ($gateTmpResult.Pass -eq $false -and $gateTmpResult.Detail -match '(?i)blocked|generated') $gateTmpResult.Detail
+
+        if ($hasCandidateEnumerator) {
+            $approvedFile39 = Join-Path $gitRepoDir39 'approved.txt'
+            $stagedFile39 = Join-Path $gitRepoDir39 'staged.txt'
+            $untrackedFile39 = Join-Path $gitRepoDir39 'untracked.txt'
+            $secretFile39 = Join-Path $gitRepoDir39 '.env.production'
+            Write-FixtureFile -Path $approvedFile39 -Content 'approved'
+            Write-FixtureFile -Path $stagedFile39 -Content 'staged'
+            Write-FixtureFile -Path $untrackedFile39 -Content 'untracked'
+            Write-FixtureFile -Path $secretFile39 -Content 'secret'
+            $null = Invoke-GitCapture -RepoDir $gitRepoDir39 -ArgumentList @('add', 'approved.txt', 'staged.txt')
+            $porcelainBeforeCandidates39 = (Invoke-GitCapture -RepoDir $gitRepoDir39 -ArgumentList @('status', '--porcelain=v1', '-uall')).Output
+            $candidates39 = @(Get-CodexCommitCandidates -RepoPath $gitRepoDir39)
+            $porcelainAfterCandidates39 = (Invoke-GitCapture -RepoDir $gitRepoDir39 -ArgumentList @('status', '--porcelain=v1', '-uall')).Output
+            Assert-Condition 'S39 candidate enumeration preserves the Git index and status' ($porcelainBeforeCandidates39 -ceq $porcelainAfterCandidates39) ($porcelainBeforeCandidates39 + "`n" + $porcelainAfterCandidates39)
+            Assert-Condition 'S39 candidate enumeration includes staged and untracked paths' (($candidates39.Path -contains 'staged.txt') -and ($candidates39.Path -contains 'untracked.txt')) ($candidates39 | Out-String)
+            Assert-Condition 'S39 candidate enumeration blocks an untracked environment secret' (@($candidates39 | Where-Object { $_.Path -eq '.env.production' -and $_.IsBlocked -and $_.Category -ceq 'secret' }).Count -eq 1) ($candidates39 | Out-String)
+            $approvedTarget39 = Invoke-DeliveryTargetIdentityCapture -RepoPath $gitRepoDir39 -OwnedPaths @('approved.txt')
+            $gateSecretResult39 = Invoke-CommitGateCapture -RepoPath $gitRepoDir39 -ApprovedTargetId $approvedTarget39.TargetId -ApprovedOwnedPaths @('approved.txt')
+            Assert-Condition 'S39 commit gate rejects blocked untracked candidates before touching the index' ($gateSecretResult39.Pass -eq $false -and $gateSecretResult39.Detail -match '(?i)\.env\.production|secret|blocked') $gateSecretResult39.Detail
+        }
+
+        # 3. Test Safe Install and Mirror Tree for serena-codegraph.md
+        $installResult39 = Invoke-InstallCapture -Root $root39 -Profile safe
+        Assert-Condition 'S39 safe install succeeds' ($installResult39.ExitCode -eq 0) $installResult39.Output
+
+        $installedRefAgents = Join-Path (Get-AgentsHome $root39) 'skills\mcp-foundation\references\serena-codegraph.md'
+        $installedRefAg1 = Join-Path (Get-AntigravityHome $root39) 'antigravity\skills\mcp-foundation\references\serena-codegraph.md'
+        $installedRefAg2 = Join-Path (Get-AntigravityHome $root39) 'config\skills\mcp-foundation\references\serena-codegraph.md'
+        Assert-Condition 'S39 serena-codegraph.md mirrored to agents home' (Test-Path -LiteralPath $installedRefAgents -PathType Leaf) ''
+        Assert-Condition 'S39 serena-codegraph.md mirrored to antigravity home 1' (Test-Path -LiteralPath $installedRefAg1 -PathType Leaf) ''
+        Assert-Condition 'S39 serena-codegraph.md mirrored to antigravity home 2' (Test-Path -LiteralPath $installedRefAg2 -PathType Leaf) ''
+
+        # 4. Mirror tree validation in fixture home
+        $valResult39 = Invoke-Validate -Root $root39
+        Assert-Condition 'S39 validate succeeds on installed fixture' ($valResult39.ExitCode -eq 0) $valResult39.Output
     }
 }
 finally {

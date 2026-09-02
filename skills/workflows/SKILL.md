@@ -41,6 +41,7 @@ selected mode or an open gate requires it.
   series; never push.
 - Material current, external, or high-impact claims use the `evidence-first`
   skill.
+- All workflow modes perform an MCP maintenance preflight before acting (`skills/mcp-foundation/SKILL.md`). Modos sem escrita apenas verificam; write modes may sync CodeGraph on stale/pending delay via status -> sync -> recheck, falling back to Serena/rg with a warning on failure/unknown. Serena runs via `--project-from-cwd` with one instance per project, read configuration check, no-onboarding/no-memories in no-write modes, and edits only in write modes. Never auto-init, auto-upgrade, or auto-restart MCPs.
 - The selected global backend matrix is authoritative for new Codex tasks and
   sessions. An ambiguous or unavailable matrix blocks; there is no silent
   model, provider, or route fallback.
@@ -215,8 +216,11 @@ commit series; never push. `references/delivery-review.md` and
   recompute staging- and host-code-page-invariant target_id, require exact equality, verify the staged
   path set matches the approved owned set, and verify every staged blob matches the
   Git-normalized approved content; follow-up fixes are new commits — no amend or rewrite.
-- `COMMIT` stays git-only for pre-existing or exceptional dirty worktrees;
-  `REWORK` stays no-write: roadmap only, never implementation; `R.A.F.V` is
+- `COMMIT` stays git-only for pre-existing or exceptional dirty worktrees,
+  never alters .gitignore, and never updates MCP indexes; it classifies
+  staged, unstaged, and untracked candidates and blocks without changing
+  the index on local/generated/cache/secret candidates, reporting path, category,
+  and suggested rule; `REWORK` stays no-write: roadmap only, never implementation; `R.A.F.V` is
   an explicitly requested separate mode, never auto-run.
 
 ## Final audit

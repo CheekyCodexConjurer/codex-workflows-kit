@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$CodexHome,
     [string]$AgentsHome,
@@ -378,6 +378,96 @@ function Assert-DeepSeekDaemonRestartPolicy {
     Assert-DeepSeekDaemonRestartSkill -Label "${pfx}mcp-foundation SKILL.md" -Text $SkillText
     Assert-DeepSeekDaemonRestartAgents -Label "${pfx}codex AGENTS.md" -Text $AgentsText
     Assert-DeepSeekDaemonRestartGemini -Label "${pfx}antigravity GEMINI.md" -Text $GeminiText
+}
+
+function Assert-SerenaCodeGraphPolicy {
+    param(
+        [Parameter(Mandatory)][string]$McpSkillText,
+        [Parameter(Mandatory)][string]$SerenaCodeGraphText,
+        [Parameter(Mandatory)][string]$WorkflowSkillText,
+        [Parameter(Mandatory)][string]$CommitRefText,
+        [Parameter(Mandatory)][string]$AgentsText,
+        [Parameter(Mandatory)][string]$GeminiText,
+        [string]$LabelPrefix = ''
+    )
+
+    $pfx = if ([string]::IsNullOrWhiteSpace($LabelPrefix)) { '' } else { "$LabelPrefix " }
+    $mcpSkillNorm = [regex]::Replace($McpSkillText, '\s+', ' ').Trim()
+    $scgNorm = [regex]::Replace($SerenaCodeGraphText, '\s+', ' ').Trim()
+    $wfSkillNorm = [regex]::Replace($WorkflowSkillText, '\s+', ' ').Trim()
+    $commitNorm = [regex]::Replace($CommitRefText, '\s+', ' ').Trim()
+    $agentsNorm = [regex]::Replace($AgentsText, '\s+', ' ').Trim()
+    $geminiNorm = [regex]::Replace($GeminiText, '\s+', ' ').Trim()
+
+    # 1. Dedicated reference references/serena-codegraph.md must define the centralized policy:
+    $scgRequired = @(
+        '(?i)preflight',
+        '(?i)(?:todos os modos|all modes)',
+        '(?i)(?:apenas verificam|status-only|only verify|verify only)',
+        '(?i)(?:codegraph sync|sincroniza[cç][aã]o incremental)',
+        '(?i)(?:stale|pending|atraso)',
+        '(?i)(?:recheck|verificar novamente)',
+        '(?i)(?:falha/unknown|failure/unknown|unknown).*(?:Serena|rg)',
+        '(?i)(?:sem auto-init|never auto-init|n[aã]o reindexar automaticamente|sem reindexar automaticamente)',
+        '(?i)(?:sem auto-upgrade|never auto-upgrade|n[aã]o fazer upgrade de pacote|sem upgrade de pacote)',
+        '(?i)(?:sem auto-restart|never auto-restart|n[aã]o reiniciar MCPs|sem reiniciar MCPs)',
+        '(?i)status --json',
+        '(?i)codegraph_explore',
+        '(?i)projectPath',
+        '(?i)--project-from-cwd',
+        '(?i)(?:uma inst[aâ]ncia por projeto|one instance per project)',
+        '(?i)(?:confirma[cç][aã]o read-only|read-only confirmation)',
+        '(?i)(?:sem singleton global|no global singleton)',
+        '(?i)(?:sem taskkill|never taskkill|no generic taskkill)',
+        '(?i)no-onboarding',
+        '(?i)no-memories',
+        '(?i)(?:edi[cç][aã]o somente em modos|edits only in explicit write modes)',
+        '(?i)Get-CodexCommitCandidates',
+        '(?i)Get-CodexCodeGraphMaintenanceDecision',
+        '(?i)COMMIT.{0,80}(?:git-only|Git index)'
+    )
+    foreach ($pattern in $scgRequired) {
+        if (-not [regex]::IsMatch($scgNorm, $pattern)) {
+            throw "${pfx}serena-codegraph.md is missing required pattern: $pattern"
+        }
+    }
+
+    # 2. mcp-foundation SKILL.md must route to references/serena-codegraph.md
+    if ($mcpSkillText -notmatch '(?i)serena-codegraph\.md') {
+        throw "${pfx}mcp-foundation SKILL.md is missing reference to serena-codegraph.md"
+    }
+
+    # 3. COMMIT contract in workflows SKILL.md and references/commit.md:
+    $commitRequired = @(
+        '(?i)git-only',
+        '(?i)(?:nunca altera [`]?\.gitignore|never (?:modifies|alters) [`]?\.gitignore)',
+        '(?i)(?:nunca atualiza [`]?[ií]ndices MCP|never updates [`]?(?:the )?MCP indexes)',
+        '(?i)(?:classifi\w*).*(?:staged|unstaged|untracked)',
+        '(?i)(?:bloqueia sem mudar o (?:git )?index|block without changing the (?:git )?index)'
+    )
+    foreach ($pattern in $commitRequired) {
+        if (-not [regex]::IsMatch($commitNorm, $pattern)) {
+            throw "${pfx}commit.md is missing required COMMIT contract pattern: $pattern"
+        }
+        if (-not [regex]::IsMatch($wfSkillNorm, $pattern)) {
+            throw "${pfx}workflows SKILL.md is missing required COMMIT contract pattern: $pattern"
+        }
+    }
+
+    # 4. Host templates (codex AGENTS.md and antigravity GEMINI.md) compact contracts:
+    $templateRequired = @(
+        '(?i)(?:preflight|codegraph sync|status --json)',
+        '(?i)(?:--project-from-cwd|uma inst[aâ]ncia por projeto)',
+        '(?i)(?:nunca altera \.gitignore|git-only)'
+    )
+    foreach ($pattern in $templateRequired) {
+        if (-not [regex]::IsMatch($agentsNorm, $pattern)) {
+            throw "${pfx}codex AGENTS.md is missing required Serena/CodeGraph pattern: $pattern"
+        }
+        if (-not [regex]::IsMatch($geminiNorm, $pattern)) {
+            throw "${pfx}antigravity GEMINI.md is missing required Serena/CodeGraph pattern: $pattern"
+        }
+    }
 }
 
 function Assert-McpTemplateRouting {
@@ -1566,6 +1656,7 @@ $designSpec = Read-RequiredText (Join-Path $repo 'docs\superpowers\specs\2026-08
 $implPlan = Read-RequiredText (Join-Path $repo 'docs\superpowers\plans\2026-08-26-workflow-rearchitecture-implementation-plan.md')
 $mcpSkill = Read-RequiredText (Join-Path $mcpSource 'SKILL.md')
 $mcpLifecycle = Read-RequiredText (Join-Path (Join-Path $mcpSource 'references') 'lifecycle.md')
+$mcpSerenaCodeGraph = Read-RequiredText (Join-Path (Join-Path $mcpSource 'references') 'serena-codegraph.md')
 $agentsText = Read-RequiredText $agentsMd
 $geminiText = Read-RequiredText $geminiTemplate
 $readmeText = Read-RequiredText (Join-Path $repo 'README.md')
@@ -1718,7 +1809,8 @@ Assert-AllContractRules -Checks @(
     { Assert-DeliveryReviewPolicy -DeliveryReviewText $deliveryReviewRef -SkillText $skill -AgentsText $agentsText -GeminiText $geminiText },
     { Assert-AlinhamentoPolicy -AgentsText $agentsText -GeminiText $geminiText -SkillText $skill -DelegationText $delegationRef -ReadmeText $readmeText },
     { Assert-McpTemplateRouting -Label 'codex AGENTS.md' -Text $agentsText },
-    { Assert-McpTemplateRouting -Label 'antigravity GEMINI.md' -Text $geminiText }
+    { Assert-McpTemplateRouting -Label 'antigravity GEMINI.md' -Text $geminiText },
+    { Assert-SerenaCodeGraphPolicy -McpSkillText $mcpSkill -SerenaCodeGraphText $mcpSerenaCodeGraph -WorkflowSkillText $skill -CommitRefText $commitRef -AgentsText $agentsText -GeminiText $geminiText }
 )
 
 $legacyPaths = @(

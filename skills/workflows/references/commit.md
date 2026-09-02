@@ -33,13 +33,14 @@ mode, never run automatically.
 These checks and the staged-content preservation rule apply only to
 `COMMIT` (pre-existing or exceptional dirty worktrees); the delivery-commit
 gate above is the only path that commits owned delivery work, and it never
-includes pre-existing or staged changes.
+includes pre-existing or staged changes. `COMMIT` remains strictly git-only:
+it never alters `.gitignore` and never updates MCP indexes.
 
 - Inspect status, staged diff, unstaged diff, untracked files, merge/rebase
   state, current branch, remotes, and upstream before staging.
 - Classify all staged, unstaged, and untracked candidate paths and content.
   Block without changing the index when a candidate looks secret, generated,
-  cache, or local.
+  cache, or local, reporting the candidate path, category, and suggested rule.
 - Keep simple commits local. When classification has independent material
   fronts, use a delegated read front before changing the index.
 - Preserve existing staged content as an explicit first unit in `COMMIT`;

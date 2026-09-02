@@ -887,6 +887,244 @@ function Get-CodexDeliveryTargetIdentity {
     }
 }
 
+function Get-CodexCommitCandidateClassification {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory, ValueFromPipeline)][string]$Path
+    )
+
+    process {
+        if ([string]::IsNullOrWhiteSpace($Path)) {
+            return $null
+        }
+        $rawPath = $Path.Trim()
+        $norm = $rawPath.Replace('\', '/') -replace '^\./', '' -replace '^/', ''
+
+        $category = 'clean'
+        $suggestedRule = $null
+
+        # 1. Secrets (never commit credentials, private keys, or environment files)
+        # Keep the explicit example file available as documentation; every other
+        # .env variant is treated as a secret candidate.
+        if (($norm -match '(?i)(?:^|/)\.env(?:\.[^/]+)?$' -and
+             $norm -notmatch '(?i)(?:^|/)\.env\.example$') -or
+            $norm -match '(?i)\.(?:pem|key|pfx|p12)$' -or
+            $norm -match '(?i)(?:^|/)id_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?$' -or
+            $norm -match '(?i)(?:^|/)(?:credentials|secrets)\.json$') {
+            $category = 'secret'
+            $suggestedRule = if ($norm -match '(?i)(?:^|/)\.env(?:\.[^/]+)?$') { '.env* (except .env.example)' } else { Split-Path -Leaf $norm }
+        }
+        # 2. Local environment & configuration overrides
+        elseif ($norm -match '(?i)(?:^|/)\.serena/project\.local\.[^/]+$' -or
+                $norm -match '(?i)(?:^|/)(?:config|settings)\.local$' -or
+                $norm -match '(?i)(?:^|/)[^/]+\.local\.(?:json|ya?ml|toml|ini|conf|config|env|properties)$' -or
+                $norm -match '(?i)(?:^|/)\.scratchpad(?:/|$)' -or
+                $norm -match '(?i)(?:^|/)\.local(?:/|$)' -or
+                $norm -match '(?i)(?:^|/)config/local(?:/|$)') {
+            $category = 'local'
+            if ($norm -match '(?i)\.serena/project\.local\.') {
+                $suggestedRule = '.serena/project.local.*'
+            }
+            elseif ($norm -match '(?i)\.local\.(?:json|ya?ml|toml|ini|conf|config|env|properties)$' -or
+                    $norm -match '(?i)(?:^|/)(?:config|settings)\.local$') {
+                $suggestedRule = Split-Path -Leaf $norm
+            }
+            elseif ($norm -match '(?i)\.scratchpad') {
+                $suggestedRule = '.scratchpad/'
+            }
+            else {
+                $suggestedRule = Split-Path -Leaf $norm
+            }
+        }
+        # 3. Cache directories & bytecode
+        elseif ($norm -match '(?i)(?:^|/)\.serena/cache(?:/|$)' -or
+                $norm -match '(?i)(?:^|/)__pycache__(?:/|$)' -or
+                $norm -match '(?i)\.(?:py[cod]|cache)$' -or
+                $norm -match '(?i)(?:^|/)\.cache(?:/|$)') {
+            $category = 'cache'
+            if ($norm -match '(?i)\.serena/cache') {
+                $suggestedRule = '.serena/cache/'
+            }
+            elseif ($norm -match '(?i)__pycache__|\.py[cod]') {
+                $suggestedRule = '__pycache__/'
+            }
+            else {
+                $suggestedRule = '.cache/'
+            }
+        }
+        # 4. Generated artifacts, temporary files, runtime databases, OS metadata
+        # Notice: *.db is NOT globally matched here; only specific filenames like Thumbs.db
+        elseif ($norm -match '(?i)\.(?:bak|tmp|log)$' -or
+                $norm -match '(?i)(?:^|/)\.codegraph(?:/|$)' -or
+                $norm -match '(?i)(?:^|/)\.serena/(?:memories|logs)(?:/|$)' -or
+                $norm -match '(?i)(?:^|/)Thumbs\.db$' -or
+                $norm -match '(?i)(?:^|/)\.DS_Store$') {
+            $category = 'generated'
+            if ($norm -match '(?i)\.codegraph') {
+                $suggestedRule = '.codegraph/'
+            }
+            elseif ($norm -match '(?i)\.serena/memories') {
+                $suggestedRule = '.serena/memories/'
+            }
+            elseif ($norm -match '(?i)\.serena/logs') {
+                $suggestedRule = '.serena/logs/'
+            }
+            elseif ($norm -match '(?i)\.bak$') {
+                $suggestedRule = '*.bak'
+            }
+            elseif ($norm -match '(?i)\.tmp$') {
+                $suggestedRule = '*.tmp'
+            }
+            elseif ($norm -match '(?i)\.log$') {
+                $suggestedRule = '*.log'
+            }
+            elseif ($norm -match '(?i)Thumbs\.db$') {
+                $suggestedRule = 'Thumbs.db'
+            }
+            elseif ($norm -match '(?i)\.DS_Store$') {
+                $suggestedRule = '.DS_Store'
+            }
+            else {
+                $suggestedRule = Split-Path -Leaf $norm
+            }
+        }
+
+        return [pscustomobject]@{
+            Path = $norm
+            Category = $category
+            IsBlocked = ($category -ne 'clean')
+            SuggestedRule = $suggestedRule
+        }
+    }
+}
+
+function Get-CodexCommitCandidates {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$RepoPath
+    )
+
+    $fullRepoPath = [IO.Path]::GetFullPath($RepoPath)
+    if (-not (Test-Path -LiteralPath $fullRepoPath -PathType Container)) {
+        throw "Repository path does not exist: $fullRepoPath"
+    }
+
+    $statusOutput = @(& git -C $fullRepoPath -c core.quotePath=false status --porcelain=v1 -uall 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        $detail = ($statusOutput | ForEach-Object { $_.ToString() }) -join "`n"
+        throw "Unable to enumerate Git commit candidates: $detail"
+    }
+
+    $candidates = New-Object System.Collections.Generic.List[object]
+    foreach ($rawLine in $statusOutput) {
+        $line = $rawLine.ToString()
+        if ([string]::IsNullOrWhiteSpace($line)) {
+            continue
+        }
+        if ($line.Length -lt 4) {
+            throw "Unexpected Git porcelain line while enumerating commit candidates: $line"
+        }
+
+        $indexStatus = $line.Substring(0, 1)
+        $worktreeStatus = $line.Substring(1, 1)
+        $pathText = $line.Substring(3)
+        $pathParts = @($pathText)
+        if ($pathText -match '\s+->\s+') {
+            $pathParts = @($pathText -split '\s+->\s+', 2)
+        }
+
+        foreach ($pathPart in $pathParts) {
+            $candidatePath = $pathPart.Trim()
+            if ($candidatePath.StartsWith('"') -and $candidatePath.EndsWith('"') -and $candidatePath.Length -ge 2) {
+                $candidatePath = $candidatePath.Substring(1, $candidatePath.Length - 2)
+            }
+            if ([string]::IsNullOrWhiteSpace($candidatePath)) {
+                continue
+            }
+            $classification = Get-CodexCommitCandidateClassification -Path $candidatePath
+            $changeKind = if ($indexStatus -eq '?' -and $worktreeStatus -eq '?') {
+                'untracked'
+            }
+            elseif ($indexStatus -ne ' ' -and $worktreeStatus -ne ' ') {
+                'staged-and-unstaged'
+            }
+            elseif ($indexStatus -ne ' ') {
+                'staged'
+            }
+            else {
+                'unstaged'
+            }
+
+            $candidates.Add([pscustomobject]@{
+                Path = $classification.Path
+                Status = "$indexStatus$worktreeStatus"
+                IndexStatus = $indexStatus
+                WorktreeStatus = $worktreeStatus
+                ChangeKind = $changeKind
+                Category = $classification.Category
+                IsBlocked = $classification.IsBlocked
+                SuggestedRule = $classification.SuggestedRule
+            })
+        }
+    }
+
+    return @($candidates.ToArray())
+}
+
+function Get-CodexCodeGraphMaintenanceDecision {
+    [CmdletBinding()]
+    param(
+        [AllowNull()][object]$Status,
+        [switch]$WriteMode
+    )
+
+    $state = ''
+    if ($null -ne $Status) {
+        foreach ($propertyName in @('state', 'status', 'indexState', 'index_status')) {
+            $property = $Status.PSObject.Properties[$propertyName]
+            if ($null -ne $property -and -not [string]::IsNullOrWhiteSpace([string]$property.Value)) {
+                $state = ([string]$property.Value).Trim().ToLowerInvariant()
+                break
+            }
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace($state)) {
+        $state = 'unknown'
+    }
+
+    if (-not $WriteMode) {
+        return [pscustomobject]@{
+            State = $state
+            Action = 'inspect'
+            Reason = 'Read-only mode never synchronizes or mutates a CodeGraph index.'
+        }
+    }
+
+    switch -Regex ($state) {
+        '^(fresh|ready|current|up-to-date)$' {
+            return [pscustomobject]@{
+                State = $state
+                Action = 'none'
+                Reason = 'CodeGraph index is current; no sync is needed.'
+            }
+        }
+        '^(stale|outdated|pending|dirty)$' {
+            return [pscustomobject]@{
+                State = $state
+                Action = 'sync'
+                Reason = 'CodeGraph index is stale or pending; run one bounded incremental sync, then recheck.'
+            }
+        }
+        default {
+            return [pscustomobject]@{
+                State = $state
+                Action = 'fallback'
+                Reason = 'CodeGraph status is failed or unknown; do not initialize/reindex/restart, and use Serena/rg with an explicit warning.'
+            }
+        }
+    }
+}
+
 function Test-CodexCommitGate {
     [CmdletBinding()]
     param(
@@ -897,6 +1135,32 @@ function Test-CodexCommitGate {
     )
 
     $fullRepoPath = [IO.Path]::GetFullPath($RepoPath)
+
+    # 0. Enumerate every staged, unstaged, and untracked candidate before the
+    # target/index checks. This is observational and never edits the Git index.
+    $allCandidates = @(Get-CodexCommitCandidates -RepoPath $fullRepoPath)
+    foreach ($candidate in $allCandidates) {
+        if ($candidate.IsBlocked) {
+            return [pscustomobject]@{
+                Pass = $false
+                Detail = "Commit candidate blocked: '$($candidate.Path)' ($($candidate.ChangeKind)) is classified as $($candidate.Category) (suggested rule: '$($candidate.SuggestedRule)')."
+                RecomputedTarget = $null
+            }
+        }
+    }
+
+    # 0.1 Candidate classifier check on approved owned paths (kept explicit for
+    # callers whose approved set is not present in porcelain output).
+    foreach ($p in $ApprovedOwnedPaths) {
+        $candidateClassification = Get-CodexCommitCandidateClassification -Path $p
+        if ($null -ne $candidateClassification -and $candidateClassification.IsBlocked) {
+            return [pscustomobject]@{
+                Pass = $false
+                Detail = "Commit candidate blocked: approved path '$p' is classified as $($candidateClassification.Category) (suggested rule: '$($candidateClassification.SuggestedRule)')."
+                RecomputedTarget = $null
+            }
+        }
+    }
 
     # 1. Recompute staging-invariant delivery target identity
     $recomputed = Get-CodexDeliveryTargetIdentity -RepoPath $fullRepoPath -OwnedPaths $ApprovedOwnedPaths -Baseline $Baseline
@@ -1037,5 +1301,8 @@ Export-ModuleMember -Function @(
     'Set-CodexAgentsManagedBlockText',
     'Assert-CodexAgentsRuntimeBlock',
     'Get-CodexDeliveryTargetIdentity',
-    'Test-CodexCommitGate'
+    'Test-CodexCommitGate',
+    'Get-CodexCommitCandidateClassification',
+    'Get-CodexCommitCandidates',
+    'Get-CodexCodeGraphMaintenanceDecision'
 )
