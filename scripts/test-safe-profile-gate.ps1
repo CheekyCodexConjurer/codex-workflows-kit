@@ -950,12 +950,20 @@ function Test-CriticalStrategySemantics {
         '(?i)worker',
         '(?i)critical',
         '(?i)an[a\u00e1]lise independente',
+        '(?i)adaptativa por profundidade',
+        '(?i)evid[e\u00ea]ncias',
         '(?i)contradi[c\u00e7][o\u00f5]es.{0,30}lacunas',
         '(?i)s[i\u00ed]ntese GPT',
         '(?i)fencing.{0,30}ownership',
         '(?i)sem edi[c\u00e7][a\u00e3]o concorrente',
         '(?i)worker preserva o fluxo atual',
         '(?i)estrat[e\u00e9]gia nunca concede escrita',
+        '(?i)sem troca autom[a\u00e1]tica de rota|sem troca autom[a\u00e1]tica de provedor|sem fallback autom[a\u00e1]tico de rota',
+        '(?i)recibo',
+        '(?i)evidence packet|pacote de evid[e\u00ea]ncia',
+        '(?i)semantic progress|progresso sem[a\u00e1]ntico',
+        '(?i)early-exit|sa[i\u00ed]da antecipada',
+        '(?i)sem prometer capacidades que o bridge ainda n[a\u00e3]o exp[o\u00f5]e',
         '(?i)SubAgents MCP|subagents_'
     )
     foreach ($pattern in $agentsRequired) {
@@ -965,7 +973,21 @@ function Test-CriticalStrategySemantics {
     }
 
     $geminiRequired = @(
-        '(?i)estrat[e\u00e9]gia nunca concede escrita'
+        '(?i)critical',
+        '(?i)an[a\u00e1]lise independente',
+        '(?i)adaptativa por profundidade',
+        '(?i)evid[e\u00ea]ncias',
+        '(?i)contradi[c\u00e7][o\u00f5]es',
+        '(?i)lacunas',
+        '(?i)s[i\u00ed]ntese GPT',
+        '(?i)sem edi[c\u00e7][a\u00e3]o concorrente',
+        '(?i)sem troca autom[a\u00e1]tica de rota|sem troca autom[a\u00e1]tica de provedor',
+        '(?i)estrat[e\u00e9]gia nunca concede escrita',
+        '(?i)recibo',
+        '(?i)evidence packet|pacote de evid[e\u00ea]ncia',
+        '(?i)semantic progress|progresso sem[a\u00e1]ntico',
+        '(?i)early-exit|sa[i\u00ed]da antecipada',
+        '(?i)sem prometer capacidades que o bridge ainda n[a\u00e3]o exp[o\u00f5]e'
     )
     foreach ($pattern in $geminiRequired) {
         if (-not [regex]::IsMatch($geminiNorm, $pattern)) {
@@ -978,11 +1000,20 @@ function Test-CriticalStrategySemantics {
         '(?i)worker',
         '(?i)critical',
         '(?i)an[a\u00e1]lise independente|independent analysis',
+        '(?i)adaptativa por profundidade|adaptive.?by.?depth',
+        '(?i)evid[e\u00ea]ncias|evidence',
         '(?i)contradi[c\u00e7][o\u00f5]es|contradictions',
+        '(?i)lacunas|gaps',
         '(?i)s[i\u00ed]ntese GPT|GPT synthesis',
         '(?i)fencing.{0,30}ownership',
         '(?i)sem edi[c\u00e7][a\u00e3]o concorrente|no concurrent edit',
+        '(?i)sem troca autom[a\u00e1]tica de rota|no automatic route|sem troca autom[a\u00e1]tica de provedor',
         '(?i)estrat[e\u00e9]gia nunca concede escrita|strategy never grants write',
+        '(?i)recibo|receipt',
+        '(?i)evidence packet',
+        '(?i)semantic progress',
+        '(?i)early-exit',
+        '(?i)sem prometer capacidades que o bridge ainda n[a\u00e3]o exp[o\u00f5]e|capabilities that the bridge does not yet expose',
         '(?i)subagents_spawn'
     )
     foreach ($pattern in $skillRequired) {
@@ -996,12 +1027,20 @@ function Test-CriticalStrategySemantics {
         '(?i)worker',
         '(?i)critical',
         '(?i)an[a\u00e1]lise independente|independent analysis',
+        '(?i)adaptativa por profundidade|adaptive.?by.?depth',
         '(?i)contradi[c\u00e7][o\u00f5]es|contradictions',
+        '(?i)lacunas|gaps',
         '(?i)s[i\u00ed]ntese GPT|GPT synthesis',
         '(?i)fencing.{0,30}ownership',
         '(?i)sem edi[c\u00e7][a\u00e3]o concorrente|no concurrent edit',
+        '(?i)sem troca autom[a\u00e1]tica de rota|sem troca autom[a\u00e1]tica de provedor|no automatic route',
         '(?i)worker preserva o fluxo atual|worker preserves',
         '(?i)estrat[e\u00e9]gia nunca concede escrita|strategy never grants write',
+        '(?i)recibo|receipt',
+        '(?i)evidence packet',
+        '(?i)semantic progress',
+        '(?i)early-exit',
+        '(?i)sem prometer capacidades que o bridge ainda n[a\u00e3]o exp[o\u00f5]e|capabilities that the bridge does not yet expose',
         '(?i)SubAgents MCP',
         '(?i)subagents_spawn'
     )
@@ -1015,6 +1054,7 @@ function Test-CriticalStrategySemantics {
         '(?i)subagent_strategy',
         '(?i)worker',
         '(?i)critical',
+        '(?i)adaptativa por profundidade|adaptive.?by.?depth',
         '(?i)SubAgents MCP'
     )
     foreach ($pattern in $readmeRequired) {
@@ -1027,6 +1067,11 @@ function Test-CriticalStrategySemantics {
         '(?i)\b(?:estrat[e\u00e9]gia|critical)\b[^.;]*\b(?:concede|autoriza|permite|grants?)\b[^.;]*\bescrita\b[^.;]*(?:no ALINHAMENTO|em ALINHAMENTO|under ALINHAMENTO)',
         '(?i)(?:no ALINHAMENTO|em ALINHAMENTO|under ALINHAMENTO)[^.;]*\b(?:estrat[e\u00e9]gia|critical)\b[^.;]*\b(?:concede|autoriza|permite|grants?)\b[^.;]*\bescrita',
         '(?i)\b(?:permite|autoriza|allows?)\b[^.;]*\bedi[c\u00e7][a\u00e3]o concorrente\b',
+        '(?i)subagent_strategy\s*=\s*adaptive',
+        '(?i)\bsubagent_strategy\b[^.;]*\badaptive\b[^.;]*(?:p[u\u00fa]blica|public|flag)',
+        '(?i)worker\s*\|\s*critical\s*\|\s*adaptive',
+        '(?i)\b(?:critical|estrat[e\u00e9]gia)\b[^.;]*\b(?:pode|autoriza|permite)\b[^.;]*(?:trocar de rota|trocar de provedor|fallback autom[a\u00e1]tico)\b',
+        '(?i)\b(?:bridge|subagents?)\b[^.;]*\b(?:exp[o\u00f5]e|promete|suporta)\b[^.;]*(?:websocket|streaming push|push notifications?)\b',
         '(?i)\bdeepseek_spawn\b',
         '(?i)\bdeepseek_follow\b'
     )
@@ -2914,6 +2959,18 @@ enabled = true
 
         $tamperMissingSynthesis = $canonicalAgents37 -replace '(?i)s[i\u00ed]ntese GPT', 'síntese delegada'
         Assert-Condition 'S37 detects missing GPT synthesis tamper' (-not (Test-CriticalStrategySemantics -AgentsText $tamperMissingSynthesis -GeminiText $canonicalGemini37 -SkillText $canonicalSkill37 -DelegationText $canonicalDelegation37 -ReadmeText $canonicalReadme37)) ''
+
+        $tamperAdaptivePublicFlag = $canonicalAgents37 + $nl + 'subagent_strategy = adaptive'
+        Assert-Condition 'S37 detects public adaptive flag tamper' (-not (Test-CriticalStrategySemantics -AgentsText $tamperAdaptivePublicFlag -GeminiText $canonicalGemini37 -SkillText $canonicalSkill37 -DelegationText $canonicalDelegation37 -ReadmeText $canonicalReadme37)) ''
+
+        $tamperProviderFallback = $canonicalAgents37 + $nl + 'A estratégia critical pode trocar de rota automaticamente quando o provedor falha.'
+        Assert-Condition 'S37 detects automatic provider fallback tamper in critical strategy' (-not (Test-CriticalStrategySemantics -AgentsText $tamperProviderFallback -GeminiText $canonicalGemini37 -SkillText $canonicalSkill37 -DelegationText $canonicalDelegation37 -ReadmeText $canonicalReadme37)) ''
+
+        $tamperMissingAdaptive = $canonicalAgents37 -replace '(?i)adaptativa por profundidade', 'estática rasa'
+        Assert-Condition 'S37 detects missing adaptive depth analysis tamper' (-not (Test-CriticalStrategySemantics -AgentsText $tamperMissingAdaptive -GeminiText $canonicalGemini37 -SkillText $canonicalSkill37 -DelegationText $canonicalDelegation37 -ReadmeText $canonicalReadme37)) ''
+
+        $tamperMissingReceipt = $canonicalAgents37 -replace '(?i)recibo', 'dispensa'
+        Assert-Condition 'S37 detects missing integration receipt tamper' (-not (Test-CriticalStrategySemantics -AgentsText $tamperMissingReceipt -GeminiText $canonicalGemini37 -SkillText $canonicalSkill37 -DelegationText $canonicalDelegation37 -ReadmeText $canonicalReadme37)) ''
 
         # 2. Installation establishes worker by default
         $originalConfig37 = '[features]' + $nl + 'multi_agent = false' + $nl + $nl + '[mcp_servers.subagents]' + $nl + 'command = "pwsh"' + $nl

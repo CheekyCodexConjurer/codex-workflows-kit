@@ -9,7 +9,7 @@ O parent GPT é o maestro que delega, integra, valida e decide. Tudo parte de um
 worktree versionada, com backup antes de sobrescrever, alternâncias transacionais com rollback,
 diagnóstico e remoção segura.
 
-O seletor global de backend define o executor de sub-agentes (`native` com `gpt-5.6-luna` ou backend técnico `deepseek` via SubAgents MCP). A política de delegação define o equilíbrio operacional (`balanced` otimizando wall-clock time ou `aggressive` otimizando desoneração de tokens). A estratégia de subagentes define o modelo de cooperação (`worker` padrão onde worker preserva o fluxo atual, ou `critical` com análise independente, identificação de contradições e lacunas, síntese GPT mandatória, fencing e sem edição concorrente; a estratégia nunca concede escrita). Em modos de escrita, o módulo invariante de qualidade de entrega congela o alvo e exige revisão estruturada independente com veredito APPROVED antes do commit local fechado.
+O seletor global de backend define o executor de sub-agentes (`native` com `gpt-5.6-luna` ou backend técnico `deepseek` via SubAgents MCP). A política de delegação define o equilíbrio operacional (`balanced` otimizando wall-clock time ou `aggressive` otimizando desoneração de tokens). A estratégia de subagentes define o modelo de cooperação (`worker` padrão onde worker preserva o fluxo atual, ou `critical` com análise independente e adaptativa por profundidade internamente, identificação de contradições e lacunas, síntese GPT mandatória, fencing e sem edição concorrente; fixação de rota sem troca automática de provedor e sem prometer capacidades que o bridge ainda não expõe; a estratégia nunca concede escrita). Em modos de escrita, o módulo invariante de qualidade de entrega congela o alvo e exige revisão estruturada independente com veredito APPROVED antes do commit local fechado.
 
 > **Segurança primeiro.** Nunca instale por pipeline remoto. Clone ou baixe o
 > repositório, revise os scripts em scripts/ e execute-os do seu próprio
@@ -144,7 +144,7 @@ gate de pronto) e o ciclo de vida; referências especializadas são abertas sob
 demanda. O executor de sub-agentes é governado pelo seletor `subagent_backend`
 (`native` com `gpt-5.6-luna` ou backend técnico `deepseek` via SubAgents MCP), sob a
 estratégia de `delegation_policy` (`balanced` ou `aggressive`) e `subagent_strategy`
-(`worker` ou `critical`); o parent GPT
+(`worker` ou `critical`, executando internamente análise independente e adaptativa por profundidade com contrato de integração de recibo, evidence packet, progresso semântico e early-exit sem prometer capacidades não expostas pelo bridge); o parent GPT
 interpreta imagens, integra, valida e decide.
 
 ## Alternância de Backend, Política e Estratégia

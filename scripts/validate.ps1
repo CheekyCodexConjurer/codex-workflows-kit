@@ -755,6 +755,148 @@ function Assert-AlinhamentoPolicy {
     }
 }
 
+function Assert-CriticalStrategyPolicy {
+    param(
+        [Parameter(Mandatory)][string]$AgentsText,
+        [Parameter(Mandatory)][string]$GeminiText,
+        [Parameter(Mandatory)][string]$SkillText,
+        [Parameter(Mandatory)][string]$DelegationText,
+        [Parameter(Mandatory)][string]$ReadmeText,
+        [string]$LabelPrefix = ''
+    )
+
+    $pfx = if ([string]::IsNullOrWhiteSpace($LabelPrefix)) { '' } else { "$LabelPrefix " }
+    $agentsNorm = [regex]::Replace($AgentsText, '\s+', ' ').Trim()
+    $geminiNorm = [regex]::Replace($GeminiText, '\s+', ' ').Trim()
+    $skillNorm = [regex]::Replace($SkillText, '\s+', ' ').Trim()
+    $delegationNorm = [regex]::Replace($DelegationText, '\s+', ' ').Trim()
+    $readmeNorm = [regex]::Replace($ReadmeText, '\s+', ' ').Trim()
+
+    $agentsRequired = @(
+        '(?i)subagent_strategy',
+        '(?i)worker',
+        '(?i)critical',
+        '(?i)an[a\u00e1]lise independente',
+        '(?i)adaptativa por profundidade',
+        '(?i)evid[e\u00ea]ncias',
+        '(?i)contradi[c\u00e7][o\u00f5]es.{0,30}lacunas',
+        '(?i)s[i\u00ed]ntese GPT',
+        '(?i)sem troca autom[a\u00e1]tica de rota|sem troca autom[a\u00e1]tica de provedor|sem fallback autom[a\u00e1]tico de rota',
+        '(?i)sem edi[c\u00e7][a\u00e3]o concorrente',
+        '(?i)estrat[e\u00e9]gia nunca concede escrita',
+        '(?i)recibo',
+        '(?i)evidence packet|pacote de evid[e\u00ea]ncia',
+        '(?i)semantic progress|progresso sem[a\u00e1]ntico',
+        '(?i)early-exit|sa[i\u00ed]da antecipada',
+        '(?i)sem prometer capacidades que o bridge ainda n[a\u00e3]o exp[o\u00f5]e'
+    )
+    foreach ($pattern in $agentsRequired) {
+        if (-not [regex]::IsMatch($agentsNorm, $pattern)) {
+            throw "${pfx}codex AGENTS.md is missing required critical strategy pattern: $pattern"
+        }
+    }
+
+    $geminiRequired = @(
+        '(?i)critical',
+        '(?i)an[a\u00e1]lise independente',
+        '(?i)adaptativa por profundidade',
+        '(?i)evid[e\u00ea]ncias',
+        '(?i)contradi[c\u00e7][o\u00f5]es',
+        '(?i)lacunas',
+        '(?i)s[i\u00ed]ntese GPT',
+        '(?i)sem edi[c\u00e7][a\u00e3]o concorrente',
+        '(?i)sem troca autom[a\u00e1]tica de rota|sem troca autom[a\u00e1]tica de provedor',
+        '(?i)estrat[e\u00e9]gia nunca concede escrita',
+        '(?i)recibo',
+        '(?i)evidence packet|pacote de evid[e\u00ea]ncia',
+        '(?i)semantic progress|progresso sem[a\u00e1]ntico',
+        '(?i)early-exit|sa[i\u00ed]da antecipada',
+        '(?i)sem prometer capacidades que o bridge ainda n[a\u00e3]o exp[o\u00f5]e'
+    )
+    foreach ($pattern in $geminiRequired) {
+        if (-not [regex]::IsMatch($geminiNorm, $pattern)) {
+            throw "${pfx}antigravity GEMINI.md is missing required critical strategy pattern: $pattern"
+        }
+    }
+
+    $skillRequired = @(
+        '(?i)subagent_strategy',
+        '(?i)worker',
+        '(?i)critical',
+        '(?i)an[a\u00e1]lise independente|independent analysis',
+        '(?i)adaptativa por profundidade|adaptive.?by.?depth',
+        '(?i)evid[e\u00ea]ncias|evidence',
+        '(?i)contradi[c\u00e7][o\u00f5]es|contradictions',
+        '(?i)lacunas|gaps',
+        '(?i)s[i\u00ed]ntese GPT|GPT synthesis',
+        '(?i)sem edi[c\u00e7][a\u00e3]o concorrente|no concurrent edit',
+        '(?i)sem troca autom[a\u00e1]tica de rota|no automatic route|sem troca autom[a\u00e1]tica de provedor',
+        '(?i)estrat[e\u00e9]gia nunca concede escrita|strategy never grants write',
+        '(?i)recibo|receipt',
+        '(?i)evidence packet',
+        '(?i)semantic progress',
+        '(?i)early-exit',
+        '(?i)sem prometer capacidades que o bridge ainda n[a\u00e3]o exp[o\u00f5]e|capabilities that the bridge does not yet expose'
+    )
+    foreach ($pattern in $skillRequired) {
+        if (-not [regex]::IsMatch($skillNorm, $pattern)) {
+            throw "${pfx}skills/workflows/SKILL.md is missing required critical strategy pattern: $pattern"
+        }
+    }
+
+    $delegationRequired = @(
+        '(?i)subagent_strategy',
+        '(?i)worker',
+        '(?i)critical',
+        '(?i)an[a\u00e1]lise independente|independent analysis',
+        '(?i)adaptativa por profundidade|adaptive.?by.?depth',
+        '(?i)contradi[c\u00e7][o\u00f5]es|contradictions',
+        '(?i)lacunas|gaps',
+        '(?i)s[i\u00ed]ntese GPT|GPT synthesis',
+        '(?i)sem edi[c\u00e7][a\u00e3]o concorrente|no concurrent edit',
+        '(?i)sem troca autom[a\u00e1]tica de rota|sem troca autom[a\u00e1]tica de provedor|no automatic route',
+        '(?i)estrat[e\u00e9]gia nunca concede escrita|strategy never grants write',
+        '(?i)recibo|receipt',
+        '(?i)evidence packet',
+        '(?i)semantic progress',
+        '(?i)early-exit',
+        '(?i)sem prometer capacidades que o bridge ainda n[a\u00e3]o exp[o\u00f5]e|capabilities that the bridge does not yet expose'
+    )
+    foreach ($pattern in $delegationRequired) {
+        if (-not [regex]::IsMatch($delegationNorm, $pattern)) {
+            throw "${pfx}skills/workflows/references/delegation.md is missing required critical strategy pattern: $pattern"
+        }
+    }
+
+    $readmeRequired = @(
+        '(?i)subagent_strategy',
+        '(?i)worker',
+        '(?i)critical',
+        '(?i)adaptativa por profundidade|adaptive.?by.?depth'
+    )
+    foreach ($pattern in $readmeRequired) {
+        if (-not [regex]::IsMatch($readmeNorm, $pattern)) {
+            throw "${pfx}README.md is missing required critical strategy pattern: $pattern"
+        }
+    }
+
+    $forbidden = @(
+        '(?i)\b(?:estrat[e\u00e9]gia|critical)\b[^.;]*\b(?:concede|autoriza|permite|grants?)\b[^.;]*\bescrita\b[^.;]*(?:no ALINHAMENTO|em ALINHAMENTO|under ALINHAMENTO)',
+        '(?i)(?:no ALINHAMENTO|em ALINHAMENTO|under ALINHAMENTO)[^.;]*\b(?:estrat[e\u00e9]gia|critical)\b[^.;]*\b(?:concede|autoriza|permite|grants?)\b[^.;]*\bescrita',
+        '(?i)\b(?:permite|autoriza|allows?)\b[^.;]*\bedi[c\u00e7][a\u00e3]o concorrente\b',
+        '(?i)subagent_strategy\s*=\s*adaptive',
+        '(?i)\bsubagent_strategy\b[^.;]*\badaptive\b[^.;]*(?:p[u\u00fa]blica|public|flag)',
+        '(?i)worker\s*\|\s*critical\s*\|\s*adaptive',
+        '(?i)\b(?:critical|estrat[e\u00e9]gia)\b[^.;]*\b(?:pode|autoriza|permite)\b[^.;]*(?:trocar de rota|trocar de provedor|fallback autom[a\u00e1]tico)\b',
+        '(?i)\b(?:bridge|subagents?)\b[^.;]*\b(?:exp[o\u00f5]e|promete|suporta)\b[^.;]*(?:websocket|streaming push|push notifications?)\b'
+    )
+    foreach ($pattern in $forbidden) {
+        if ([regex]::IsMatch($agentsNorm, $pattern) -or [regex]::IsMatch($geminiNorm, $pattern) -or [regex]::IsMatch($skillNorm, $pattern) -or [regex]::IsMatch($delegationNorm, $pattern)) {
+            throw "${pfx}contains forbidden critical strategy anti-pattern: $pattern"
+        }
+    }
+}
+
 function Assert-DelegationContract {
     param(
         [Parameter(Mandatory)][string]$Label,
@@ -1810,7 +1952,8 @@ Assert-AllContractRules -Checks @(
     { Assert-AlinhamentoPolicy -AgentsText $agentsText -GeminiText $geminiText -SkillText $skill -DelegationText $delegationRef -ReadmeText $readmeText },
     { Assert-McpTemplateRouting -Label 'codex AGENTS.md' -Text $agentsText },
     { Assert-McpTemplateRouting -Label 'antigravity GEMINI.md' -Text $geminiText },
-    { Assert-SerenaCodeGraphPolicy -McpSkillText $mcpSkill -SerenaCodeGraphText $mcpSerenaCodeGraph -WorkflowSkillText $skill -CommitRefText $commitRef -AgentsText $agentsText -GeminiText $geminiText }
+    { Assert-SerenaCodeGraphPolicy -McpSkillText $mcpSkill -SerenaCodeGraphText $mcpSerenaCodeGraph -WorkflowSkillText $skill -CommitRefText $commitRef -AgentsText $agentsText -GeminiText $geminiText },
+    { Assert-CriticalStrategyPolicy -AgentsText $agentsText -GeminiText $geminiText -SkillText $skill -DelegationText $delegationRef -ReadmeText $readmeText }
 )
 
 $legacyPaths = @(
@@ -2085,6 +2228,7 @@ if (-not $SkipInstalled) {
         Assert-DeepSeekDaemonRestartPolicy -SkillText $installedSkillAgents -LifecycleText $installedLifecycleAgents -AgentsText $installedAgents -GeminiText $installedGemini -LabelPrefix 'installed (safe profile)'
         Assert-DeliveryReviewPolicy -DeliveryReviewText $installedDeliveryAgents -SkillText (Read-RequiredText (Join-Path $workflowsDest 'SKILL.md')) -AgentsText $installedAgents -GeminiText $installedGemini -LabelPrefix 'installed (safe profile)'
         Assert-AlinhamentoPolicy -AgentsText $installedAgents -GeminiText $installedGemini -SkillText (Read-RequiredText (Join-Path $workflowsDest 'SKILL.md')) -DelegationText (Read-RequiredText (Join-Path (Join-Path $workflowsDest 'references') 'delegation.md')) -ReadmeText $readmeText -LabelPrefix 'installed (safe profile)'
+        Assert-CriticalStrategyPolicy -AgentsText $installedAgents -GeminiText $installedGemini -SkillText (Read-RequiredText (Join-Path $workflowsDest 'SKILL.md')) -DelegationText (Read-RequiredText (Join-Path (Join-Path $workflowsDest 'references') 'delegation.md')) -ReadmeText $readmeText -LabelPrefix 'installed (safe profile)'
     }
 
     Assert-MirrorTree -Source $workflowSource -Installed $workflowsDest -Label 'workflows skill (agents)'

@@ -63,11 +63,13 @@ selected mode or an open gate requires it.
   acceptable deliverable.
 - Under `subagent_strategy`: `worker` (default) preserves the existing workflow
   where worker subagents assist the main agent under the active delegation policy (worker mantém o fluxo atual);
-  `critical` requires that GPT and Gemini analyze independently, exchange evidence and
-  surface contradictions/gaps, and only then synthesize (análise independente rigorosa,
-  troca de evidências e contradições, lacunas, e posterior síntese GPT mandatória pelo parent),
-  with strict fencing, scope ownership, and no concurrent edit across agents (sem edição concorrente).
+  `critical` executes independent and adaptive-by-depth analysis internally (análise independente e adaptativa por profundidade internamente)
+  where GPT and Gemini analyze independently, exchange evidence, and surface contradictions/gaps (troca de evidências, contradições e lacunas),
+  followed by mandatory parent GPT synthesis (posterior síntese GPT mandatória pelo parent),
+  with strict fencing, scope ownership, no concurrent edit across agents (sem edição concorrente),
+  and pinned routing without automatic route or provider switching (sem troca automática de rota/provedor).
   Strategy never grants write; under ALINHAMENTO, no-write rules strictly govern (vigora somente leitura).
+  Integration contract across modes: structured receipt (`recibo`) upon job consumption, decision evidence packet (`evidence packet`: frozen target/diff, critical regions, test/review evidence, contradictions, gaps), semantic progress tracking (`semantic progress`) along the track, and early-exit (`early-exit`) upon decisive proof or blocker, operating within existing SubAgents MCP tools without promising capabilities that the bridge does not yet expose (sem prometer capacidades que o bridge ainda não expõe).
 - Native mode uses native Codex subagents for delegated material fronts; each
   native spawn passes `model="gpt-5.6-luna"` and `reasoning_effort="max"`
   explicitly, states normal/default mode, and never selects Flash/Fast. Forbids
@@ -186,6 +188,12 @@ Write delivery modes close with a validated, reviewed, scoped local commit
 series and never push; `DELIVER.AUTO` freezes the integrated diff and commits
 it locally. No reset, pull, merge, push, publication, or destructive action
 without an explicit request.
+Subagent execution remains strictly bounded by the mode matrix: in no-write modes and in
+ALINHAMENTO, subagents operate strictly under no-write (somente leitura); strategy never grants
+write permissions. In write modes, strict path ownership and independent review
+govern all output before commit. Integration adheres to the receipt (`recibo`), decision
+evidence packet, semantic progress, and early-exit contract without promising capabilities
+that the bridge does not yet expose.
 
 ## Delivery commit gate
 

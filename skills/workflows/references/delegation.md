@@ -18,10 +18,16 @@ Existem três seletores globais ortogonais e independentes:
    - Governa a estratégia de divisão de trabalho entre o parent GPT e os subagentes delegados.
 
 3. **`subagent_strategy` (`worker` | `critical`)**:
-   - Governa o modelo de cooperação e o rigor analítico dos subagentes delegados.
+   - Governa o modelo de cooperação e o rigor analítico dos subagentes delegados. A flag pública permanece estritamente binária: `worker` ou `critical` (sem expor `adaptive` publicamente).
    - `worker` (padrão): worker preserva o fluxo atual (worker mantém o fluxo atual) onde subagentes auxiliam o parent sob a política de delegação ativa.
-   - `critical`: impõe análise independente (independent analysis) rigorosa onde GPT e Gemini analisam independentemente, trocam evidências, contradições (contradictions) e lacunas, e só depois sintetizam via síntese GPT (GPT synthesis) mandatória pelo parent, com fencing e ownership delimitado de escopo e caminhos, e sem edição concorrente (no concurrent edit) entre múltiplos agentes.
+   - `critical`: executa análise independente e adaptativa por profundidade internamente (independent analysis and adaptive-by-depth analysis internally), onde GPT e Gemini analisam independentemente, trocam evidências, contradições (contradictions) e lacunas (gaps), culminando em síntese GPT (GPT synthesis) mandatória pelo parent, com fencing e ownership delimitado de escopo e caminhos, sem edição concorrente (no concurrent edit) entre múltiplos agentes, e com fixação estrita de rota sem troca automática de rota ou provedor (sem troca automática de rota/provedor; no automatic route fallback).
    - A estratégia nunca concede escrita (strategy never grants write); no ALINHAMENTO vigora somente leitura.
+   - **Contrato de Integração (*Integration Contract*)**: subordinado à matriz de modos, opera através de:
+     - **Recibo Estruturado (*Receipt / Recibo*)**: confirmação estruturada de entrega e consumo de cada job delegado.
+     - **Pacote de Evidências Decisórias (*Decision Evidence Packet*)**: pacote pequeno contendo target/diff congelado, regiões críticas, evidências de validação/revisão, contradições e lacunas.
+     - **Progresso Semântico (*Semantic Progress*)**: acompanhamento por marcos semânticos de evolução na trilha persistente sem polling destrutivo nem inferência precipitada de indisponibilidade.
+     - **Saída Antecipada (*Early-Exit*)**: interrupção limpa assim que uma evidência determinante ou bloqueio for provado, evitando custo e latência desnecessários.
+     - **Limites do Bridge**: executado estritamente através do conjunto de ferramentas exposto pelo SubAgents MCP (`subagents_spawn`, `subagents_continue`, `subagents_follow`, etc.), sem prometer capacidades que o bridge ainda não expõe (capabilities that the bridge does not yet expose).
 
 ### Invariantes Comuns a Ambas as Políticas:
 - **Ciclo de Vida de Completude (*Completion Lifecycle*)**: Todo job delegado deve ser consumido com resposta terminal e resultado terminal antes de um gate dependente ou da resposta final.
