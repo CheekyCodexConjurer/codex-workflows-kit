@@ -8,7 +8,7 @@ Este documento define o módulo invariante de qualidade de entrega (*delivery re
 
 O módulo de qualidade de entrega é um portão de qualidade embutido e invariante, sendo estritamente **ortogonal às flags** de backend (`subagent_backend`) e de delegação (`delegation_policy`), operando de forma invariável independentemente da configuração ativa.
 
-Exige validação determinística prévia, congelamento formal do alvo com identidade determinística invariante a staging, prova operacional em tempo de execução (*operational/runtime proof*) quando houver gatilho de risco e exatamente um revisor independente único por alvo congelado (*single independent reviewer* por *frozen target*). Reparos bloqueantes geram um lote de reparo consolidado no mesmo writer. Revalidações subsequentes realizam uma closure review de delta sobre as correções e o blast radius afetado, revalidando a integridade e target_id. O processo ocorre sem R.A.F.V. automático; o modo `R.A.F.V` permanece estritamente manual sob demanda, nunca automático.
+Exige validação determinística prévia, congelamento formal do alvo com identidade determinística invariante a staging, prova operacional em tempo de execução (*operational/runtime proof*) quando houver gatilho de risco, avaliação pelo Gate de Adequação da Correção orientada à correção suficiente e sustentável/delimitada e exatamente um revisor independente único por alvo congelado (*single independent reviewer* por *frozen target*). Reparos bloqueantes geram um lote de reparo consolidado no mesmo writer. Revalidações subsequentes realizam uma closure review de delta sobre as correções e o blast radius afetado, revalidando a integridade e target_id. O processo ocorre sem R.A.F.V. automático; o modo `R.A.F.V` permanece estritamente manual sob demanda, nunca automático.
 
 ### Modos Aplicáveis:
 - `IMPL.AUTO`
@@ -98,6 +98,41 @@ O revisor independente deve obrigatoriamente rejeitar falsos-verdes estáticos (
 
 ---
 
+## 3.2. Gate de Adequação da Correção (*Correction Adequacy Gate*)
+
+O Gate de Adequação da Correção é um portão de qualidade transversal para defeitos e entregas, que substitui formalmente a meta semântica de "correção mínima" por **"correção suficiente e sustentável/delimitada"**.
+
+### Princípios e Substituição Semântica:
+- **Correção Suficiente**: atinge e elimina comprovadamente a causa-raiz identificada, prevenindo recorrências do mesmo defeito.
+- **Sustentável**: preserva a integridade estrutural do subsistema sem acumular débito técnico oculto nem adotar patches paliativos frágeis.
+- **Delimitada**: respeita estritamente o limite de *blast radius* (apenas os caminhos aprovados do escopo), o portão de refatoração oportuna (`tn-paydown-gate`), o portão de replanejamento (`replan-gate`), o registro obrigatório em `.scratchpad/debug_ledger.md` (anti-loop) e o limite estrito de até duas rodadas de reparo consolidado.
+
+### Eventos de Acionamento (*Event Triggers*):
+O gate é acionado estritamente em eventos determinísticos (**nunca a cada turno**, sem *per-turn polling* ou *turn chatter*) e opera **sem trocar automaticamente de modo** (a transição de modo permanece prerrogativa explícita do usuário):
+1. **`pre-first-edit` (Antes da primeira edição com bug)**: acionado antes de iniciar modificações no código para corrigir defeito, classificando a causa-raiz e o tipo de intervenção necessária.
+2. **`falha` (`failure`)**: acionado ao observar falha em teste determinístico, quebra de build ou regressão durante o ciclo de correção.
+3. **`causa estrutural` (`structural cause`)**: acionado ao constatar que o defeito decorre de modelo de dados inadequado, quebra de contrato arquitetural ou débito causal profundo.
+4. **`expansão de escopo` (`scope expansion`)**: acionado ao detectar necessidade de alterar arquivos ou contratos além dos caminhos originalmente atribuídos.
+5. **`pré-revisão` (`pre-review`)**: acionado imediatamente antes de congelar o alvo para a revisão independente de entrega.
+
+### Taxonomia de Decisões de Adequação:
+1. **`LOCAL_FIX`**: causa-raiz restrita a um único ponto ou função local, sem impacto arquitetural; correção direta no mesmo componente com validação direcionada.
+2. **`ROBUST_FIX`**: causa-raiz exige tratamento defensivo e sustentável no componente dentro do blast radius aprovado; paydown pré-existente só sob `tn-paydown-gate`.
+3. **`REWORK`**: causa-raiz estrutural ou design inadequado onde fixes incrementais degradam a arquitetura; interrompe edições e recomenda o modo explícito `REWORK` para roadmap de reengenharia sustentável.
+4. **`RESEARCH`**: causa-raiz desconhecida ou dependente de incerteza técnica externa; recomenda o modo explícito `RESEARCH.DEEP` para investigação em fontes primárias antes de novas edições.
+5. **`RESEARCH_THEN_REWORK`**: incerteza externa combinada com necessidade de redesenho estrutural; recomenda `RESEARCH.DEEP` seguido de `REWORK`.
+6. **`BLOCKED`**: violação de invariantes, ausência de prova operacional obrigatória sob gatilho de risco, necessidade de autorização humana ou persistência de bloqueios após duas rodadas; falha fechado.
+
+### Fronteira de Transporte Neutro do Bridge MCP:
+O SubAgents MCP e o daemon bridge permanecem estritamente como **transporte neutro** (`neutral transport`). Reutilizam contratos existentes (`EvidenceBundle`, `ExecutionReceipt`, `ProgressSnapshot`, heartbeat, lease, fence tokens, relations `correction` e `review`). Nenhuma regra de workflow, lógica de portão de adequação ou poder de decisão/aprovação reside no bridge (**nenhuma regra de workflow ou aprovação no bridge**).
+
+### Estratégia de Subagentes (`critical` vs `worker`):
+- Sob `subagent_strategy = critical`: GPT e Gemini analisam independentemente a causa-raiz e proposta de correção, trocam evidências, contradições e lacunas, e submetem à síntese GPT mandatória pelo parent GPT, sem edição concorrente e com fencing estrito de escopo. Pinned routing sem troca automática de rota/provedor.
+- Sob `subagent_strategy = worker`: o worker mantém o fluxo atual auxiliando o parent com avaliação pontual nos eventos do gate.
+- Ambas as estratégias nunca concedem escrita em modos no-write ou no ALINHAMENTO.
+
+---
+
 ## 4. Revisão Independente e os 5 Pilares Explícitos
 
 O revisor independente deve ser obrigatoriamente um não-autor em um contexto limpo e isolado somente leitura. Ele realiza a reconstrução dos requisitos originais do usuário e do mapa de alegações (*claim-map*) e avalia o alvo congelado e a prova operacional observada cobrindo obrigatoriamente os **5 pilares explícitos**:
@@ -161,7 +196,7 @@ O revisor emite formalmente um pacote de revisão estruturado contendo:
       "path": "caminho/do/arquivo",
       "evidence": "evidência observada",
       "reproduction": "passos para reprodução do defeito",
-      "required_fix": "correção mínima exigida"
+      "required_fix": "correção necessária para remover o bloqueio e satisfazer a adequação suficiente e sustentável/delimitada"
     }
   ],
   "advisories": [
@@ -175,7 +210,7 @@ O revisor emite formalmente um pacote de revisão estruturado contendo:
 ## 6. Ciclo de Reparo Consolidado (quando `BLOCKED`)
 
 - **Lote Único Consolidado no Writer**: Todos os bloqueios identificados no pacote de revisão são consolidados em um lote de reparo consolidado no mesmo writer que executou a implementação original.
-- **Correção Mínima**: O executor aplica apenas as correções necessárias para sanar os bloqueios relatados.
+- **Correção Suficiente e Sustentável/Delimitada**: O executor aplica a correção necessária para eliminar a causa-raiz de forma sustentável e satisfazer a adequação sem remendos paliativos, mantendo estritamente o limite de blast radius, tn-paydown-gate, replan-gate, debug ledger e o limite de até duas rodadas.
 - **Revalidação Determinística**: Toda a suíte de validação relevante e checagens determinísticas são reexecutadas.
 - **Novo Alvo Congelado**: Um novo alvo congelado com `target_id` determinístico invariante a staging e hashes SHA256 atualizados é gerado.
 - **Closure Review de Delta**: Uma nova revisão independente (closure review de delta) foca nos bloqueios corrigidos e no raio de impacto afetado (*affected blast radius*), enquanto re-checa e revalida a identidade completa do alvo (`target_id`) e todos os invariantes de integração para evitar regressões (sem restringir a análise exclusivamente ao delta).

@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param(
     [string]$CodexHome,
     [string]$AgentsHome,
@@ -573,7 +573,22 @@ function Assert-DeliveryReviewContract {
         '(?i)lat[eê]ncia|readiness|health',
         '(?i)falsos?-verdes? est[aá]ticos?|static-only.*false green|test-only.*false green',
         '(?i)nunca inventar|never invent',
-        '(?i)sem ampliar autoridade|never broaden authority'
+        '(?i)sem ampliar autoridade|never broaden authority',
+        '(?i)Gate de Adequa[c\u00e7][a\u00e3]o(?: da Corre[c\u00e7][a\u00e3]o)?',
+        '(?i)corre[c\u00e7][a\u00e3]o suficiente e sustent[a\u00e1]vel(?:/delimitada)?',
+        '(?i)LOCAL_FIX',
+        '(?i)ROBUST_FIX',
+        '(?i)REWORK',
+        '(?i)RESEARCH',
+        '(?i)RESEARCH_THEN_REWORK',
+        '(?i)pre-first-edit|antes da primeira edi[c\u00e7][a\u00e3]o',
+        '(?i)\bfalha\b|\bfailure\b',
+        '(?i)causa estrutural|structural cause',
+        '(?i)expans[a\u00e3]o de escopo|scope expansion',
+        '(?i)pr[e\u00e9]-revis[a\u00e3]o|pre-review',
+        '(?i)(?:nunca|sem|n[a\u00e3]o).{0,30}(?:a cada turno|per-turn)',
+        '(?i)(?:sem|nunca|proibid[oa]).{0,40}troca(?:r)? autom[a\u00e1]tica(?:mente)? de modo',
+        '(?i)transporte neutro|neutral transport'
     )
 
     foreach ($pattern in $requiredPatterns) {
@@ -592,7 +607,9 @@ function Assert-DeliveryReviewContract {
         'exclusively delta',
         'auto-run RAFV',
         'RAFV automático',
-        'múltiplos revisores independentes para o mesmo target'
+        'múltiplos revisores independentes para o mesmo target',
+        '"required_fix": "correção mínima exigida"',
+        'correção mínima exigida'
     )
     foreach ($token in $forbidden) {
         if ($Text.IndexOf($token, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
@@ -617,15 +634,37 @@ function Assert-DeliveryReviewPolicy {
     if (-not [regex]::IsMatch($skillNorm, '(?i)operational proof|runtime proof|prova operacional')) {
         throw "${pfx}SKILL.md is missing operational proof gate pattern"
     }
+    if (-not [regex]::IsMatch($skillNorm, '(?i)Gate de Adequa[c\u00e7][a\u00e3]o|corre[c\u00e7][a\u00e3]o suficiente e sustent[a\u00e1]vel')) {
+        throw "${pfx}SKILL.md is missing correction adequacy gate pattern"
+    }
 
     $agentsNorm = [regex]::Replace($AgentsText, '\s+', ' ').Trim()
     if (-not [regex]::IsMatch($agentsNorm, '(?i)prova operacional|operational proof|runtime proof')) {
         throw "${pfx}codex AGENTS.md is missing operational proof gate pattern"
     }
+    if (-not [regex]::IsMatch($agentsNorm, '(?i)Gate de Adequa[c\u00e7][a\u00e3]o|corre[c\u00e7][a\u00e3]o suficiente e sustent[a\u00e1]vel')) {
+        throw "${pfx}codex AGENTS.md is missing correction adequacy gate pattern"
+    }
 
     $geminiNorm = [regex]::Replace($GeminiText, '\s+', ' ').Trim()
     if (-not [regex]::IsMatch($geminiNorm, '(?i)prova operacional|operational proof|runtime proof|delivery review')) {
         throw "${pfx}antigravity GEMINI.md is missing operational proof gate pattern"
+    }
+    if (-not [regex]::IsMatch($geminiNorm, '(?i)Gate de Adequa[c\u00e7][a\u00e3]o|corre[c\u00e7][a\u00e3]o suficiente e sustent[a\u00e1]vel')) {
+        throw "${pfx}antigravity GEMINI.md is missing correction adequacy gate pattern"
+    }
+
+    $policyForbidden = @(
+        '(?i)\b(?:pode|deve|autoriza|permite)\b\s+(?!n[a\u00e3]o\b|nunca\b|sem\b)[^.;]*\b(?:troca|trocar|transi[c\u00e7][a\u00e3]o)\s+autom[a\u00e1]tica(?:mente)?\s+de\s+modo\b',
+        '(?i)\bbridge\b\s+(?:decide|aprova|rejeita)\b',
+        '(?i)\b(?:regras de workflow|workflow rules)\s+residem\s+no\s+bridge\b',
+        '(?i)\b(?:concede|permite|autoriza)\s+escrita\b[^.;]*(?:no ALINHAMENTO|em PLAN|em REWORK|em RESEARCH)',
+        '(?i)"required_fix":\s*"corre[c\u00e7][a\u00e3]o m[i\u00ed]nima exigida"'
+    )
+    foreach ($pat in $policyForbidden) {
+        if ([regex]::IsMatch($DeliveryReviewText, $pat) -or [regex]::IsMatch($skillNorm, $pat) -or [regex]::IsMatch($agentsNorm, $pat) -or [regex]::IsMatch($geminiNorm, $pat)) {
+            throw "${pfx}contract contains forbidden adequacy gate violation: $pat"
+        }
     }
 }
 
@@ -1002,6 +1041,43 @@ function Assert-DesignSpecContract {
     foreach ($pattern in $requiredPatterns) {
         if (-not [regex]::IsMatch($normalized, $pattern)) {
             throw "$Label is missing required spec contract pattern: $pattern"
+        }
+    }
+
+    if ($Text.IndexOf('Review-And-Fix-Vigorously', [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+        throw "$Label contains invented RAFV acronym expansion"
+    }
+}
+
+function Assert-CorrectionAdequacySpecContract {
+    param(
+        [Parameter(Mandatory)][string]$Label,
+        [Parameter(Mandatory)][string]$Text
+    )
+
+    $normalized = [regex]::Replace($Text, '\s+', ' ').Trim()
+    $required = @(
+        '(?i)Gate de Adequa[c\u00e7][a\u00e3]o da Corre[c\u00e7][a\u00e3]o|Correction Adequacy Gate',
+        '(?i)corre[c\u00e7][a\u00e3]o suficiente e sustent[a\u00e1]vel(?:/delimitada)?',
+        '(?i)N[a\u00e3]o-Objetivos|Non-Goals',
+        '(?i)Modelo de Dados|Data Model',
+        '(?i)Eventos de Acionamento|Event Triggers',
+        '(?i)Hard Gates',
+        '(?i)Matriz (?:de Integra[c\u00e7][a\u00e3]o )?por Modo|Mode Matrix',
+        '(?i)critical.*worker|worker.*critical',
+        '(?i)Fronteira do.*Bridge|transporte neutro|neutral transport',
+        '(?i)Valida[c\u00e7][a\u00e3]o e Crit[e\u00e9]rios de Aceita[c\u00e7][a\u00e3]o|Acceptance Criteria',
+        '(?i)LOCAL_FIX',
+        '(?i)ROBUST_FIX',
+        '(?i)REWORK',
+        '(?i)RESEARCH',
+        '(?i)RESEARCH_THEN_REWORK',
+        '(?i)BLOCKED',
+        '(?i)required_fix'
+    )
+    foreach ($pattern in $required) {
+        if (-not [regex]::IsMatch($normalized, $pattern)) {
+            throw "$Label is missing required spec pattern: $pattern"
         }
     }
 
@@ -1795,6 +1871,7 @@ $deliveryReviewRef = Read-RequiredText (Join-Path (Join-Path $workflowSource 're
 $validationRef = Read-RequiredText (Join-Path (Join-Path $workflowSource 'references') 'validation.md')
 $commitRef = Read-RequiredText (Join-Path (Join-Path $workflowSource 'references') 'commit.md')
 $designSpec = Read-RequiredText (Join-Path $repo 'docs\superpowers\specs\2026-08-26-workflow-rearchitecture-design.md')
+$adequacySpec = Read-RequiredText (Join-Path $repo 'docs\superpowers\specs\2026-09-03-correction-adequacy-gate-design.md')
 $implPlan = Read-RequiredText (Join-Path $repo 'docs\superpowers\plans\2026-08-26-workflow-rearchitecture-implementation-plan.md')
 $mcpSkill = Read-RequiredText (Join-Path $mcpSource 'SKILL.md')
 $mcpLifecycle = Read-RequiredText (Join-Path (Join-Path $mcpSource 'references') 'lifecycle.md')
@@ -1939,6 +2016,7 @@ Assert-AllContractRules -Checks @(
     { Assert-DeliveryGateWiring -Label 'validation reference' -Text $validationRef },
     { Assert-DeliveryGateWiring -Label 'commit reference' -Text $commitRef },
     { Assert-DesignSpecContract -Label 'design spec' -Text $designSpec },
+    { Assert-CorrectionAdequacySpecContract -Label 'correction adequacy gate design spec' -Text $adequacySpec },
     { Assert-PlanContract -Label 'implementation plan' -Text $implPlan },
     { Assert-ReadmeContract -Label 'README.md' -Text $readmeText },
     { Assert-SecurityDocContract -Label 'docs/security.md' -Text $securityDoc },

@@ -8,6 +8,7 @@ Core rule:
 
 - Leave the touched or directly relevant slice structurally no worse than it
   started.
+- Substituir a meta semântica de "correção mínima" por correção suficiente e sustentável/delimitada: eliminar comprovadamente a causa-raiz sem paliativos frágeis.
 - Prevent debt introduced or materially worsened by the current change.
 - Pay down pre-existing debt only when the improvement is bounded, relevant,
   reversible, and independently validatable.

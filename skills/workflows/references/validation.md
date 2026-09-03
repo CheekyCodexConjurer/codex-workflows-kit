@@ -4,6 +4,7 @@
 
 - State the failure signature, affected behavior, and smallest meaningful
   check.
+- Aplicar o Gate de Adequação da Correção transversal nos eventos de pre-first-edit e falha, adotando a meta de correção suficiente e sustentável/delimitada em vez de correção mínima, delimitando o blast radius.
 - Read the relevant path directly and collect the required delegated
   evidence.
 - Record the claim-map, allowed paths, invariants, risks, and validation.
@@ -13,6 +14,7 @@
 - Run targeted deterministic validation first; broaden it to integrated
   regression as required by the blast radius.
 - Inspect the integrated diff, including unintended paths and generated files.
+- Executar a checagem pré-revisão do Gate de Adequação da Correção assegurando suficiência e sustentabilidade antes do congelamento.
 - Freeze the target with staging- and host-code-page-invariant deterministic identity (`target_id`: baseline, owned HEAD-relative content status, integrated diff against HEAD with Git stdout normalized as UTF-8, per-file SHA256 hashes, excluding index placement; raw porcelain captured as evidence outside digest; validation evidence) and execute an independent review covering the 5 explicit pillars
   (`references/delivery-review.md`).
 

@@ -62,14 +62,15 @@ selected mode or an open gate requires it.
   cohesive front; no microdelegation; new track only for an independently
   acceptable deliverable.
 - Under `subagent_strategy`: `worker` (default) preserves the existing workflow
-  where worker subagents assist the main agent under the active delegation policy (worker mantém o fluxo atual);
+  where worker subagents assist the main agent under the active delegation policy (worker mantém o fluxo atual) with punctual adequacy assessment;
   `critical` executes independent and adaptive-by-depth analysis internally (análise independente e adaptativa por profundidade internamente)
   where GPT and Gemini analyze independently, exchange evidence, and surface contradictions/gaps (troca de evidências, contradições e lacunas),
   followed by mandatory parent GPT synthesis (posterior síntese GPT mandatória pelo parent),
   with strict fencing, scope ownership, no concurrent edit across agents (sem edição concorrente),
   and pinned routing without automatic route or provider switching (sem troca automática de rota/provedor).
-  Strategy never grants write; under ALINHAMENTO, no-write rules strictly govern (vigora somente leitura).
+  Strategy never grants write; under ALINHAMENTO and in no-write modes, no-write rules strictly govern (vigora somente leitura).
   Integration contract across modes: structured receipt (`recibo`) upon job consumption, decision evidence packet (`evidence packet`: frozen target/diff, critical regions, test/review evidence, contradictions, gaps), semantic progress tracking (`semantic progress`) along the track, and early-exit (`early-exit`) upon decisive proof or blocker, operating within existing SubAgents MCP tools without promising capabilities that the bridge does not yet expose (sem prometer capacidades que o bridge ainda não expõe).
+  Gate de Adequação da Correção: transversal e acionado em eventos determinísticos (`pre-first-edit`, `falha`/`failure`, `causa estrutural`/`structural-cause`, `expansão de escopo`/`scope-expansion`, `pré-revisão`/`pre-review`), nunca a cada turno, e sem trocar automaticamente de modo. Substitui a meta de "correção mínima" por correção suficiente e sustentável/delimitada, mantendo o limite de blast radius, `tn-paydown-gate`, `replan-gate`, debug ledger (`debug_ledger.md`) e no máximo duas rodadas de reparo. Emite decisões `LOCAL_FIX`, `ROBUST_FIX`, `REWORK`, `RESEARCH`, `RESEARCH_THEN_REWORK` e `BLOCKED` com evidência, confiança, causa-raiz, contradições, validação exigida, escopo pertencente/adiado e próximo modo recomendado. O SubAgents MCP e o daemon bridge operam como transporte neutro (`neutral transport`), reutilizando `EvidenceBundle`, `ExecutionReceipt`, `ProgressSnapshot`, heartbeat, fence token, relation `correction`/`review`; nenhuma regra de workflow ou aprovação no bridge (sem regras de workflow no bridge). Integra explicitamente `PLAN`/`PLAN.AUTO` (no-write), `DEBUG`/`BUG.FIX` (write), `DELIVER`/`IMPL` (write), `REWORK` (no-write) e `RESEARCH.DEEP` (no-write), preservando `ALINHAMENTO` (no-write, sem metadados) e `COMMIT` (git-only).
 - Native mode uses native Codex subagents for delegated material fronts; each
   native spawn passes `model="gpt-5.6-luna"` and `reasoning_effort="max"`
   explicitly, states normal/default mode, and never selects Flash/Fast. Forbids
@@ -213,7 +214,7 @@ commit series; never push. `references/delivery-review.md` and
   latency, persistent scale state, and artifact identity) on that exact target before review;
   independent review consumes both target and runtime evidence, rejecting static-only false greens
   and issuing an APPROVED/BLOCKED verdict; blocked on unavailable/unauthorized proof without implicit
-  authority broadening; blocked verdicts use at most 2 consolidated repair rounds and fail closed if
+  authority broadening; blocked verdicts apply the Gate de Adequação da Correção via consolidated repair rounds oriented to sufficient and sustainable fix (`correção suficiente e sustentável/delimitada`, preserving `required_fix`), at most 2 rounds, and fail closed if
   blockers persist.
 - Block without changing the index on ambiguous overlap, secrets, or
   generated/cache/local/ignored candidates.

@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param(
     [int]$Scenario = 0
 )
@@ -1077,6 +1077,130 @@ function Test-CriticalStrategySemantics {
     )
     foreach ($pattern in $forbidden) {
         if ([regex]::IsMatch($agentsNorm, $pattern) -or [regex]::IsMatch($geminiNorm, $pattern) -or [regex]::IsMatch($skillNorm, $pattern) -or [regex]::IsMatch($delegationNorm, $pattern)) {
+            return $false
+        }
+    }
+
+    return $true
+}
+
+function Test-CorrectionAdequacyGateSemantics {
+    param(
+        [Parameter(Mandatory)][string]$DeliveryReviewText,
+        [Parameter(Mandatory)][string]$QualityRatchetText,
+        [Parameter(Mandatory)][string]$ValidationText,
+        [Parameter(Mandatory)][string]$SkillText,
+        [Parameter(Mandatory)][string]$AgentsText,
+        [Parameter(Mandatory)][string]$GeminiText,
+        [Parameter(Mandatory)][string]$ReadmeText
+    )
+
+    $deliveryNorm = [regex]::Replace($DeliveryReviewText, '\s+', ' ').Trim()
+    $qualityNorm = [regex]::Replace($QualityRatchetText, '\s+', ' ').Trim()
+    $validationNorm = [regex]::Replace($ValidationText, '\s+', ' ').Trim()
+    $skillNorm = [regex]::Replace($SkillText, '\s+', ' ').Trim()
+    $agentsNorm = [regex]::Replace($AgentsText, '\s+', ' ').Trim()
+    $geminiNorm = [regex]::Replace($GeminiText, '\s+', ' ').Trim()
+    $readmeNorm = [regex]::Replace($ReadmeText, '\s+', ' ').Trim()
+
+    # 1. Delivery review must define Correction Adequacy Gate and sustainable/sufficient fix
+    $deliveryRequired = @(
+        '(?i)Gate de Adequa[c\u00e7][a\u00e3]o(?: da Corre[c\u00e7][a\u00e3]o)?',
+        '(?i)corre[c\u00e7][a\u00e3]o suficiente e sustent[a\u00e1]vel(?:/delimitada)?',
+        '(?i)LOCAL_FIX',
+        '(?i)ROBUST_FIX',
+        '(?i)REWORK',
+        '(?i)RESEARCH',
+        '(?i)RESEARCH_THEN_REWORK',
+        '(?i)BLOCKED',
+        '(?i)pre-first-edit|antes da primeira edi[c\u00e7][a\u00e3]o',
+        '(?i)\bfalha\b|\bfailure\b',
+        '(?i)causa estrutural|structural cause',
+        '(?i)expans[a\u00e3]o de escopo|scope expansion',
+        '(?i)pr[e\u00e9]-revis[a\u00e3]o|pre-review',
+        '(?i)(?:nunca|sem|n[a\u00e3]o).{0,30}(?:a cada turno|per-turn)',
+        '(?i)(?:sem|nunca|proibid[oa]).{0,40}troca(?:r)? autom[a\u00e1]tica(?:mente)? de modo',
+        '(?i)required_fix',
+        '(?i)blast radius',
+        '(?i)tn-paydown-gate',
+        '(?i)replan-gate',
+        '(?i)debug_ledger\.md|debug ledger',
+        '(?i)m[a\u00e1]ximo (?:de )?(?:2|duas) rodadas',
+        '(?i)transporte neutro|neutral transport'
+    )
+    foreach ($pattern in $deliveryRequired) {
+        if (-not [regex]::IsMatch($deliveryNorm, $pattern)) {
+            return $false
+        }
+    }
+
+    # 2. SKILL.md checks
+    $skillRequired = @(
+        '(?i)Gate de Adequa[c\u00e7][a\u00e3]o|corre[c\u00e7][a\u00e3]o suficiente e sustent[a\u00e1]vel',
+        '(?i)PLAN(?:\.AUTO)?',
+        '(?i)DEBUG|BUG\.FIX',
+        '(?i)DELIVER|IMPL',
+        '(?i)REWORK',
+        '(?i)RESEARCH\.DEEP',
+        '(?i)ALINHAMENTO',
+        '(?i)COMMIT',
+        '(?i)transporte neutro|neutral transport',
+        '(?i)EvidenceBundle',
+        '(?i)ExecutionReceipt',
+        '(?i)ProgressSnapshot',
+        '(?i)sem regras de workflow no bridge|nenhuma regra de workflow.{0,30}bridge'
+    )
+    foreach ($pattern in $skillRequired) {
+        if (-not [regex]::IsMatch($skillNorm, $pattern)) {
+            return $false
+        }
+    }
+
+    # 3. AGENTS.md checks
+    $agentsRequired = @(
+        '(?i)Gate de Adequa[c\u00e7][a\u00e3]o|corre[c\u00e7][a\u00e3]o suficiente e sustent[a\u00e1]vel',
+        '(?i)sem troca autom[a\u00e1]tica de modo',
+        '(?i)transporte neutro|neutral transport',
+        '(?i)nenhuma regra de workflow.{0,30}bridge|sem regras de workflow no bridge'
+    )
+    foreach ($pattern in $agentsRequired) {
+        if (-not [regex]::IsMatch($agentsNorm, $pattern)) {
+            return $false
+        }
+    }
+
+    # 4. GEMINI.md checks
+    $geminiRequired = @(
+        '(?i)Gate de Adequa[c\u00e7][a\u00e3]o|corre[c\u00e7][a\u00e3]o suficiente e sustent[a\u00e1]vel',
+        '(?i)sem troca autom[a\u00e1]tica de modo',
+        '(?i)transporte neutro'
+    )
+    foreach ($pattern in $geminiRequired) {
+        if (-not [regex]::IsMatch($geminiNorm, $pattern)) {
+            return $false
+        }
+    }
+
+    # 5. Quality ratchet & Validation checks
+    if (-not [regex]::IsMatch($qualityNorm, '(?i)corre[c\u00e7][a\u00e3]o suficiente e sustent[a\u00e1]vel|sustent[a\u00e1]vel|tn-paydown-gate')) {
+        return $false
+    }
+    if (-not [regex]::IsMatch($validationNorm, '(?i)corre[c\u00e7][a\u00e3]o suficiente e sustent[a\u00e1]vel|Gate de Adequa[c\u00e7][a\u00e3]o')) {
+        return $false
+    }
+
+    # 6. Forbiddens / Tampers across the policies
+    $forbidden = @(
+        '(?i)"required_fix":\s*"corre[c\u00e7][a\u00e3]o m[i\u00ed]nima exigida"',
+        '(?i)\bmeta de corre[c\u00e7][a\u00e3]o m[i\u00ed]nima\b',
+        '(?i)\b(?:pode|deve|autoriza|permite)\b\s+(?!n[a\u00e3]o\b|nunca\b|sem\b)[^.;]*\b(?:troca|trocar|transi[c\u00e7][a\u00e3]o)\s+autom[a\u00e1]tica(?:mente)?\s+de\s+modo\b',
+        '(?i)\bbridge\b\s+(?:decide|aprova|rejeita)\b',
+        '(?i)\b(?:regras de workflow|workflow rules)\s+residem\s+no\s+bridge\b',
+        '(?i)\b(?:concede|permite|autoriza)\s+escrita\b[^.;]*(?:no ALINHAMENTO|em PLAN|em REWORK|em RESEARCH)',
+        '(?i)\bacionado a cada turno\b|\bacionado em todo turno\b'
+    )
+    foreach ($pattern in $forbidden) {
+        if ([regex]::IsMatch($deliveryNorm, $pattern) -or [regex]::IsMatch($skillNorm, $pattern) -or [regex]::IsMatch($agentsNorm, $pattern) -or [regex]::IsMatch($geminiNorm, $pattern)) {
             return $false
         }
     }
@@ -3251,6 +3375,41 @@ enabled = true
         # 4. Mirror tree validation in fixture home
         $valResult39 = Invoke-Validate -Root $root39
         Assert-Condition 'S39 validate succeeds on installed fixture' ($valResult39.ExitCode -eq 0) $valResult39.Output
+    }
+
+    $currentScenario = 40
+    if ($targetScenario -eq 0 -or $targetScenario -eq 40) {
+        Write-Host 'Scenario 40: Correction Adequacy Gate (Gate de Adequação da Correção), sufficient/sustainable fix, event triggers, 6 decisions, bridge transport neutrality, and required_fix backcompat' -ForegroundColor Cyan
+
+        # 1. Semantic tests on canonical files
+        $canonicalDelivery40 = Get-Content -LiteralPath (Join-Path $repo 'skills\workflows\references\delivery-review.md') -Raw -Encoding UTF8
+        $canonicalQuality40 = Get-Content -LiteralPath (Join-Path $repo 'skills\workflows\references\quality-ratchet.md') -Raw -Encoding UTF8
+        $canonicalValidation40 = Get-Content -LiteralPath (Join-Path $repo 'skills\workflows\references\validation.md') -Raw -Encoding UTF8
+        $canonicalSkill40 = Get-Content -LiteralPath (Join-Path $repo 'skills\workflows\SKILL.md') -Raw -Encoding UTF8
+        $canonicalAgents40 = Get-Content -LiteralPath (Join-Path $repo 'codex\AGENTS.md') -Raw -Encoding UTF8
+        $canonicalGemini40 = Get-Content -LiteralPath (Join-Path $repo 'antigravity\GEMINI.md') -Raw -Encoding UTF8
+        $canonicalReadme40 = Get-Content -LiteralPath (Join-Path $repo 'README.md') -Raw -Encoding UTF8
+
+        Assert-Condition 'S40 canonical policies satisfy correction adequacy gate semantics' (Test-CorrectionAdequacyGateSemantics -DeliveryReviewText $canonicalDelivery40 -QualityRatchetText $canonicalQuality40 -ValidationText $canonicalValidation40 -SkillText $canonicalSkill40 -AgentsText $canonicalAgents40 -GeminiText $canonicalGemini40 -ReadmeText $canonicalReadme40) ''
+
+        # 2. Tampers
+        $tamperMinFix = $canonicalDelivery40 -replace 'correção suficiente e sustentável/delimitada', 'correção mínima'
+        Assert-Condition 'S40 detects minimum-fix tamper' (-not (Test-CorrectionAdequacyGateSemantics -DeliveryReviewText $tamperMinFix -QualityRatchetText $canonicalQuality40 -ValidationText $canonicalValidation40 -SkillText $canonicalSkill40 -AgentsText $canonicalAgents40 -GeminiText $canonicalGemini40 -ReadmeText $canonicalReadme40)) ''
+
+        $tamperAutoMode = $canonicalDelivery40 + $nl + 'O gate pode trocar automaticamente de modo quando julgar necessário.'
+        Assert-Condition 'S40 detects automatic mode switch tamper' (-not (Test-CorrectionAdequacyGateSemantics -DeliveryReviewText $tamperAutoMode -QualityRatchetText $canonicalQuality40 -ValidationText $canonicalValidation40 -SkillText $canonicalSkill40 -AgentsText $canonicalAgents40 -GeminiText $canonicalGemini40 -ReadmeText $canonicalReadme40)) ''
+
+        $tamperBridgeDecides = $canonicalSkill40 + $nl + 'O bridge decide regras de workflow e aprovação.'
+        Assert-Condition 'S40 detects bridge decider tamper' (-not (Test-CorrectionAdequacyGateSemantics -DeliveryReviewText $canonicalDelivery40 -QualityRatchetText $canonicalQuality40 -ValidationText $canonicalValidation40 -SkillText $tamperBridgeDecides -AgentsText $canonicalAgents40 -GeminiText $canonicalGemini40 -ReadmeText $canonicalReadme40)) ''
+
+        $tamperWriteNoWrite = $canonicalAgents40 + $nl + 'A correção concede escrita no ALINHAMENTO para acelerar fixes.'
+        Assert-Condition 'S40 detects write in ALINHAMENTO tamper' (-not (Test-CorrectionAdequacyGateSemantics -DeliveryReviewText $canonicalDelivery40 -QualityRatchetText $canonicalQuality40 -ValidationText $canonicalValidation40 -SkillText $canonicalSkill40 -AgentsText $tamperWriteNoWrite -GeminiText $canonicalGemini40 -ReadmeText $canonicalReadme40)) ''
+
+        $tamperPerTurn = $canonicalDelivery40 + $nl + 'O gate de adequação é acionado a cada turno conversacional.'
+        Assert-Condition 'S40 detects per-turn trigger tamper' (-not (Test-CorrectionAdequacyGateSemantics -DeliveryReviewText $tamperPerTurn -QualityRatchetText $canonicalQuality40 -ValidationText $canonicalValidation40 -SkillText $canonicalSkill40 -AgentsText $canonicalAgents40 -GeminiText $canonicalGemini40 -ReadmeText $canonicalReadme40)) ''
+
+        $tamperOldRequiredFix = $canonicalDelivery40 -replace '(?i)"required_fix":\s*"[^"]+"', '"required_fix": "correção mínima exigida"'
+        Assert-Condition 'S40 detects obsolete required_fix minimum semantics tamper' (-not (Test-CorrectionAdequacyGateSemantics -DeliveryReviewText $tamperOldRequiredFix -QualityRatchetText $canonicalQuality40 -ValidationText $canonicalValidation40 -SkillText $canonicalSkill40 -AgentsText $canonicalAgents40 -GeminiText $canonicalGemini40 -ReadmeText $canonicalReadme40)) ''
     }
 }
 finally {
