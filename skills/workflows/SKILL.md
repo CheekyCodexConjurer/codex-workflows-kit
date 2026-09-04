@@ -50,7 +50,7 @@ selected mode or an open gate requires it.
 
 - Decompose, route, prioritize, synthesize, integrate, validate, and decide.
   Delegation is governed by the orthogonal selectors (`subagent_backend`,
-  `delegation_policy`, and `subagent_strategy`); see `references/delegation.md`.
+  `delegation_policy`, `subagent_strategy`, and `subagent_continuation`); see `references/delegation.md`.
 - Under `balanced` (default; wall-clock optimization): parent directly performs
   cohesive, sequential, critical-path material work when delegation round-trip
   would not help; delegates for concrete independent parallelism, specialization,
@@ -71,6 +71,7 @@ selected mode or an open gate requires it.
   Strategy never grants write; under ALINHAMENTO and in no-write modes, no-write rules strictly govern (vigora somente leitura).
   Integration contract across modes: structured receipt (`recibo`) upon job consumption, decision evidence packet (`evidence packet`: frozen target/diff, critical regions, test/review evidence, contradictions, gaps), semantic progress tracking (`semantic progress`) along the track, and early-exit (`early-exit`) upon decisive proof or blocker, operating within existing SubAgents MCP tools without promising capabilities that the bridge does not yet expose (sem prometer capacidades que o bridge ainda não expõe).
   Gate de Adequação da Correção: transversal e acionado em eventos determinísticos (`pre-first-edit`, `falha`/`failure`, `causa estrutural`/`structural-cause`, `expansão de escopo`/`scope-expansion`, `pré-revisão`/`pre-review`), nunca a cada turno, e sem trocar automaticamente de modo. Substitui a meta de "correção mínima" por correção suficiente e sustentável/delimitada, mantendo o limite de blast radius, `tn-paydown-gate`, `replan-gate`, debug ledger (`debug_ledger.md`) e no máximo duas rodadas de reparo. Emite decisões `LOCAL_FIX`, `ROBUST_FIX`, `REWORK`, `RESEARCH`, `RESEARCH_THEN_REWORK` e `BLOCKED` com evidência, confiança, causa-raiz, contradições, validação exigida, escopo pertencente/adiado e próximo modo recomendado. O SubAgents MCP e o daemon bridge operam como transporte neutro (`neutral transport`), reutilizando `EvidenceBundle`, `ExecutionReceipt`, `ProgressSnapshot`, heartbeat, fence token, relation `correction`/`review`; nenhuma regra de workflow ou aprovação no bridge (sem regras de workflow no bridge). Integra explicitamente `PLAN`/`PLAN.AUTO` (no-write), `DEBUG`/`BUG.FIX` (write), `DELIVER`/`IMPL` (write), `REWORK` (no-write) e `RESEARCH.DEEP` (no-write), preservando `ALINHAMENTO` (no-write, sem metadados) e `COMMIT` (git-only).
+- Under `subagent_continuation`: `active_follow` (default; backward-compatible) maintains synchronous tracking with `subagents_follow` until job completion without ending the current turn; `park_and_wake` (Sub-agent Autonomy) implements a two-path hybrid lifecycle without model polling: for a loaded task in Desktop/host, one event-driven `subagents_park`/`deepseek_park` wait suspends inference until an event returns in the same turn (no model polling); for a disconnected/notLoaded task, a durable externally armed barrier may wake the exact task via the compatible CLI path; active writer represents durable deferred delivery (`deferred_active_writer`), never a terminal failure, fallback, or permission to auto-archive/unload; the parent may end its turn with open obligations exclusively in the nonterminal `SUSPENDED` state once an armed `ParkReceipt` explicitly proves an externally armed continuation; if the receipt returns `deliveryMode=none` or unarmed, the parent must remain active and resolve obligations; after wake, consume listed ready jobs with `subagents_follow`, integrate them, and either continue or re-park remaining jobs; bridge payload contains trusted metadata only (never worker result text or synthetic user prompt instructions); goal pause ownership remains separate: chat/task continuation does not require a goal and never automatically resumes a paused goal; if parking fails to arm, fail closed without silent fallback to active_follow; final `DONE` remains strictly impossible until all required jobs are terminally consumed and agents closed; the bridge remains a neutral transport without deciding workflow approvals or interpreting AGENTS flags; Gemini emits worker progress/completion events without controlling Codex chat/goal; zero flags or state are injected into consumer repos.
 - Native mode uses native Codex subagents for delegated material fronts; each
   native spawn passes `model="gpt-5.6-luna"` and `reasoning_effort="max"`
   explicitly, states normal/default mode, and never selects Flash/Fast. Forbids
@@ -91,6 +92,10 @@ selected mode or an open gate requires it.
 ```text
 FRAME -> FANOUT -> COLLECT -> ACT -> VERIFY -> REVIEW -> DONE
 ```
+Under `subagent_continuation = park_and_wake`, the cycle includes autonomous suspension:
+```text
+FRAME -> FANOUT -> [PARK -> SUSPENDED -> WAKE ->] COLLECT -> ACT -> VERIFY -> REVIEW -> DONE
+```
 
 - FRAME: goal, expected behavior, validation, and done gate before acting.
 - FANOUT: policy-aware delegation. In `balanced`, fan out conditionally for
@@ -99,6 +104,18 @@ FRAME -> FANOUT -> COLLECT -> ACT -> VERIFY -> REVIEW -> DONE
   dependencies, and exclusive/shared resources before waiting; launch every
   independent material front in batch before the first follow. Keep a stable
   request_id ledger (front, agent, job, state, consumed, closed).
+- PARK -> SUSPENDED -> WAKE: under `subagent_continuation = park_and_wake`, once
+  accepted subagent jobs are launched, the parent calls `subagents_park` to establish
+  a durable wait barrier. In a loaded task, this is an in-turn event wait suspending
+  inference until an event returns without model polling. For a disconnected/notLoaded
+  task, the durable barrier arms an external wake via compatible CLI. Active writer
+  is treated as durable deferred delivery (`deferred_active_writer`) and never permits
+  auto-archive or auto-unload. The parent transitions to nonterminal `SUSPENDED` and ends
+  its turn only if the durable receipt confirms an externally armed continuation (if unarmed
+  or `deliveryMode=none`, the parent must remain active). When a terminal or needs-approval
+  event occurs, the bridge returns trusted metadata only (never worker result text).
+  Goal ownership remains separate (no goal required for continuation, and never auto-resume
+  a paused goal). Upon wake, the parent calls `subagents_follow` to resume COLLECT.
 - COLLECT: consume a result when a gate depends on it or no useful work
   remains; consume every job and close each agent after integration.
 - ACT: decide from collected evidence; route defects back to the same front
@@ -114,6 +131,13 @@ FRAME -> FANOUT -> COLLECT -> ACT -> VERIFY -> REVIEW -> DONE
 - Under technical backend `deepseek` via SubAgents MCP, `subagents_spawn` opens one independent front;
   `subagents_continue` follows the same open front after a result, correction, or
   review; and `subagents_follow` consumes a result when a gate depends on it.
+- Under technical backend `deepseek`, `subagents_park` (or legacy `deepseek_park`) arms
+  a wait barrier in the bridge for accepted jobs without consuming them, returning a durable
+  `ParkReceipt` with stable park id, generation, deliveryMode, armed state, target identity, and pending obligations.
+  In loaded tasks, inference waits in-turn without model polling; for disconnected/notLoaded tasks, external CLI wake is armed.
+  Active writer conflict is a durable deferred state (`deferred_active_writer`); auto-archive and auto-unload are strictly prohibited.
+  The parent may end its turn only when `ParkReceipt` proves an externally armed continuation; if unarmed or `deliveryMode=none`, the parent must remain active.
+  Upon wake, results are consumed with `subagents_follow`, and the parent continues or re-parks remaining jobs.
 - Under technical backend `deepseek`, `subagents_consult` is an exceptional snapshot of a
   running agent and never a poll; `subagents_abort` is only for an obsolete or
   explicitly stopped front; `subagents_close` retires an agent after its result
@@ -138,6 +162,11 @@ Completion contract: for every required job, the parent must wait for a
 do not send an `interruptive follow-up` or `replace` it. `interrupted`,
 `errored`, `timed out`, or `missing final response` means unavailable: keep
 the gate `open/BLOCKED`; do not use a `silent fallback`.
+Under `park_and_wake`, ending the current turn with obligations pending is permitted
+exclusively in the nonterminal `SUSPENDED` state backed by an armed `ParkReceipt` proving
+an externally armed continuation (if unarmed or `deliveryMode=none`, the parent must remain active).
+Final `DONE` remains strictly forbidden until all required jobs are terminally consumed
+and all agents closed.
 
 Liveness and status contract:
 - 900s é apenas janela mínima e limite de espera (timeout window), nunca prova de morte do agente ou processo.

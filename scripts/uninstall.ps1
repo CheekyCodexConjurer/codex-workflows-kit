@@ -161,6 +161,12 @@ function Assert-InstallState {
         }
         Assert-CodexStrategyState -StrategyState $State.codexStrategy
     }
+    if ($State.PSObject.Properties.Name -contains 'codexContinuation') {
+        if ($null -eq $State.codexContinuation) {
+            throw "Install state contains an invalid codexContinuation property."
+        }
+        Assert-CodexContinuationState -ContinuationState $State.codexContinuation
+    }
 
     if ($schema -ge 5) {
         if (-not ($State.PSObject.Properties.Name -contains 'codexBackend') -or $null -eq $State.codexBackend) {

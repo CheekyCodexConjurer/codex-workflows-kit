@@ -152,9 +152,11 @@ $script:PriorFeaturesRecord = $null
 $script:PriorBackendState = $null
 $script:PriorDelegationState = $null
 $script:PriorStrategyState = $null
+$script:PriorContinuationState = $null
 $script:SelectedBackend = 'deepseek'
 $script:SelectedPolicy = 'balanced'
 $script:SelectedStrategy = 'worker'
+$script:SelectedContinuation = 'active_follow'
 $script:FeaturesGateApplied = $false
 $script:FeaturesPrior = [ordered]@{ present = $false; value = $null }
 $script:ConfigModified = $false
@@ -231,6 +233,12 @@ function Assert-InstallState {
             throw "Install state contains an invalid codexStrategy property."
         }
         Assert-CodexStrategyState -StrategyState $State.codexStrategy
+    }
+    if ($State.PSObject.Properties.Name -contains 'codexContinuation') {
+        if ($null -eq $State.codexContinuation) {
+            throw "Install state contains an invalid codexContinuation property."
+        }
+        Assert-CodexContinuationState -ContinuationState $State.codexContinuation
     }
 
     if ($schema -ge 5) {
@@ -321,6 +329,11 @@ function Initialize-PriorState {
                 $script:PriorStrategyState = $state.codexStrategy
                 $script:SelectedStrategy = [string]$state.codexStrategy.selected
             }
+            if ($state.PSObject.Properties.Name -contains 'codexContinuation') {
+                Assert-CodexContinuationState -ContinuationState $state.codexContinuation
+                $script:PriorContinuationState = $state.codexContinuation
+                $script:SelectedContinuation = [string]$state.codexContinuation.selected
+            }
         }
         catch {
             throw "Previous install state is invalid: $($_.Exception.Message)"
@@ -343,6 +356,11 @@ function Initialize-PriorState {
     if ($null -eq $script:PriorStrategyState) {
         $script:PriorStrategyState = New-CodexStrategyState -ExistingInstallState $existingState
         $script:SelectedStrategy = [string]$script:PriorStrategyState.selected
+    }
+
+    if ($null -eq $script:PriorContinuationState) {
+        $script:PriorContinuationState = New-CodexContinuationState -ExistingInstallState $existingState
+        $script:SelectedContinuation = [string]$script:PriorContinuationState.selected
     }
 }
 
@@ -513,7 +531,7 @@ function Install-GlobalAgentsFile {
         throw "An unmanaged AGENTS.md already exists. Review it and use -Force to replace it: $agentsMdDest"
     }
 
-    $content = Set-CodexAgentsManagedBlockText -ExistingAgentsText $existing -TemplateText $raw -Backend $script:SelectedBackend -Policy $script:SelectedPolicy -Strategy $script:SelectedStrategy
+    $content = Set-CodexAgentsManagedBlockText -ExistingAgentsText $existing -TemplateText $raw -Backend $script:SelectedBackend -Policy $script:SelectedPolicy -Strategy $script:SelectedStrategy -Continuation $script:SelectedContinuation
 
     Install-ManagedContent -Destination $agentsMdDest -Content $content
 }
@@ -958,6 +976,7 @@ function Save-InstallState {
     $backendState = $script:PriorBackendState
     $delegationState = $script:PriorDelegationState
     $strategyState = $script:PriorStrategyState
+    $continuationState = $script:PriorContinuationState
 
     $state = [ordered]@{
         schemaVersion = 5
@@ -970,6 +989,7 @@ function Save-InstallState {
         codexBackend = $backendState
         codexDelegation = $delegationState
         codexStrategy = $strategyState
+        codexContinuation = $continuationState
     }
 
     Install-ManagedContent -Destination $statePath -Content (($state | ConvertTo-Json -Depth 8) + $nl)
@@ -1091,6 +1111,8 @@ if ($Profile -eq 'safe' -and -not $WhatIfPreference) {
     Write-Host "Delegation policy: $policyLabel"
     $strategyLabel = if ($null -ne $script:PriorStrategyState) { [string]$script:PriorStrategyState.selected } else { $script:SelectedStrategy }
     Write-Host "Subagent strategy: $strategyLabel"
+    $continuationLabel = if ($null -ne $script:PriorContinuationState) { [string]$script:PriorContinuationState.selected } else { $script:SelectedContinuation }
+    Write-Host "Subagent continuation: $continuationLabel"
     Write-Host "Backend matrix: $backendLabel active in $configPath"
 }
 if ($InstallAhk) { Write-Host "AHK: $AhkDestination" }

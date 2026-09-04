@@ -2,14 +2,14 @@
 
 Kit local, Windows-first, para instalar uma única interface de workflow:
 $workflows. Ele inclui a skill condicional evidence-first e um prompt pad
-AutoHotkey opcional. Possui três seletores globais ortogonais para novas tarefas/sessões:
-`subagent_backend` (`native` | `deepseek`), `delegation_policy` (`balanced` | `aggressive`) e
-`subagent_strategy` (`worker` | `critical`).
+AutoHotkey opcional. Possui quatro seletores globais ortogonais para novas tarefas/sessões:
+`subagent_backend` (`native` | `deepseek`), `delegation_policy` (`balanced` | `aggressive`),
+`subagent_strategy` (`worker` | `critical`) e `subagent_continuation` (`active_follow` | `park_and_wake`).
 O parent GPT é o maestro que delega, integra, valida e decide. Tudo parte de uma
 worktree versionada, com backup antes de sobrescrever, alternâncias transacionais com rollback,
 diagnóstico e remoção segura.
 
-O seletor global de backend define o executor de sub-agentes (`native` com `gpt-5.6-luna` ou backend técnico `deepseek` via SubAgents MCP). A política de delegação define o equilíbrio operacional (`balanced` otimizando wall-clock time ou `aggressive` otimizando desoneração de tokens). A estratégia de subagentes define o modelo de cooperação (`worker` padrão onde worker preserva o fluxo atual, ou `critical` com análise independente e adaptativa por profundidade internamente, identificação de contradições e lacunas, síntese GPT mandatória, fencing e sem edição concorrente; fixação de rota sem troca automática de provedor e sem prometer capacidades que o bridge ainda não expõe; a estratégia nunca concede escrita). Em modos de escrita, o módulo invariante de qualidade de entrega congela o alvo e exige revisão estruturada independente com veredito APPROVED antes do commit local fechado; o Gate de Adequação da Correção transversal atua em eventos operacionais substituindo a meta de "correção mínima" por correção suficiente e sustentável/delimitada (decisões LOCAL_FIX, ROBUST_FIX, REWORK, RESEARCH, RESEARCH_THEN_REWORK, BLOCKED sem troca automática de modo), mantendo o transporte neutro do bridge sem regras de workflow e preservando required_fix.
+O seletor global de backend define o executor de sub-agentes (`native` com `gpt-5.6-luna` ou backend técnico `deepseek` via SubAgents MCP). A política de delegação define o equilíbrio operacional (`balanced` otimizando wall-clock time ou `aggressive` otimizando desoneração de tokens). A estratégia de subagentes define o modelo de cooperação (`worker` padrão onde worker preserva o fluxo atual, ou `critical` com análise independente e adaptativa por profundidade internamente, identificação de contradições e lacunas, síntese GPT mandatória, fencing e sem edição concorrente; fixação de rota sem troca automática de provedor e sem prometer capacidades que o bridge ainda não expõe; a estratégia nunca concede escrita). A continuação de subagentes define a autonomia de suspensão e retomada (`active_follow` padrão mantendo acompanhamento síncrono ou `park_and_wake` com ciclo híbrido sem polling de modelo: em task carregada suspende no mesmo turno via tool wait orientada a eventos [sem polling], em task desconectada/notLoaded arma barreira durável para retomada externa via CLI, e trata conflitos de active writer como entrega diferida durável [`deferred_active_writer`] sem auto-archive ou auto-unload). Em modos de escrita, o módulo invariante de qualidade de entrega congela o alvo e exige revisão estruturada independente com veredito APPROVED antes do commit local fechado; o Gate de Adequação da Correção transversal atua em eventos operacionais substituindo a meta de "correção mínima" por correção suficiente e sustentável/delimitada (decisões LOCAL_FIX, ROBUST_FIX, REWORK, RESEARCH, RESEARCH_THEN_REWORK, BLOCKED sem troca automática de modo), mantendo o transporte neutro do bridge sem regras de workflow e preservando required_fix.
 
 > **Segurança primeiro.** Nunca instale por pipeline remoto. Clone ou baixe o
 > repositório, revise os scripts em scripts/ e execute-os do seu próprio
@@ -143,11 +143,12 @@ Consulte skills/workflows/SKILL.md para os 16 modos (tripla capacidades | permis
 gate de pronto) e o ciclo de vida; referências especializadas são abertas sob
 demanda. O executor de sub-agentes é governado pelo seletor `subagent_backend`
 (`native` com `gpt-5.6-luna` ou backend técnico `deepseek` via SubAgents MCP), sob a
-estratégia de `delegation_policy` (`balanced` ou `aggressive`) e `subagent_strategy`
-(`worker` ou `critical`, executando internamente análise independente e adaptativa por profundidade com contrato de integração de recibo, evidence packet, progresso semântico e early-exit sem prometer capacidades não expostas pelo bridge); o parent GPT
+estratégia de `delegation_policy` (`balanced` ou `aggressive`), `subagent_strategy`
+(`worker` ou `critical`, executando internamente análise independente e adaptativa por profundidade com contrato de integração de recibo, evidence packet, progresso semântico e early-exit sem prometer capacidades não expostas pelo bridge) e `subagent_continuation`
+(`active_follow` padrão ou `park_and_wake` com Sub-agent Autonomy); o parent GPT
 interpreta imagens, integra, valida e decide.
 
-## Alternância de Backend, Política e Estratégia
+## Alternância de Backend, Política, Estratégia e Continuação
 
 O kit oferece comandos transacionais com verificação de drift (divergências na projeção gerenciada falham fechado; campos de configuração não relacionados são preservados e reconciliados), backups automáticos e rollback em caso de falha:
 
@@ -164,10 +165,15 @@ O kit oferece comandos transacionais com verificação de drift (divergências n
 .\scripts\switch-subagent-strategy.ps1 -Strategy worker
 .\scripts\switch-subagent-strategy.ps1 -Strategy critical
 
+# Alternar continuação de subagentes (active_follow ou park_and_wake - Sub-agent Autonomy)
+.\scripts\switch-subagent-continuation.ps1 -Continuation active_follow
+.\scripts\switch-subagent-continuation.ps1 -Continuation park_and_wake
+
 # Consultar status ativo
 .\scripts\switch-subagent-backend.ps1 -Status
 .\scripts\switch-subagent-policy.ps1 -Status
 .\scripts\switch-subagent-strategy.ps1 -Status
+.\scripts\switch-subagent-continuation.ps1 -Status
 ~~~
 
 ### Prompt Pad (AutoHotkey)

@@ -6,9 +6,11 @@ Este documento define o módulo invariante de qualidade de entrega (*delivery re
 
 ## 1. Escopo e Invariância
 
-O módulo de qualidade de entrega é um portão de qualidade embutido e invariante, sendo estritamente **ortogonal às flags** de backend (`subagent_backend`) e de delegação (`delegation_policy`), operando de forma invariável independentemente da configuração ativa.
+O módulo de qualidade de entrega é um portão de qualidade embutido e invariante, sendo estritamente **ortogonal às flags** e seletores globais (`subagent_backend`, `delegation_policy`, `subagent_strategy` e `subagent_continuation`), operando de forma invariável independentemente da configuração ativa.
 
 Exige validação determinística prévia, congelamento formal do alvo com identidade determinística invariante a staging, prova operacional em tempo de execução (*operational/runtime proof*) quando houver gatilho de risco, avaliação pelo Gate de Adequação da Correção orientada à correção suficiente e sustentável/delimitada e exatamente um revisor independente único por alvo congelado (*single independent reviewer* por *frozen target*). Reparos bloqueantes geram um lote de reparo consolidado no mesmo writer. Revalidações subsequentes realizam uma closure review de delta sobre as correções e o blast radius afetado, revalidando a integridade e target_id. O processo ocorre sem R.A.F.V. automático; o modo `R.A.F.V` permanece estritamente manual sob demanda, nunca automático.
+
+Sob `subagent_continuation = park_and_wake`, quando a execução de revisão ou reparo envolver jobs delegados a subagentes, o encerramento de turno com obrigações pendentes é permitido exclusivamente no estado não-terminal `SUSPENDED` após obtenção de `ParkReceipt` armado durável no bridge. Ao acordar, o parent consome com `subagents_follow`. O veredito `APPROVED` e o gate de commit de entrega permanecem estritamente impossíveis enquanto houver jobs aceitos não consumidos ou agentes não encerrados.
 
 ### Modos Aplicáveis:
 - `IMPL.AUTO`

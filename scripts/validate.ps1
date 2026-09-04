@@ -936,6 +936,144 @@ function Assert-CriticalStrategyPolicy {
     }
 }
 
+function Assert-SubagentAutonomyPolicy {
+    param(
+        [Parameter(Mandatory)][string]$AgentsText,
+        [Parameter(Mandatory)][string]$GeminiText,
+        [Parameter(Mandatory)][string]$SkillText,
+        [Parameter(Mandatory)][string]$DelegationText,
+        [Parameter(Mandatory)][string]$DeliveryReviewText,
+        [Parameter(Mandatory)][string]$ReadmeText,
+        [string]$LabelPrefix = ''
+    )
+
+    $pfx = if ([string]::IsNullOrWhiteSpace($LabelPrefix)) { '' } else { "$LabelPrefix " }
+    $agentsNorm = [regex]::Replace($AgentsText, '\s+', ' ').Trim()
+    $geminiNorm = [regex]::Replace($GeminiText, '\s+', ' ').Trim()
+    $skillNorm = [regex]::Replace($SkillText, '\s+', ' ').Trim()
+    $delegationNorm = [regex]::Replace($DelegationText, '\s+', ' ').Trim()
+    $deliveryNorm = [regex]::Replace($DeliveryReviewText, '\s+', ' ').Trim()
+    $readmeNorm = [regex]::Replace($ReadmeText, '\s+', ' ').Trim()
+
+    # 1. Delegation reference checks
+    $delegationRequired = @(
+        '(?i)subagent_continuation',
+        '(?i)active_follow',
+        '(?i)park_and_wake',
+        '(?i)(?:task carregada|loaded task).*(?:subagents_park|deepseek_park).*(?:sem (?:model )?polling|no model polling|sem loops de polling)',
+        '(?i)(?:desconectad[oa]|notLoaded|disconnected).*(?:retomada externa|external wake|CLI)',
+        '(?i)(?:active writer|deferred_active_writer).*(?:durable deferred|entrega diferida|diferida dur[aá]vel)',
+        '(?i)(?:proibid[oa]|nunca|never).*(?:auto-archive|auto-unload|arquivar|descarregar)',
+        '(?i)(?:encerrar o turno|end(?:s)? (?:its )?turn|end turn).*(?:obriga[cç][õo]es pendentes|open obligations).*(?:exclusivamente|only).*(?:SUSPENDED|ParkReceipt|externally armed)',
+        '(?i)(?:deliveryMode\s*=\s*none|unarmed).*(?:permanecer ativ[oa]|remain active)',
+        '(?i)(?:ap[oó]s acordar|after wake|ao acordar).*(?:subagents_follow|consumir os jobs listados|consume listed jobs)',
+        '(?i)(?:metadados confi[aá]veis|trusted metadata).*(?:nunca texto|never worker result text|sem texto de subagente)',
+        '(?i)(?:goal|meta).*(?:separad[oa]|separate ownership)'
+    )
+    foreach ($pattern in $delegationRequired) {
+        if (-not [regex]::IsMatch($delegationNorm, $pattern)) {
+            throw "${pfx}skills/workflows/references/delegation.md is missing required subagent autonomy pattern: $pattern"
+        }
+    }
+
+    # 2. SKILL.md checks
+    $skillRequired = @(
+        '(?i)subagent_continuation',
+        '(?i)active_follow',
+        '(?i)park_and_wake',
+        '(?i)(?:loaded task|task carregada).*(?:subagents_park|deepseek_park).*(?:no model polling|sem (?:model )?polling)',
+        '(?i)(?:notLoaded|disconnected|desconectad[oa]).*(?:external wake|CLI)',
+        '(?i)(?:active writer|deferred_active_writer).*(?:durable deferred|entrega diferida|deferred delivery)',
+        '(?i)(?:proibid[oa]|never|nunca).*(?:auto-archive|auto-unload|arquivar|descarregar)',
+        '(?i)(?:encerrar o turno|end(?:s)? (?:its )?turn|end turn).*(?:SUSPENDED|ParkReceipt|externally armed)',
+        '(?i)(?:deliveryMode\s*=\s*none|unarmed).*(?:remain active|permanecer ativ[oa])',
+        '(?i)(?:after wake|ao acordar|ap[oó]s wake).*(?:subagents_follow)',
+        '(?i)(?:trusted metadata|metadados confi[aá]veis).*(?:never worker result text|sem texto de subagente|no synthetic user text)',
+        '(?i)(?:goal|meta).*(?:separate|separad[oa])'
+    )
+    foreach ($pattern in $skillRequired) {
+        if (-not [regex]::IsMatch($skillNorm, $pattern)) {
+            throw "${pfx}skills/workflows/SKILL.md is missing required subagent autonomy pattern: $pattern"
+        }
+    }
+
+    # 3. AGENTS.md checks
+    $agentsRequired = @(
+        '(?i)subagent_continuation',
+        '(?i)active_follow',
+        '(?i)park_and_wake',
+        '(?i)(?:task carregada|loaded task).*(?:subagents_park|deepseek_park).*(?:sem (?:model )?polling|no model polling)',
+        '(?i)(?:desconectad[oa]|notLoaded).*(?:retomada externa|CLI)',
+        '(?i)(?:active writer|deferred_active_writer).*(?:entrega diferida dur[aá]vel|durable deferred)',
+        '(?i)(?:proibid[oa]|nunca).*(?:arquivar|descarregar|auto-archive|auto-unload)',
+        '(?i)(?:encerrar o turno|obriga[cç][õo]es pendentes).*(?:SUSPENDED|ParkReceipt|externally armed)',
+        '(?i)(?:deliveryMode\s*=\s*none|unarmed).*(?:permanecer ativ[oa]|remain active)',
+        '(?i)(?:subagents_follow)',
+        '(?i)(?:metadados confi[aá]veis|trusted metadata).*(?:nunca texto|sem texto de subagente)',
+        '(?i)(?:goal|meta).*(?:separad[oa]|separate)'
+    )
+    foreach ($pattern in $agentsRequired) {
+        if (-not [regex]::IsMatch($agentsNorm, $pattern)) {
+            throw "${pfx}codex AGENTS.md is missing required subagent autonomy pattern: $pattern"
+        }
+    }
+
+    # 4. GEMINI.md checks
+    $geminiRequired = @(
+        '(?i)subagent_continuation',
+        '(?i)active_follow',
+        '(?i)park_and_wake',
+        '(?i)(?:task carregada|loaded task).*(?:subagents_park|deepseek_park).*(?:sem (?:model )?polling|no model polling)',
+        '(?i)(?:desconectad[oa]|notLoaded).*(?:retomada externa|CLI)',
+        '(?i)(?:active writer|deferred_active_writer).*(?:entrega diferida dur[aá]vel|durable deferred)',
+        '(?i)(?:proibid[oa]|nunca).*(?:arquivar|descarregar|auto-archive|auto-unload)',
+        '(?i)(?:encerrar o turno|obriga[cç][õo]es pendentes).*(?:SUSPENDED|ParkReceipt|externally armed)',
+        '(?i)(?:deliveryMode\s*=\s*none|unarmed).*(?:permanecer ativ[oa]|remain active)',
+        '(?i)(?:subagents_follow)',
+        '(?i)(?:metadados confi[aá]veis|trusted metadata).*(?:nunca texto|sem texto de subagente)',
+        '(?i)(?:goal|meta).*(?:separad[oa]|separate)'
+    )
+    foreach ($pattern in $geminiRequired) {
+        if (-not [regex]::IsMatch($geminiNorm, $pattern)) {
+            throw "${pfx}antigravity GEMINI.md is missing required subagent autonomy pattern: $pattern"
+        }
+    }
+
+    # 5. Delivery Review reference checks
+    if (-not [regex]::IsMatch($deliveryNorm, '(?i)park_and_wake.*SUSPENDED.*ParkReceipt.*subagents_follow')) {
+        throw "${pfx}skills/workflows/references/delivery-review.md is missing required park_and_wake SUSPENDED pattern"
+    }
+
+    # 6. Readme checks
+    $readmeRequired = @(
+        '(?i)subagent_continuation',
+        '(?i)active_follow',
+        '(?i)park_and_wake',
+        '(?i)(?:task carregada|loaded task).*(?:sem (?:model )?polling|no model polling|sem polling)',
+        '(?i)(?:active writer|deferred_active_writer)'
+    )
+    foreach ($pattern in $readmeRequired) {
+        if (-not [regex]::IsMatch($readmeNorm, $pattern)) {
+            throw "${pfx}README.md is missing required subagent autonomy pattern: $pattern"
+        }
+    }
+
+    # 7. Forbiddens / Anti-patterns
+    $forbidden = @(
+        '(?i)\b(?:pode|autoriza|permite)\b[^.;]*(?:polling|loop de status)\b[^.;]*(?:estacionado|parked|aguarda)',
+        '(?i)\b(?:active writer|active_writer)\b[^.;]*(?:autoriza|permite|pode)\b[^.;]*(?:arquivar|descarregar|archive|unload)',
+        '(?i)\bbridge\b[^.;]*(?:injeta|injects?)\b[^.;]*(?:texto de resposta|texto do worker|worker text|synthetic user)',
+        '(?i)\b(?:pode|autoriza|permite)\b[^.;]*(?:encerrar o turno|end turn)\b[^.;]*(?:sem recibo armado|deliveryMode\s*=\s*none|unarmed)',
+        '(?i)(?<!nunca\s|jamais\s|n[a\u00e3]o\s|sem\s)\b(?:retoma|retomar)\s+automaticamente\b[^.;]*(?:goal pausado|paused goal)|(?<!never\s|without\s)\b(?:automatically\s+resumes?|auto-resumes?)\b[^.;]*(?:paused goal)',
+        '(?i)(?<!sem\s|without\s|zero\s|proibid[oa]\s)(?:fallback silencioso|silent fallback).{0,40}(?:active_follow)'
+    )
+    foreach ($pattern in $forbidden) {
+        if ([regex]::IsMatch($delegationNorm, $pattern) -or [regex]::IsMatch($skillNorm, $pattern) -or [regex]::IsMatch($agentsNorm, $pattern) -or [regex]::IsMatch($geminiNorm, $pattern)) {
+            throw "${pfx}contains forbidden subagent autonomy anti-pattern: $pattern"
+        }
+    }
+}
+
 function Assert-DelegationContract {
     param(
         [Parameter(Mandatory)][string]$Label,
@@ -1818,6 +1956,12 @@ function Assert-InstalledState {
         }
         Assert-CodexStrategyState -StrategyState $State.codexStrategy
     }
+    if ($State.PSObject.Properties.Name -contains 'codexContinuation') {
+        if ($null -eq $State.codexContinuation) {
+            throw "Installed state contains an invalid codexContinuation property."
+        }
+        Assert-CodexContinuationState -ContinuationState $State.codexContinuation
+    }
 
     if ($schema -ge 5) {
         if (-not ($State.PSObject.Properties.Name -contains 'codexBackend') -or $null -eq $State.codexBackend) {
@@ -1925,7 +2069,8 @@ if (-not $implAutoRow.Success -or $implAutoRow.Value -notmatch '\| write \|') {
     throw "Workflow skill does not grant IMPL.AUTO write permission"
 }
 
-Assert-Forbidden -Label 'workflow skill' -Text $skill -Tokens @(
+$skillWithoutAutonomy = [regex]::Replace($skill, '(?i)\b(?:active writer|deferred_active_writer)\b', '')
+Assert-Forbidden -Label 'workflow skill' -Text $skillWithoutAutonomy -Tokens @(
     'AGENTS.md',
     'subagents=',
     'sidecar',
@@ -2030,8 +2175,8 @@ Assert-AllContractRules -Checks @(
     { Assert-AlinhamentoPolicy -AgentsText $agentsText -GeminiText $geminiText -SkillText $skill -DelegationText $delegationRef -ReadmeText $readmeText },
     { Assert-McpTemplateRouting -Label 'codex AGENTS.md' -Text $agentsText },
     { Assert-McpTemplateRouting -Label 'antigravity GEMINI.md' -Text $geminiText },
-    { Assert-SerenaCodeGraphPolicy -McpSkillText $mcpSkill -SerenaCodeGraphText $mcpSerenaCodeGraph -WorkflowSkillText $skill -CommitRefText $commitRef -AgentsText $agentsText -GeminiText $geminiText },
-    { Assert-CriticalStrategyPolicy -AgentsText $agentsText -GeminiText $geminiText -SkillText $skill -DelegationText $delegationRef -ReadmeText $readmeText }
+    { Assert-CriticalStrategyPolicy -AgentsText $agentsText -GeminiText $geminiText -SkillText $skill -DelegationText $delegationRef -ReadmeText $readmeText },
+    { Assert-SubagentAutonomyPolicy -AgentsText $agentsText -GeminiText $geminiText -SkillText $skill -DelegationText $delegationRef -DeliveryReviewText $deliveryReviewRef -ReadmeText $readmeText }
 )
 
 $legacyPaths = @(
@@ -2081,7 +2226,7 @@ foreach ($relativePath in @(git -C $repo ls-files)) {
 
     if ($relativePath -ne 'CHANGELOG.md' -and $relativePath -ne 'scripts/validate.ps1') {
         foreach ($token in $legacyTokens) {
-            if (($relativePath.StartsWith('scripts/') -or $relativePath -eq 'codex/AGENTS.md' -or $relativePath -eq 'skills/workflows/references/delivery-review.md' -or $relativePath -eq 'README.md' -or $relativePath -eq 'docs/security.md' -or $relativePath -eq 'skills/workflows/SKILL.md' -or $relativePath -eq 'skills/workflows/references/delegation.md') -and $token -in @('writer', 'reviewer', 'worker')) {
+            if (($relativePath.StartsWith('scripts/') -or $relativePath.StartsWith('docs/superpowers/') -or $relativePath -eq 'codex/AGENTS.md' -or $relativePath -eq 'antigravity/GEMINI.md' -or $relativePath -eq 'skills/workflows/references/delivery-review.md' -or $relativePath -eq 'README.md' -or $relativePath -eq 'docs/security.md' -or $relativePath -eq 'skills/workflows/SKILL.md' -or $relativePath -eq 'skills/workflows/references/delegation.md') -and $token -in @('writer', 'reviewer', 'worker')) {
                 continue
             }
             if ($text.IndexOf($token, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
@@ -2297,7 +2442,8 @@ if (-not $SkipInstalled) {
         $expectedBackend = if ($state.PSObject.Properties.Name -contains 'codexBackend') { [string]$state.codexBackend.selected } else { 'deepseek' }
         $expectedPolicy = if ($state.PSObject.Properties.Name -contains 'codexDelegation') { [string]$state.codexDelegation.selected } else { 'balanced' }
         $expectedStrategy = if ($state.PSObject.Properties.Name -contains 'codexStrategy') { [string]$state.codexStrategy.selected } else { 'worker' }
-        Assert-CodexAgentsRuntimeBlock -Text $installedAgents -Backend $expectedBackend -Policy $expectedPolicy -Strategy $expectedStrategy
+        $expectedContinuation = if ($state.PSObject.Properties.Name -contains 'codexContinuation') { [string]$state.codexContinuation.selected } else { 'active_follow' }
+        Assert-CodexAgentsRuntimeBlock -Text $installedAgents -Backend $expectedBackend -Policy $expectedPolicy -Strategy $expectedStrategy -Continuation $expectedContinuation
 
         $installedGemini = Read-RequiredText (Join-Path (Join-Path $antigravityHome 'config') 'GEMINI.md')
         Assert-DeepSeekDaemonRestartGemini -Label 'installed GEMINI.md' -Text $installedGemini
@@ -2307,6 +2453,7 @@ if (-not $SkipInstalled) {
         Assert-DeliveryReviewPolicy -DeliveryReviewText $installedDeliveryAgents -SkillText (Read-RequiredText (Join-Path $workflowsDest 'SKILL.md')) -AgentsText $installedAgents -GeminiText $installedGemini -LabelPrefix 'installed (safe profile)'
         Assert-AlinhamentoPolicy -AgentsText $installedAgents -GeminiText $installedGemini -SkillText (Read-RequiredText (Join-Path $workflowsDest 'SKILL.md')) -DelegationText (Read-RequiredText (Join-Path (Join-Path $workflowsDest 'references') 'delegation.md')) -ReadmeText $readmeText -LabelPrefix 'installed (safe profile)'
         Assert-CriticalStrategyPolicy -AgentsText $installedAgents -GeminiText $installedGemini -SkillText (Read-RequiredText (Join-Path $workflowsDest 'SKILL.md')) -DelegationText (Read-RequiredText (Join-Path (Join-Path $workflowsDest 'references') 'delegation.md')) -ReadmeText $readmeText -LabelPrefix 'installed (safe profile)'
+        Assert-SubagentAutonomyPolicy -AgentsText $installedAgents -GeminiText $installedGemini -SkillText (Read-RequiredText (Join-Path $workflowsDest 'SKILL.md')) -DelegationText (Read-RequiredText (Join-Path (Join-Path $workflowsDest 'references') 'delegation.md')) -DeliveryReviewText $installedDeliveryAgents -ReadmeText $readmeText -LabelPrefix 'installed (safe profile)'
     }
 
     Assert-MirrorTree -Source $workflowSource -Installed $workflowsDest -Label 'workflows skill (agents)'

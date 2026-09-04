@@ -150,6 +150,12 @@ function Assert-InstallState {
         }
         Assert-CodexStrategyState -StrategyState $State.codexStrategy
     }
+    if ($State.PSObject.Properties.Name -contains 'codexContinuation') {
+        if ($null -eq $State.codexContinuation) {
+            throw "Install state contains an invalid codexContinuation property."
+        }
+        Assert-CodexContinuationState -ContinuationState $State.codexContinuation
+    }
 
     if ($schema -ge 5) {
         if (-not ($State.PSObject.Properties.Name -contains 'codexBackend') -or $null -eq $State.codexBackend) {
@@ -473,9 +479,10 @@ if ($installedProfile -eq 'safe') {
     $expectedBackend = if ($null -ne $state -and ($state.PSObject.Properties.Name -contains 'codexBackend')) { [string]$state.codexBackend.selected } else { 'deepseek' }
     $expectedPolicy = if ($null -ne $state -and ($state.PSObject.Properties.Name -contains 'codexDelegation')) { [string]$state.codexDelegation.selected } else { 'balanced' }
     $expectedStrategy = if ($null -ne $state -and ($state.PSObject.Properties.Name -contains 'codexStrategy')) { [string]$state.codexStrategy.selected } else { 'worker' }
+    $expectedContinuation = if ($null -ne $state -and ($state.PSObject.Properties.Name -contains 'codexContinuation')) { [string]$state.codexContinuation.selected } else { 'active_follow' }
     try {
-        Assert-CodexAgentsRuntimeBlock -Text $agentsMdContent -Backend $expectedBackend -Policy $expectedPolicy -Strategy $expectedStrategy
-        Write-Check -Name 'Managed AGENTS runtime' -Passed $true -Detail "Exact runtime block matches (backend=$expectedBackend, policy=$expectedPolicy, strategy=$expectedStrategy)"
+        Assert-CodexAgentsRuntimeBlock -Text $agentsMdContent -Backend $expectedBackend -Policy $expectedPolicy -Strategy $expectedStrategy -Continuation $expectedContinuation
+        Write-Check -Name 'Managed AGENTS runtime' -Passed $true -Detail "Exact runtime block matches (backend=$expectedBackend, policy=$expectedPolicy, strategy=$expectedStrategy, continuation=$expectedContinuation)"
     }
     catch {
         Write-Check -Name 'Managed AGENTS runtime' -Passed $false -Detail $_.Exception.Message

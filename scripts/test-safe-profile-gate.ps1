@@ -407,10 +407,12 @@ function Get-AgentsRuntimeBlock {
     $backendMatch = [regex]::Match($Text, '(?m)^\s*subagent_backend\s*=\s*([a-zA-Z0-9_-]+)\s*(?:#.*)?$')
     $policyMatch = [regex]::Match($Text, '(?m)^\s*delegation_policy\s*=\s*([a-zA-Z0-9_-]+)\s*(?:#.*)?$')
     $strategyMatch = [regex]::Match($Text, '(?m)^\s*subagent_strategy\s*=\s*([a-zA-Z0-9_-]+)\s*(?:#.*)?$')
+    $continuationMatch = [regex]::Match($Text, '(?m)^\s*subagent_continuation\s*=\s*([a-zA-Z0-9_-]+)\s*(?:#.*)?$')
     return [pscustomobject]@{
         Backend = if ($backendMatch.Success) { $backendMatch.Groups[1].Value } else { $null }
         Policy = if ($policyMatch.Success) { $policyMatch.Groups[1].Value } else { $null }
         Strategy = if ($strategyMatch.Success) { $strategyMatch.Groups[1].Value } else { $null }
+        Continuation = if ($continuationMatch.Success) { $continuationMatch.Groups[1].Value } else { $null }
     }
 }
 
@@ -440,6 +442,34 @@ function Invoke-StrategySwitchWithHost {
 
     $switchScript = Join-Path $repo 'scripts\switch-subagent-strategy.ps1'
     return Invoke-ProcessCapture -FilePath $HostInfo.Path -ArgumentList @('-NoProfile', '-File', $switchScript, '-Strategy', $Strategy, '-CodexHome', (Get-CodexHome $Root))
+}
+
+function Invoke-ContinuationSwitch {
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [Parameter(Mandatory)][ValidateSet('active_follow', 'park_and_wake')][string]$Continuation
+    )
+
+    $switchScript = Join-Path $repo 'scripts\switch-subagent-continuation.ps1'
+    return Invoke-ProcessCapture -FilePath 'pwsh' -ArgumentList @('-NoProfile', '-File', $switchScript, '-Continuation', $Continuation, '-CodexHome', (Get-CodexHome $Root))
+}
+
+function Invoke-ContinuationStatus {
+    param([Parameter(Mandatory)][string]$Root)
+
+    $switchScript = Join-Path $repo 'scripts\switch-subagent-continuation.ps1'
+    return Invoke-ProcessCapture -FilePath 'pwsh' -ArgumentList @('-NoProfile', '-File', $switchScript, '-Status', '-CodexHome', (Get-CodexHome $Root))
+}
+
+function Invoke-ContinuationSwitchWithHost {
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [Parameter(Mandatory)][ValidateSet('active_follow', 'park_and_wake')][string]$Continuation,
+        [Parameter(Mandatory)][object]$HostInfo
+    )
+
+    $switchScript = Join-Path $repo 'scripts\switch-subagent-continuation.ps1'
+    return Invoke-ProcessCapture -FilePath $HostInfo.Path -ArgumentList @('-NoProfile', '-File', $switchScript, '-Continuation', $Continuation, '-CodexHome', (Get-CodexHome $Root))
 }
 
 function Get-SwitchHosts {
@@ -1201,6 +1231,144 @@ function Test-CorrectionAdequacyGateSemantics {
     )
     foreach ($pattern in $forbidden) {
         if ([regex]::IsMatch($deliveryNorm, $pattern) -or [regex]::IsMatch($skillNorm, $pattern) -or [regex]::IsMatch($agentsNorm, $pattern) -or [regex]::IsMatch($geminiNorm, $pattern)) {
+            return $false
+        }
+    }
+
+    return $true
+}
+
+function Test-SubagentAutonomySemantics {
+    param(
+        [Parameter(Mandatory)][string]$DelegationText,
+        [Parameter(Mandatory)][string]$DeliveryReviewText,
+        [Parameter(Mandatory)][string]$SkillText,
+        [Parameter(Mandatory)][string]$AgentsText,
+        [Parameter(Mandatory)][string]$GeminiText,
+        [Parameter(Mandatory)][string]$ReadmeText
+    )
+
+    $delegationNorm = [regex]::Replace($DelegationText, '\s+', ' ').Trim()
+    $deliveryNorm = [regex]::Replace($DeliveryReviewText, '\s+', ' ').Trim()
+    $skillNorm = [regex]::Replace($SkillText, '\s+', ' ').Trim()
+    $agentsNorm = [regex]::Replace($AgentsText, '\s+', ' ').Trim()
+    $geminiNorm = [regex]::Replace($GeminiText, '\s+', ' ').Trim()
+    $readmeNorm = [regex]::Replace($ReadmeText, '\s+', ' ').Trim()
+
+    # 1. Delegation reference checks
+    $delegationRequired = @(
+        '(?i)subagent_continuation',
+        '(?i)active_follow',
+        '(?i)park_and_wake',
+        '(?i)(?:task carregada|loaded task).*(?:subagents_park|deepseek_park).*(?:sem (?:model )?polling|no model polling|sem loops de polling)',
+        '(?i)(?:desconectad[oa]|notLoaded|disconnected).*(?:retomada externa|external wake|CLI)',
+        '(?i)(?:active writer|deferred_active_writer).*(?:durable deferred|entrega diferida|diferida dur[aá]vel)',
+        '(?i)(?:proibid[oa]|nunca|never).*(?:auto-archive|auto-unload|arquivar|descarregar)',
+        '(?i)(?:encerrar o turno|end(?:s)? (?:its )?turn|end turn).*(?:obriga[cç][õo]es pendentes|open obligations).*(?:exclusivamente|only).*(?:SUSPENDED|ParkReceipt|externally armed)',
+        '(?i)(?:deliveryMode\s*=\s*none|unarmed).*(?:permanecer ativ[oa]|remain active)',
+        '(?i)(?:ap[oó]s acordar|after wake|ao acordar).*(?:subagents_follow|consumir os jobs listados|consume listed jobs)',
+        '(?i)(?:metadados confi[aá]veis|trusted metadata).*(?:nunca texto|never worker result text|sem texto de subagente)',
+        '(?i)(?:goal|meta).*(?:separad[oa]|separate ownership)'
+    )
+    foreach ($pattern in $delegationRequired) {
+        if (-not [regex]::IsMatch($delegationNorm, $pattern)) {
+            return $false
+        }
+    }
+
+    # 2. SKILL.md checks
+    $skillRequired = @(
+        '(?i)subagent_continuation',
+        '(?i)active_follow',
+        '(?i)park_and_wake',
+        '(?i)(?:loaded task|task carregada).*(?:subagents_park|deepseek_park).*(?:no model polling|sem (?:model )?polling)',
+        '(?i)(?:notLoaded|disconnected|desconectad[oa]).*(?:external wake|CLI)',
+        '(?i)(?:active writer|deferred_active_writer).*(?:durable deferred|entrega diferida|deferred delivery)',
+        '(?i)(?:proibid[oa]|never|nunca).*(?:auto-archive|auto-unload|arquivar|descarregar)',
+        '(?i)(?:encerrar o turno|end(?:s)? (?:its )?turn|end turn).*(?:SUSPENDED|ParkReceipt|externally armed)',
+        '(?i)(?:deliveryMode\s*=\s*none|unarmed).*(?:remain active|permanecer ativ[oa])',
+        '(?i)(?:after wake|ao acordar|ap[oó]s wake).*(?:subagents_follow)',
+        '(?i)(?:trusted metadata|metadados confi[aá]veis).*(?:never worker result text|sem texto de subagente|no synthetic user text)',
+        '(?i)(?:goal|meta).*(?:separate|separad[oa])'
+    )
+    foreach ($pattern in $skillRequired) {
+        if (-not [regex]::IsMatch($skillNorm, $pattern)) {
+            return $false
+        }
+    }
+
+    # 3. AGENTS.md checks
+    $agentsRequired = @(
+        '(?i)subagent_continuation',
+        '(?i)active_follow',
+        '(?i)park_and_wake',
+        '(?i)(?:task carregada|loaded task).*(?:subagents_park|deepseek_park).*(?:sem (?:model )?polling|no model polling)',
+        '(?i)(?:desconectad[oa]|notLoaded).*(?:retomada externa|CLI)',
+        '(?i)(?:active writer|deferred_active_writer).*(?:entrega diferida dur[aá]vel|durable deferred)',
+        '(?i)(?:proibid[oa]|nunca).*(?:arquivar|descarregar|auto-archive|auto-unload)',
+        '(?i)(?:encerrar o turno|obriga[cç][õo]es pendentes).*(?:SUSPENDED|ParkReceipt|externally armed)',
+        '(?i)(?:deliveryMode\s*=\s*none|unarmed).*(?:permanecer ativ[oa]|remain active)',
+        '(?i)(?:subagents_follow)',
+        '(?i)(?:metadados confi[aá]veis|trusted metadata).*(?:nunca texto|sem texto de subagente)',
+        '(?i)(?:goal|meta).*(?:separad[oa]|separate)'
+    )
+    foreach ($pattern in $agentsRequired) {
+        if (-not [regex]::IsMatch($agentsNorm, $pattern)) {
+            return $false
+        }
+    }
+
+    # 4. GEMINI.md checks
+    $geminiRequired = @(
+        '(?i)subagent_continuation',
+        '(?i)active_follow',
+        '(?i)park_and_wake',
+        '(?i)(?:task carregada|loaded task).*(?:subagents_park|deepseek_park).*(?:sem (?:model )?polling|no model polling)',
+        '(?i)(?:desconectad[oa]|notLoaded).*(?:retomada externa|CLI)',
+        '(?i)(?:active writer|deferred_active_writer).*(?:entrega diferida dur[aá]vel|durable deferred)',
+        '(?i)(?:proibid[oa]|nunca).*(?:arquivar|descarregar|auto-archive|auto-unload)',
+        '(?i)(?:encerrar o turno|obriga[cç][õo]es pendentes).*(?:SUSPENDED|ParkReceipt|externally armed)',
+        '(?i)(?:deliveryMode\s*=\s*none|unarmed).*(?:permanecer ativ[oa]|remain active)',
+        '(?i)(?:subagents_follow)',
+        '(?i)(?:metadados confi[aá]veis|trusted metadata).*(?:nunca texto|sem texto de subagente)',
+        '(?i)(?:goal|meta).*(?:separad[oa]|separate)'
+    )
+    foreach ($pattern in $geminiRequired) {
+        if (-not [regex]::IsMatch($geminiNorm, $pattern)) {
+            return $false
+        }
+    }
+
+    # 5. Delivery Review reference checks
+    if (-not [regex]::IsMatch($deliveryNorm, '(?i)park_and_wake.*SUSPENDED.*ParkReceipt.*subagents_follow')) {
+        return $false
+    }
+
+    # 6. Readme checks
+    $readmeRequired = @(
+        '(?i)subagent_continuation',
+        '(?i)active_follow',
+        '(?i)park_and_wake',
+        '(?i)(?:task carregada|loaded task).*(?:sem (?:model )?polling|no model polling|sem polling)',
+        '(?i)(?:active writer|deferred_active_writer)'
+    )
+    foreach ($pattern in $readmeRequired) {
+        if (-not [regex]::IsMatch($readmeNorm, $pattern)) {
+            return $false
+        }
+    }
+
+    # 7. Forbiddens / Anti-patterns
+    $forbidden = @(
+        '(?i)\b(?:pode|autoriza|permite)\b[^.;]*(?:polling|loop de status)\b[^.;]*(?:estacionado|parked|aguarda)',
+        '(?i)\b(?:active writer|active_writer)\b[^.;]*(?:autoriza|permite|pode)\b[^.;]*(?:arquivar|descarregar|archive|unload)',
+        '(?i)\bbridge\b[^.;]*(?:injeta|injects?)\b[^.;]*(?:texto de resposta|texto do worker|worker text|synthetic user)',
+        '(?i)\b(?:pode|autoriza|permite)\b[^.;]*(?:encerrar o turno|end turn)\b[^.;]*(?:sem recibo armado|deliveryMode\s*=\s*none|unarmed)',
+        '(?i)(?<!nunca\s|jamais\s|n[a\u00e3]o\s|sem\s)\b(?:retoma|retomar)\s+automaticamente\b[^.;]*(?:goal pausado|paused goal)|(?<!never\s|without\s)\b(?:automatically\s+resumes?|auto-resumes?)\b[^.;]*(?:paused goal)',
+        '(?i)(?<!sem\s|without\s|zero\s|proibid[oa]\s)(?:fallback silencioso|silent fallback).{0,40}(?:active_follow)'
+    )
+    foreach ($pattern in $forbidden) {
+        if ([regex]::IsMatch($delegationNorm, $pattern) -or [regex]::IsMatch($skillNorm, $pattern) -or [regex]::IsMatch($agentsNorm, $pattern) -or [regex]::IsMatch($geminiNorm, $pattern)) {
             return $false
         }
     }
@@ -3410,6 +3578,154 @@ enabled = true
 
         $tamperOldRequiredFix = $canonicalDelivery40 -replace '(?i)"required_fix":\s*"[^"]+"', '"required_fix": "correção mínima exigida"'
         Assert-Condition 'S40 detects obsolete required_fix minimum semantics tamper' (-not (Test-CorrectionAdequacyGateSemantics -DeliveryReviewText $tamperOldRequiredFix -QualityRatchetText $canonicalQuality40 -ValidationText $canonicalValidation40 -SkillText $canonicalSkill40 -AgentsText $canonicalAgents40 -GeminiText $canonicalGemini40 -ReadmeText $canonicalReadme40)) ''
+    }
+
+    $currentScenario = 41
+    if ($targetScenario -eq 0 -or $targetScenario -eq 41) {
+        Write-Host 'Scenario 41: subagent_continuation selector (active_follow|park_and_wake), default active_follow, orthogonal switching, status, fail-closed, multi-host, and no consumer injection' -ForegroundColor Cyan
+
+        # 1. Semantic tests on canonical policies (hybrid lifecycle, loaded/notLoaded, active writer, no polling, no auto-archive, trusted metadata, separate goal ownership)
+        $canonicalDelegation41 = Get-Content -LiteralPath (Join-Path $repo 'skills\workflows\references\delegation.md') -Raw -Encoding UTF8
+        $canonicalDelivery41 = Get-Content -LiteralPath (Join-Path $repo 'skills\workflows\references\delivery-review.md') -Raw -Encoding UTF8
+        $canonicalSkill41 = Get-Content -LiteralPath (Join-Path $repo 'skills\workflows\SKILL.md') -Raw -Encoding UTF8
+        $canonicalAgents41 = Get-Content -LiteralPath (Join-Path $repo 'codex\AGENTS.md') -Raw -Encoding UTF8
+        $canonicalGemini41 = Get-Content -LiteralPath (Join-Path $repo 'antigravity\GEMINI.md') -Raw -Encoding UTF8
+        $canonicalReadme41 = Get-Content -LiteralPath (Join-Path $repo 'README.md') -Raw -Encoding UTF8
+
+        Assert-Condition 'S41 canonical policies satisfy subagent autonomy hybrid lifecycle semantics' (Test-SubagentAutonomySemantics -DelegationText $canonicalDelegation41 -DeliveryReviewText $canonicalDelivery41 -SkillText $canonicalSkill41 -AgentsText $canonicalAgents41 -GeminiText $canonicalGemini41 -ReadmeText $canonicalReadme41) ''
+
+        # 2. Tampers against autonomy invariants
+        $tamperModelPoll = $canonicalDelegation41 + $nl + 'O parent pode realizar polling periódico com subagents_follow enquanto aguarda o término da tarefa.'
+        Assert-Condition 'S41 detects model-polling tamper' (-not (Test-SubagentAutonomySemantics -DelegationText $tamperModelPoll -DeliveryReviewText $canonicalDelivery41 -SkillText $canonicalSkill41 -AgentsText $canonicalAgents41 -GeminiText $canonicalGemini41 -ReadmeText $canonicalReadme41)) ''
+
+        $tamperAutoArchive = $canonicalSkill41 + $nl + 'Active writer autoriza arquivar ou descarregar a task para liberar o lock.'
+        Assert-Condition 'S41 detects active-writer auto-archive tamper' (-not (Test-SubagentAutonomySemantics -DelegationText $canonicalDelegation41 -DeliveryReviewText $canonicalDelivery41 -SkillText $tamperAutoArchive -AgentsText $canonicalAgents41 -GeminiText $canonicalGemini41 -ReadmeText $canonicalReadme41)) ''
+
+        $tamperWorkerPayload = $canonicalAgents41 + $nl + 'O bridge injeta o texto de resposta do worker na mensagem de retomada.'
+        Assert-Condition 'S41 detects worker text in bridge payload tamper' (-not (Test-SubagentAutonomySemantics -DelegationText $canonicalDelegation41 -DeliveryReviewText $canonicalDelivery41 -SkillText $canonicalSkill41 -AgentsText $tamperWorkerPayload -GeminiText $canonicalGemini41 -ReadmeText $canonicalReadme41)) ''
+
+        $tamperUnarmedTurnEnd = $canonicalDelegation41 + $nl + 'O parent pode encerrar o turno mesmo se o recibo retornar deliveryMode=none.'
+        Assert-Condition 'S41 detects turn ending without armed receipt tamper' (-not (Test-SubagentAutonomySemantics -DelegationText $tamperUnarmedTurnEnd -DeliveryReviewText $canonicalDelivery41 -SkillText $canonicalSkill41 -AgentsText $canonicalAgents41 -GeminiText $canonicalGemini41 -ReadmeText $canonicalReadme41)) ''
+
+        $tamperResumeGoal = $canonicalGemini41 + $nl + 'A retomada retoma automaticamente o goal pausado pelo usuário.'
+        Assert-Condition 'S41 detects auto-resume paused goal tamper' (-not (Test-SubagentAutonomySemantics -DelegationText $canonicalDelegation41 -DeliveryReviewText $canonicalDelivery41 -SkillText $canonicalSkill41 -AgentsText $canonicalAgents41 -GeminiText $tamperResumeGoal -ReadmeText $canonicalReadme41)) ''
+
+        $tamperSilentFallback = $canonicalDelegation41 + $nl + 'Se a barreira falhar, ocorre fallback silencioso para active_follow.'
+        Assert-Condition 'S41 detects silent fallback to active_follow tamper' (-not (Test-SubagentAutonomySemantics -DelegationText $tamperSilentFallback -DeliveryReviewText $canonicalDelivery41 -SkillText $canonicalSkill41 -AgentsText $canonicalAgents41 -GeminiText $canonicalGemini41 -ReadmeText $canonicalReadme41)) ''
+
+        $root41 = New-FixtureHome
+        $fixtures.Add($root41)
+
+        # 1. Installation establishes active_follow by default in state and AGENTS.md
+        $originalConfig41 = '[features]' + $nl + 'multi_agent = false' + $nl + $nl + '[mcp_servers.subagents]' + $nl + 'command = "pwsh"' + $nl
+        Write-FixtureFile -Path (Join-Path (Get-CodexHome $root41) 'config.toml') -Content $originalConfig41
+        Invoke-SafeInstall -Root $root41
+
+        $state41 = Get-InstallState $root41
+        Assert-Condition 'S41 safe install records default active_follow continuation in state' ($null -ne $state41 -and $state41.PSObject.Properties.Name -contains 'codexContinuation' -and [string]$state41.codexContinuation.selected -ceq 'active_follow') ''
+
+        $agents41 = Get-Content -LiteralPath (Join-Path (Get-CodexHome $root41) 'AGENTS.md') -Raw -Encoding UTF8
+        $rt41 = Get-AgentsRuntimeBlock -Text $agents41
+        Assert-Condition 'S41 safe install establishes subagent_continuation = active_follow in AGENTS.md' ($rt41.Continuation -ceq 'active_follow') $rt41.Continuation
+
+        # 2. Continuation switch to park_and_wake
+        $parkResult = Invoke-ContinuationSwitch -Root $root41 -Continuation park_and_wake
+        Assert-Condition 'S41 switch to park_and_wake succeeds' ($parkResult.ExitCode -eq 0) $parkResult.Output
+        $state41AfterPark = Get-InstallState $root41
+        Assert-Condition 'S41 state updated to park_and_wake continuation' ($null -ne $state41AfterPark.codexContinuation -and [string]$state41AfterPark.codexContinuation.selected -ceq 'park_and_wake') ''
+        $agents41AfterPark = Get-Content -LiteralPath (Join-Path (Get-CodexHome $root41) 'AGENTS.md') -Raw -Encoding UTF8
+        $rt41AfterPark = Get-AgentsRuntimeBlock -Text $agents41AfterPark
+        Assert-Condition 'S41 AGENTS.md runtime block updated to subagent_continuation = park_and_wake' ($rt41AfterPark.Continuation -ceq 'park_and_wake') $rt41AfterPark.Continuation
+        $config41AfterPark = Read-Config $root41
+        Assert-Condition 'S41 continuation switch leaves config.toml untouched' ($config41AfterPark -ceq ($originalConfig41 -replace "`r?`n", "`r`n")) ''
+
+        # 3. Status reporting across all switchers
+        $statusResult = Invoke-ContinuationStatus -Root $root41
+        Assert-Condition 'S41 continuation status reports active park_and_wake' ($statusResult.ExitCode -eq 0 -and $statusResult.Output -match '(?i)Active subagent continuation:\s*park_and_wake') $statusResult.Output
+        $backendStatus = Invoke-BackendStatus -Root $root41
+        Assert-Condition 'S41 backend status reports active continuation' ($backendStatus.ExitCode -eq 0 -and $backendStatus.Output -match '(?i)Active subagent continuation:\s*park_and_wake') $backendStatus.Output
+        $policyStatus = Invoke-PolicyStatus -Root $root41
+        Assert-Condition 'S41 policy status reports active continuation' ($policyStatus.ExitCode -eq 0 -and $policyStatus.Output -match '(?i)Active subagent continuation:\s*park_and_wake') $policyStatus.Output
+        $strategyStatus = Invoke-StrategyStatus -Root $root41
+        Assert-Condition 'S41 strategy status reports active continuation' ($strategyStatus.ExitCode -eq 0 -and $strategyStatus.Output -match '(?i)Active subagent continuation:\s*park_and_wake') $strategyStatus.Output
+
+        # 4. Idempotence
+        $parkRerun = Invoke-ContinuationSwitch -Root $root41 -Continuation park_and_wake
+        $agents41Rerun = Get-Content -LiteralPath (Join-Path (Get-CodexHome $root41) 'AGENTS.md') -Raw -Encoding UTF8
+        Assert-Condition 'S41 repeated switch to park_and_wake is byte-identical' ($parkRerun.ExitCode -eq 0 -and $agents41Rerun -ceq $agents41AfterPark) $parkRerun.Output
+
+        # 5. Switch back to active_follow
+        $followResult = Invoke-ContinuationSwitch -Root $root41 -Continuation active_follow
+        Assert-Condition 'S41 switch back to active_follow succeeds' ($followResult.ExitCode -eq 0) $followResult.Output
+        $state41Follow = Get-InstallState $root41
+        Assert-Condition 'S41 state updated to active_follow continuation' ([string]$state41Follow.codexContinuation.selected -ceq 'active_follow') ''
+        $agents41Follow = Get-Content -LiteralPath (Join-Path (Get-CodexHome $root41) 'AGENTS.md') -Raw -Encoding UTF8
+        $rt41Follow = Get-AgentsRuntimeBlock -Text $agents41Follow
+        Assert-Condition 'S41 AGENTS.md runtime block updated to subagent_continuation = active_follow' ($rt41Follow.Continuation -ceq 'active_follow') $rt41Follow.Continuation
+
+        # 6. Multi-host continuation switch
+        foreach ($hostInfo in (Get-SwitchHosts)) {
+            $hPark = Invoke-ContinuationSwitchWithHost -Root $root41 -Continuation park_and_wake -HostInfo $hostInfo
+            Assert-Condition "S41 $($hostInfo.Name) switch to park_and_wake succeeds" ($hPark.ExitCode -eq 0) $hPark.Output
+            $hFollow = Invoke-ContinuationSwitchWithHost -Root $root41 -Continuation active_follow -HostInfo $hostInfo
+            Assert-Condition "S41 $($hostInfo.Name) switch to active_follow succeeds" ($hFollow.ExitCode -eq 0) $hFollow.Output
+        }
+
+        # 7. Fail closed on invalid selector
+        $switchScript = Join-Path $repo 'scripts\switch-subagent-continuation.ps1'
+        $invalidParamResult = Invoke-ProcessCapture -FilePath 'pwsh' -ArgumentList @('-NoProfile', '-File', $switchScript, '-Continuation', 'invalid_mode', '-CodexHome', (Get-CodexHome $root41))
+        Assert-Condition 'S41 switcher fails closed on invalid selector parameter' ($invalidParamResult.ExitCode -ne 0) $invalidParamResult.Output
+
+        # Tampered AGENTS.md with invalid continuation fails switcher
+        $tamperedAgents = (Get-Content -LiteralPath (Join-Path (Get-CodexHome $root41) 'AGENTS.md') -Raw -Encoding UTF8) -replace 'subagent_continuation = active_follow', 'subagent_continuation = invalid_continuation'
+        Write-FixtureFile -Path (Join-Path (Get-CodexHome $root41) 'AGENTS.md') -Content $tamperedAgents
+        $tamperSwitchResult = Invoke-ContinuationSwitch -Root $root41 -Continuation park_and_wake
+        Assert-Condition 'S41 switcher fails closed when AGENTS.md contains invalid continuation' ($tamperSwitchResult.ExitCode -ne 0) $tamperSwitchResult.Output
+        # Restore valid AGENTS.md
+        Write-FixtureFile -Path (Join-Path (Get-CodexHome $root41) 'AGENTS.md') -Content $agents41Follow
+
+        # 8. Cross-selector preservation
+        Invoke-ContinuationSwitch -Root $root41 -Continuation park_and_wake | Out-Null
+        Invoke-BackendSwitch -Root $root41 -Backend native | Out-Null
+        $rtAfterBackend = Get-AgentsRuntimeBlock -Text (Get-Content -LiteralPath (Join-Path (Get-CodexHome $root41) 'AGENTS.md') -Raw -Encoding UTF8)
+        Assert-Condition 'S41 backend switch preserves active park_and_wake continuation' ($rtAfterBackend.Continuation -ceq 'park_and_wake' -and $rtAfterBackend.Backend -ceq 'native') ''
+        $stateAfterBackend = Get-InstallState $root41
+        Assert-Condition 'S41 backend switch preserves park_and_wake in state' ([string]$stateAfterBackend.codexContinuation.selected -ceq 'park_and_wake') ''
+
+        Invoke-PolicySwitch -Root $root41 -Policy aggressive | Out-Null
+        $rtAfterPolicy = Get-AgentsRuntimeBlock -Text (Get-Content -LiteralPath (Join-Path (Get-CodexHome $root41) 'AGENTS.md') -Raw -Encoding UTF8)
+        Assert-Condition 'S41 policy switch preserves active park_and_wake continuation' ($rtAfterPolicy.Continuation -ceq 'park_and_wake' -and $rtAfterPolicy.Policy -ceq 'aggressive') ''
+        $stateAfterPolicy = Get-InstallState $root41
+        Assert-Condition 'S41 policy switch preserves park_and_wake in state' ([string]$stateAfterPolicy.codexContinuation.selected -ceq 'park_and_wake') ''
+
+        Invoke-StrategySwitch -Root $root41 -Strategy critical | Out-Null
+        $rtAfterStrategy = Get-AgentsRuntimeBlock -Text (Get-Content -LiteralPath (Join-Path (Get-CodexHome $root41) 'AGENTS.md') -Raw -Encoding UTF8)
+        Assert-Condition 'S41 strategy switch preserves active park_and_wake continuation' ($rtAfterStrategy.Continuation -ceq 'park_and_wake' -and $rtAfterStrategy.Strategy -ceq 'critical') ''
+        $stateAfterStrategy = Get-InstallState $root41
+        Assert-Condition 'S41 strategy switch preserves park_and_wake in state' ([string]$stateAfterStrategy.codexContinuation.selected -ceq 'park_and_wake') ''
+
+        # 9. Continuation switch preserves other 3 selectors
+        Invoke-ContinuationSwitch -Root $root41 -Continuation active_follow | Out-Null
+        $rtAfterCont = Get-AgentsRuntimeBlock -Text (Get-Content -LiteralPath (Join-Path (Get-CodexHome $root41) 'AGENTS.md') -Raw -Encoding UTF8)
+        Assert-Condition 'S41 continuation switch preserves backend, policy, and strategy' ($rtAfterCont.Continuation -ceq 'active_follow' -and $rtAfterCont.Backend -ceq 'native' -and $rtAfterCont.Policy -ceq 'aggressive' -and $rtAfterCont.Strategy -ceq 'critical') ''
+
+        # 10. Safe reinstall preserves continuation
+        Invoke-ContinuationSwitch -Root $root41 -Continuation park_and_wake | Out-Null
+        Invoke-SafeInstall -Root $root41
+        $rtAfterReinstall = Get-AgentsRuntimeBlock -Text (Get-Content -LiteralPath (Join-Path (Get-CodexHome $root41) 'AGENTS.md') -Raw -Encoding UTF8)
+        Assert-Condition 'S41 safe reinstall preserves active park_and_wake in AGENTS.md' ($rtAfterReinstall.Continuation -ceq 'park_and_wake') ''
+        $stateAfterReinstall = Get-InstallState $root41
+        Assert-Condition 'S41 safe reinstall preserves active park_and_wake in state' ([string]$stateAfterReinstall.codexContinuation.selected -ceq 'park_and_wake') ''
+
+        # 11. No consumer repository injection
+        $consumerRepo = Join-Path $root41 'consumer-app'
+        New-Item -ItemType Directory -Path $consumerRepo -Force | Out-Null
+        $consumerAgents = Join-Path $consumerRepo 'AGENTS.md'
+        Set-Content -LiteralPath $consumerAgents -Value '# Project AGENTS file' -Encoding UTF8
+        $consumerBefore = Get-Content -LiteralPath $consumerAgents -Raw -Encoding UTF8
+        Invoke-ContinuationSwitch -Root $root41 -Continuation active_follow | Out-Null
+        $consumerAfter = Get-Content -LiteralPath $consumerAgents -Raw -Encoding UTF8
+        Assert-Condition 'S41 consumer repo AGENTS.md remains untouched by continuation operations' ($consumerBefore -ceq $consumerAfter) ''
     }
 }
 finally {

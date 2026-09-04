@@ -1,8 +1,8 @@
 [CmdletBinding(DefaultParameterSetName = 'Switch')]
 param(
     [Parameter(ParameterSetName = 'Switch', Mandatory = $true, Position = 0)]
-    [ValidateSet('worker', 'critical')]
-    [string]$Strategy,
+    [ValidateSet('active_follow', 'park_and_wake')]
+    [string]$Continuation,
 
     [Parameter(ParameterSetName = 'Status', Mandatory = $true)]
     [switch]$Status,
@@ -28,7 +28,7 @@ $configPath = Join-Path $CodexHome 'config.toml'
 $agentsMdPath = Join-Path $CodexHome 'AGENTS.md'
 $templatePath = Join-Path $repo 'codex\AGENTS.md'
 $statePath = Join-Path $CodexHome 'codex-workflows-kit\install-state.json'
-$backupRoot = Join-Path $CodexHome ('backups\codex-workflows-kit\strat-{0}' -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+$backupRoot = Join-Path $CodexHome ('backups\codex-workflows-kit\cont-{0}' -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
 
 function Get-StateEntryByPath {
     param([object]$State, [Parameter(Mandatory)][string]$TargetFilePath)
@@ -242,7 +242,7 @@ if ($Status) {
     return
 }
 
-# --- Strategy Switch ---
+# --- Continuation Switch ---
 $existingAgentsText = if (Test-Path -LiteralPath $agentsMdPath -PathType Leaf) {
     Get-Content -LiteralPath $agentsMdPath -Raw -Encoding UTF8
 }
@@ -305,24 +305,25 @@ if ($currentPolicy -notin @('balanced', 'aggressive')) {
     throw "Invalid delegation policy '$currentPolicy'; switching is blocked."
 }
 
-$currentContinuation = if ($null -ne $existingState -and ($existingState.PSObject.Properties.Name -contains 'codexContinuation')) {
-    Assert-CodexContinuationState -ContinuationState $existingState.codexContinuation
-    [string]$existingState.codexContinuation.selected
+# Determine active strategy
+$currentStrategy = if ($null -ne $existingState -and ($existingState.PSObject.Properties.Name -contains 'codexStrategy')) {
+    Assert-CodexStrategyState -StrategyState $existingState.codexStrategy
+    [string]$existingState.codexStrategy.selected
 }
 else {
     $rtInfo = Get-CodexRuntimeBlockInfo -Text $existingAgentsText
-    if ($rtInfo.Present -and -not [string]::IsNullOrWhiteSpace($rtInfo.Continuation)) {
-        if ($rtInfo.Continuation -notin @('active_follow', 'park_and_wake')) {
-            throw "Invalid subagent continuation '$($rtInfo.Continuation)' in AGENTS.md runtime block."
+    if ($rtInfo.Present -and -not [string]::IsNullOrWhiteSpace($rtInfo.Strategy)) {
+        if ($rtInfo.Strategy -notin @('worker', 'critical')) {
+            throw "Invalid subagent strategy '$($rtInfo.Strategy)' in AGENTS.md runtime block."
         }
-        $rtInfo.Continuation
+        $rtInfo.Strategy
     }
     else {
-        'active_follow'
+        'worker'
     }
 }
-if ($currentContinuation -notin @('active_follow', 'park_and_wake')) {
-    throw "Invalid subagent continuation '$currentContinuation'; switching is blocked."
+if ($currentStrategy -notin @('worker', 'critical')) {
+    throw "Invalid subagent strategy '$currentStrategy'; switching is blocked."
 }
 
 $configText = if (Test-Path -LiteralPath $configPath -PathType Leaf) {
@@ -342,7 +343,7 @@ else {
 Assert-CodexBackendState -BackendState $backendState
 Assert-CodexBackendMatrix -Text $configText -Backend $currentBackend -BackendState $backendState | Out-Null
 
-$nextAgentsText = Set-CodexAgentsManagedBlockText -ExistingAgentsText $existingAgentsText -TemplateText $templateText -Backend $currentBackend -Policy $currentPolicy -Strategy $Strategy -Continuation $currentContinuation
+$nextAgentsText = Set-CodexAgentsManagedBlockText -ExistingAgentsText $existingAgentsText -TemplateText $templateText -Backend $currentBackend -Policy $currentPolicy -Strategy $currentStrategy -Continuation $Continuation
 $agentsChanged = $nextAgentsText -cne $existingAgentsText
 
 $nextAgentsHash = if ($agentsChanged) {
@@ -359,25 +360,16 @@ else {
     $currentAgentsHash
 }
 
-$nextStrategyState = [ordered]@{
+$nextContinuationState = [ordered]@{
     version = 1
-    selected = $Strategy
-}
-Assert-CodexStrategyState -StrategyState $nextStrategyState
-
-$nextContinuationState = if ($null -ne $existingState -and ($existingState.PSObject.Properties.Name -contains 'codexContinuation')) {
-    $existingState.codexContinuation
-}
-else {
-    New-CodexContinuationState -ExistingInstallState $existingState
+    selected = $Continuation
 }
 Assert-CodexContinuationState -ContinuationState $nextContinuationState
 
 $stateNeedsWrite = $null -eq $existingState -or
-    -not ($existingState.PSObject.Properties.Name -contains 'codexStrategy') -or
     -not ($existingState.PSObject.Properties.Name -contains 'codexContinuation') -or
     [string]$existingState.schemaVersion -ne '5' -or
-    [string]$existingState.codexStrategy.selected -cne $Strategy -or
+    [string]$existingState.codexContinuation.selected -cne $Continuation -or
     $null -eq $trackedAgents -or
     [string]$trackedAgents.sha256 -cne [string]$nextAgentsHash
 
@@ -428,7 +420,12 @@ try {
         else {
             New-CodexDelegationState -ExistingInstallState $existingState
         }
-        $nextState.codexStrategy = $nextStrategyState
+        $nextState.codexStrategy = if ($null -ne $existingState -and ($existingState.PSObject.Properties.Name -contains 'codexStrategy')) {
+            $existingState.codexStrategy
+        }
+        else {
+            New-CodexStrategyState -ExistingInstallState $existingState
+        }
         $nextState.codexContinuation = $nextContinuationState
 
         if ($preExisting[$statePath]) {
@@ -443,54 +440,32 @@ try {
 
     # Verify written runtime block
     if (Test-Path -LiteralPath $agentsMdPath -PathType Leaf) {
-        Assert-CodexAgentsRuntimeBlock -Text (Get-Content -LiteralPath $agentsMdPath -Raw -Encoding UTF8) -Backend $currentBackend -Policy $currentPolicy -Strategy $Strategy -Continuation $currentContinuation
+        Assert-CodexAgentsRuntimeBlock -Text (Get-Content -LiteralPath $agentsMdPath -Raw -Encoding UTF8) -Backend $currentBackend -Policy $currentPolicy -Strategy $currentStrategy -Continuation $Continuation
     }
 }
 catch {
-    $rollbackFailed = $false
-    foreach ($origPath in $backedUpFiles.Keys) {
+    $switchError = $_.Exception.Message
+    foreach ($entry in $backedUpFiles.GetEnumerator()) {
         try {
-            Copy-Item -LiteralPath $backedUpFiles[$origPath] -Destination $origPath -Force
+            Copy-Item -LiteralPath $entry.Value -Destination $entry.Key -Force -ErrorAction SilentlyContinue
         }
         catch {
-            $rollbackFailed = $true
-            Write-Warning "Rollback failed for ${origPath}: $($_.Exception.Message)"
         }
     }
     foreach ($createdPath in $newlyCreatedFiles) {
-        if (-not $backedUpFiles.ContainsKey($createdPath)) {
-            try {
-                if (Test-Path -LiteralPath $createdPath -PathType Leaf) {
-                    Remove-Item -LiteralPath $createdPath -Force
-                }
-            }
-            catch {
-                $rollbackFailed = $true
-                Write-Warning "Rollback failed removing newly-created file ${createdPath}: $($_.Exception.Message)"
+        try {
+            if (Test-Path -LiteralPath $createdPath -PathType Leaf) {
+                Remove-Item -LiteralPath $createdPath -Force -ErrorAction SilentlyContinue
             }
         }
+        catch {
+        }
     }
-    if ($rollbackFailed) {
-        throw "Strategy switch failed and rollback was incomplete: $($_.Exception.Message)"
-    }
-    throw "Strategy switch failed and was rolled back: $($_.Exception.Message)"
+    throw "Failed to switch subagent continuation to '$Continuation': $switchError"
 }
 
-Write-Host "Selected subagent strategy: $Strategy"
-if ($Strategy -ceq 'worker') {
-    Write-Host 'Worker strategy: worker subagents assist the main agent under the active delegation policy.'
-}
-else {
-    Write-Host 'Critical strategy: critical analysis and verification with fencing and independent review.'
-}
+Write-Host "Switched subagent continuation to '$Continuation' for Codex home: $CodexHome"
 Write-Host "Active subagent backend: $currentBackend"
 Write-Host "Active delegation policy: $currentPolicy"
-Write-Host "Active subagent continuation: $currentContinuation"
-Write-Host 'Scope: new Codex tasks and sessions.'
-Write-Host 'Already-running tasks are unchanged. No restart or MCP was contacted.'
-if ($agentsChanged -or $stateNeedsWrite) {
-    Write-Host "Configuration and routing state updated under: $CodexHome"
-}
-else {
-    Write-Host 'The selected subagent strategy was already active; no files changed.'
-}
+Write-Host "Active subagent strategy: $currentStrategy"
+Write-Host "Active subagent continuation: $Continuation"

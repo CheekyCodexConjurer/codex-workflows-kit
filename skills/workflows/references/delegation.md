@@ -6,7 +6,7 @@ Esta referência detalha as duas políticas de delegação globais ortogonais (`
 
 ## 1. Princípios Gerais e Seletores Ortogonais
 
-Existem três seletores globais ortogonais e independentes:
+Existem quatro seletores globais ortogonais e independentes:
 
 1. **`subagent_backend` (`native` | `deepseek`)**:
    - Governa estritamente a família de ferramentas autorizada para delegação.
@@ -28,6 +28,22 @@ Existem três seletores globais ortogonais e independentes:
      - **Progresso Semântico (*Semantic Progress*)**: acompanhamento por marcos semânticos de evolução na trilha persistente sem polling destrutivo nem inferência precipitada de indisponibilidade.
      - **Saída Antecipada (*Early-Exit*)**: interrupção limpa assim que uma evidência determinante ou bloqueio for provado, evitando custo e latência desnecessários.
      - **Limites do Bridge**: executado estritamente através do conjunto de ferramentas exposto pelo SubAgents MCP (`subagents_spawn`, `subagents_continue`, `subagents_follow`, etc.), sem prometer capacidades que o bridge ainda não expõe (capabilities that the bridge does not yet expose).
+
+4. **`subagent_continuation` (`active_follow` | `park_and_wake`)**:
+   - Governa a continuidade da sessão e a capacidade de suspensão durável (*Sub-agent Autonomy*).
+   - `active_follow` (padrão): o parent mantém acompanhamento síncrono ativo com `subagents_follow` até a conclusão dos jobs, sem encerrar o turno do Codex prematuramente. Preserva o fluxo atual e a compatibilidade retroativa.
+   - `park_and_wake` (Sub-agent Autonomy): implementa ciclo de vida híbrido em dois caminhos sem polling de modelo (*no model polling*):
+     - **Task Carregada (*Loaded Task*)**: em sessões ativas no Desktop/host, uma única chamada orientada a eventos a `subagents_park` (ou `deepseek_park`) suspende a inferência aguardando um evento no mesmo turno, sem loops de polling do modelo.
+     - **Task Desconectada (*Disconnected / notLoaded Task*)**: caso a sessão seja desconectada ou não esteja carregada (`notLoaded`), a barreira durável armada externamente no SQLite/outbox pode acionar uma retomada externa da task exata via CLI compatível do Codex (`thread/resume` + `turn/start` ou `codex exec resume <thread-id>`).
+     - **Conflito de Active Writer (*deferred_active_writer*)**: a existência de um `active writer` no Desktop indica entrega diferida durável (*durable deferred delivery*), nunca falha terminal, fallback ou permissão para arquivar ou descarregar a task (é estritamente proibido *auto-archive* e *auto-unload*). O bridge mantém recuo exponencial com jitter (*backoff*) e retoma assim que o lock for liberado.
+     - **Condição para Encerramento de Turno**: o parent só pode encerrar o turno com obrigações pendentes exclusivamente no estado não-terminal `SUSPENDED` após obter um `ParkReceipt` armado que comprove continuação armada externamente. Se o recibo retornar `deliveryMode = none` ou desarmado, o parent deve permanecer ativo (*remain active*) e resolver as obrigações no próprio turno.
+     - **Consumo Pós-Retomada (*Post-Wake Consumption*)**: estacionar nunca consome um job. Ao acordar, o parent chama `subagents_follow` para consumir os jobs listados como prontos, sintetiza as evidências e continua a execução ou re-estaciona os jobs restantes. A resposta final `DONE` continua estritamente impossível enquanto existirem obrigações pendentes ou agentes não encerrados.
+     - **Carga Útil do Bridge Neutra (*Neutral Payload*)**: o payload de retorno do bridge contém estritamente metadados confiáveis (id de estacionamento, geração, IDs de jobs prontos, status, hashes de resultado, contagem pendente e ação de follow requerida), nunca texto de resposta do subagente nem instruções sintéticas do usuário.
+     - **Titularidade de Metas Separada (*Separate Goal Ownership*)**: a titularidade de pausa de metas (*goals*) permanece separada; a continuação da conversa/task não exige um goal ativo e a retomada nunca retoma automaticamente um goal pausado manualmente.
+     - **Falha Fechada**: se `subagents_park` não conseguir armar a barreira com autoridade comprovada sobre a thread originária, o parent falha fechado (sem fallback silencioso para `active_follow`).
+   - Invariante de neutralidade do bridge: o bridge opera como transporte neutro e nunca lê flags de AGENTS.md nem decide aprovação de workflow; acorda apenas com metadados confiáveis.
+   - Invariante de isolamento de repositórios consumidores: não injeta flags ou metadados nos repositórios dos usuários.
+   - Invariante do Gemini: emite eventos de progresso e conclusão de workers, mas nunca controla o chat ou objetivo do Codex.
 
 ### Invariantes Comuns a Ambas as Políticas:
 - **Ciclo de Vida de Completude (*Completion Lifecycle*)**: Todo job delegado deve ser consumido com resposta terminal e resultado terminal antes de um gate dependente ou da resposta final.

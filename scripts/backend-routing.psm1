@@ -579,6 +579,38 @@ function New-CodexStrategyState {
     return $state
 }
 
+function Assert-CodexContinuationState {
+    param([Parameter(Mandatory)][object]$ContinuationState)
+
+    if (-not (Test-ObjectProperty -Object $ContinuationState -Name 'selected')) {
+        throw 'Continuation state is missing selected continuation.'
+    }
+    $selected = [string](Get-ObjectPropertyValue -Object $ContinuationState -Name 'selected')
+    if ($selected -notin @('active_follow', 'park_and_wake')) {
+        throw "Continuation state has unsupported selected continuation: $selected"
+    }
+}
+
+function New-CodexContinuationState {
+    param([object]$ExistingInstallState)
+
+    if ($null -ne $ExistingInstallState -and (Test-ObjectProperty -Object $ExistingInstallState -Name 'codexContinuation')) {
+        $existingContinuation = Get-ObjectPropertyValue -Object $ExistingInstallState -Name 'codexContinuation'
+        Assert-CodexContinuationState -ContinuationState $existingContinuation
+        return [ordered]@{
+            version = 1
+            selected = [string](Get-ObjectPropertyValue -Object $existingContinuation -Name 'selected')
+        }
+    }
+
+    $state = [ordered]@{
+        version = 1
+        selected = 'active_follow'
+    }
+    Assert-CodexContinuationState -ContinuationState $state
+    return $state
+}
+
 function Get-CodexRuntimeBlockInfo {
     param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
 
@@ -595,7 +627,9 @@ function Get-CodexRuntimeBlockInfo {
             Backend = $null
             Policy = $null
             Strategy = $null
+            Continuation = $null
             HasStrategyKey = $false
+            HasContinuationKey = $false
             Body = ''
         }
     }
@@ -618,6 +652,7 @@ function Get-CodexRuntimeBlockInfo {
     $backendMatches = @([regex]::Matches($body, '(?m)^\s*subagent_backend\s*=\s*([^\r\n#]+?)\s*(?:#.*)?$'))
     $policyMatches = @([regex]::Matches($body, '(?m)^\s*delegation_policy\s*=\s*([^\r\n#]+?)\s*(?:#.*)?$'))
     $strategyMatches = @([regex]::Matches($body, '(?m)^\s*subagent_strategy\s*=\s*([^\r\n#]+?)\s*(?:#.*)?$'))
+    $continuationMatches = @([regex]::Matches($body, '(?m)^\s*subagent_continuation\s*=\s*([^\r\n#]+?)\s*(?:#.*)?$'))
 
     if ($backendMatches.Count -gt 1) {
         throw "Managed runtime block contains duplicate 'subagent_backend' keys."
@@ -627,6 +662,9 @@ function Get-CodexRuntimeBlockInfo {
     }
     if ($strategyMatches.Count -gt 1) {
         throw "Managed runtime block contains duplicate 'subagent_strategy' keys."
+    }
+    if ($continuationMatches.Count -gt 1) {
+        throw "Managed runtime block contains duplicate 'subagent_continuation' keys."
     }
     if ($backendMatches.Count -eq 0) {
         throw "Managed runtime block is missing 'subagent_backend' key."
@@ -638,6 +676,7 @@ function Get-CodexRuntimeBlockInfo {
     $backendVal = $backendMatches[0].Groups[1].Value.Trim()
     $policyVal = $policyMatches[0].Groups[1].Value.Trim()
     $strategyVal = if ($strategyMatches.Count -eq 1) { $strategyMatches[0].Groups[1].Value.Trim() } else { 'worker' }
+    $continuationVal = if ($continuationMatches.Count -eq 1) { $continuationMatches[0].Groups[1].Value.Trim() } else { 'active_follow' }
 
     if ($backendVal -notin @('native', 'deepseek')) {
         throw "Managed runtime block contains unsupported subagent_backend: '$backendVal'"
@@ -648,13 +687,18 @@ function Get-CodexRuntimeBlockInfo {
     if ($strategyVal -notin @('worker', 'critical')) {
         throw "Managed runtime block contains unsupported subagent_strategy: '$strategyVal'"
     }
+    if ($continuationVal -notin @('active_follow', 'park_and_wake')) {
+        throw "Managed runtime block contains unsupported subagent_continuation: '$continuationVal'"
+    }
 
     return [pscustomobject]@{
         Present = $true
         Backend = $backendVal
         Policy = $policyVal
         Strategy = $strategyVal
+        Continuation = $continuationVal
         HasStrategyKey = ($strategyMatches.Count -eq 1)
+        HasContinuationKey = ($continuationMatches.Count -eq 1)
         Body = $body
     }
 }
@@ -663,7 +707,8 @@ function Format-CodexRuntimeBlock {
     param(
         [Parameter(Mandatory)][ValidateSet('native', 'deepseek')][string]$Backend,
         [Parameter(Mandatory)][ValidateSet('balanced', 'aggressive')][string]$Policy,
-        [Parameter()][ValidateSet('worker', 'critical')][string]$Strategy = 'worker'
+        [Parameter()][ValidateSet('worker', 'critical')][string]$Strategy = 'worker',
+        [Parameter()][ValidateSet('active_follow', 'park_and_wake')][string]$Continuation = 'active_follow'
     )
 
     $nl = [Environment]::NewLine
@@ -671,6 +716,7 @@ function Format-CodexRuntimeBlock {
         'subagent_backend = ' + $Backend + $nl +
         'delegation_policy = ' + $Policy + $nl +
         'subagent_strategy = ' + $Strategy + $nl +
+        'subagent_continuation = ' + $Continuation + $nl +
         '# END CODEX-WORKFLOWS-KIT: runtime'
 }
 
@@ -680,11 +726,12 @@ function Set-CodexAgentsManagedBlockText {
         [Parameter(Mandatory)][string]$TemplateText,
         [Parameter(Mandatory)][ValidateSet('native', 'deepseek')][string]$Backend,
         [Parameter(Mandatory)][ValidateSet('balanced', 'aggressive')][string]$Policy,
-        [Parameter()][ValidateSet('worker', 'critical')][string]$Strategy = 'worker'
+        [Parameter()][ValidateSet('worker', 'critical')][string]$Strategy = 'worker',
+        [Parameter()][ValidateSet('active_follow', 'park_and_wake')][string]$Continuation = 'active_follow'
     )
 
     $nl = [Environment]::NewLine
-    $runtimeBlock = Format-CodexRuntimeBlock -Backend $Backend -Policy $Policy -Strategy $Strategy
+    $runtimeBlock = Format-CodexRuntimeBlock -Backend $Backend -Policy $Policy -Strategy $Strategy -Continuation $Continuation
     $begin = '# BEGIN CODEX-WORKFLOWS-KIT'
     $end = '# END CODEX-WORKFLOWS-KIT'
     $normalizedTemplate = ($TemplateText.Trim() -replace "`r?`n", $nl)
@@ -713,7 +760,8 @@ function Assert-CodexAgentsRuntimeBlock {
         [Parameter(Mandatory)][AllowEmptyString()][string]$Text,
         [Parameter(Mandatory)][ValidateSet('native', 'deepseek')][string]$Backend,
         [Parameter(Mandatory)][ValidateSet('balanced', 'aggressive')][string]$Policy,
-        [Parameter()][ValidateSet('worker', 'critical')][string]$Strategy = 'worker'
+        [Parameter()][ValidateSet('worker', 'critical')][string]$Strategy = 'worker',
+        [Parameter()][ValidateSet('active_follow', 'park_and_wake')][string]$Continuation = 'active_follow'
     )
 
     $info = Get-CodexRuntimeBlockInfo -Text $Text
@@ -728,6 +776,9 @@ function Assert-CodexAgentsRuntimeBlock {
     }
     if ($info.Strategy -cne $Strategy) {
         throw "Installed AGENTS.md runtime block has subagent_strategy='$($info.Strategy)', expected '$Strategy'."
+    }
+    if ($info.Continuation -cne $Continuation) {
+        throw "Installed AGENTS.md runtime block has subagent_continuation='$($info.Continuation)', expected '$Continuation'."
     }
 }
 
@@ -1296,6 +1347,8 @@ Export-ModuleMember -Function @(
     'New-CodexDelegationState',
     'Assert-CodexStrategyState',
     'New-CodexStrategyState',
+    'Assert-CodexContinuationState',
+    'New-CodexContinuationState',
     'Get-CodexRuntimeBlockInfo',
     'Format-CodexRuntimeBlock',
     'Set-CodexAgentsManagedBlockText',
