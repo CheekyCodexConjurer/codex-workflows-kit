@@ -960,15 +960,22 @@ function Assert-SubagentAutonomyPolicy {
         '(?i)subagent_continuation',
         '(?i)active_follow',
         '(?i)park_and_wake',
-        '(?i)(?:task carregada|loaded task).*(?:subagents_park|deepseek_park).*(?:sem (?:model )?polling|no model polling|sem loops de polling)',
-        '(?i)(?:desconectad[oa]|notLoaded|disconnected).*(?:retomada externa|external wake|CLI)',
-        '(?i)(?:active writer|deferred_active_writer).*(?:durable deferred|entrega diferida|diferida dur[aá]vel)',
+        '(?i)active_follow.*(?:[u\u00fa]nico modo|only mode).*(?:espera dentro da run|waits inside)',
+        '(?i)park_and_wake.*(?:retorna imediatamente|returns immediately).*(?:ParkReceipt).*(?:encerra|ends).*(?:SUSPENDED)',
+        '(?i)(?:lan[c\u00e7]ar em lote|despach|dispatch|dren|drain).*(?:trabalho local [u\u00fa]til|useful local (?:work|action))',
+        '(?i)(?:predicados?.*(?:ANY|ALL|QUORUM|REQUIRED)|ANY,\s*ALL,\s*QUORUM(?:\(k\))?,\s*REQUIRED)',
+        '(?i)(?:1\s*<=\s*k\s*<=|subconjunto n[a\u00e3]o vazio|non-empty subset)',
+        '(?i)(?:mensagem vis[i\u00ed]vel de suspens[a\u00e3]o|user-visible suspension message).*(?:condi[c\u00e7][a\u00e3]o|condition)',
+        '(?i)(?:uma (?:[u\u00fa]nica )?retomada por gera[c\u00e7][a\u00e3]o|one wake per (?:barrier )?generation|coalesc)',
+        '(?i)(?:nova run|new run).*(?:CLI|Desktop Codex CLI).*(?:mesma task|exact same task)',
+        '(?i)(?:active writer|deferred_active_writer).*(?:durable deferred|entrega diferida|diferida dur[a\u00e1]vel)',
         '(?i)(?:proibid[oa]|nunca|never).*(?:auto-archive|auto-unload|arquivar|descarregar)',
-        '(?i)(?:encerrar o turno|end(?:s)? (?:its )?turn|end turn).*(?:obriga[cç][õo]es pendentes|open obligations).*(?:exclusivamente|only).*(?:SUSPENDED|ParkReceipt|externally armed)',
+        '(?i)(?:encerrar o turno|end(?:s)? (?:its )?turn|end turn).*(?:obriga[c\u00e7][\u00f5o]es pendentes|open obligations).*(?:exclusivamente|only).*(?:SUSPENDED|ParkReceipt|externally armed)',
         '(?i)(?:deliveryMode\s*=\s*none|unarmed).*(?:permanecer ativ[oa]|remain active)',
-        '(?i)(?:ap[oó]s acordar|after wake|ao acordar).*(?:subagents_follow|consumir os jobs listados|consume listed jobs)',
-        '(?i)(?:metadados confi[aá]veis|trusted metadata).*(?:nunca texto|never worker result text|sem texto de subagente)',
-        '(?i)(?:goal|meta).*(?:separad[oa]|separate ownership)'
+        '(?i)(?:ap[o\u00f3]s acordar|after wake|ao acordar).*(?:subagents_follow).*(?:consumir apenas|consume only|consumir os jobs listados|consume listed jobs)',
+        '(?i)(?:metadados confi[a\u00e1]veis|trusted metadata).*(?:nunca texto|never worker result text|sem texto de subagente)',
+        '(?i)(?:goal|meta).*(?:separad[oa]|separate ownership)',
+        '(?i)(?:DONE.*proibid[oa]|DONE.*forbidden|resposta final DONE)'
     )
     foreach ($pattern in $delegationRequired) {
         if (-not [regex]::IsMatch($delegationNorm, $pattern)) {
@@ -981,15 +988,20 @@ function Assert-SubagentAutonomyPolicy {
         '(?i)subagent_continuation',
         '(?i)active_follow',
         '(?i)park_and_wake',
-        '(?i)(?:loaded task|task carregada).*(?:subagents_park|deepseek_park).*(?:no model polling|sem (?:model )?polling)',
-        '(?i)(?:notLoaded|disconnected|desconectad[oa]).*(?:external wake|CLI)',
+        '(?i)active_follow.*(?:only mode|[u\u00fa]nico modo).*(?:waits inside|espera dentro da run)',
+        '(?i)park_and_wake.*(?:returns immediately|retorna imediatamente).*(?:ParkReceipt).*(?:SUSPENDED)',
+        '(?i)(?:dispatch|drain|dren|despach).*(?:useful local work|trabalho local [u\u00fa]til)',
+        '(?i)(?:ANY,\s*ALL,\s*QUORUM|predicates?.*ANY.*ALL.*QUORUM.*REQUIRED)',
+        '(?i)(?:user-visible suspension message|mensagem vis[i\u00ed]vel de suspens[a\u00e3]o).*(?:condition|condi[c\u00e7][a\u00e3]o)',
+        '(?i)(?:new run via CLI|nova run via CLI|compatible CLI).*(?:same task|mesma task)',
         '(?i)(?:active writer|deferred_active_writer).*(?:durable deferred|entrega diferida|deferred delivery)',
         '(?i)(?:proibid[oa]|never|nunca).*(?:auto-archive|auto-unload|arquivar|descarregar)',
         '(?i)(?:encerrar o turno|end(?:s)? (?:its )?turn|end turn).*(?:SUSPENDED|ParkReceipt|externally armed)',
         '(?i)(?:deliveryMode\s*=\s*none|unarmed).*(?:remain active|permanecer ativ[oa])',
-        '(?i)(?:after wake|ao acordar|ap[oó]s wake).*(?:subagents_follow)',
-        '(?i)(?:trusted metadata|metadados confi[aá]veis).*(?:never worker result text|sem texto de subagente|no synthetic user text)',
-        '(?i)(?:goal|meta).*(?:separate|separad[oa])'
+        '(?i)(?:after wake|ao acordar|ap[o\u00f3]s wake).*(?:subagents_follow)',
+        '(?i)(?:trusted metadata|metadados confi[a\u00e1]veis).*(?:never worker result text|sem texto de subagente|no synthetic user text)',
+        '(?i)(?:goal|meta).*(?:separate|separad[oa])',
+        '(?i)DONE.*(?:forbidden|proibid[oa]|strictly impossible)'
     )
     foreach ($pattern in $skillRequired) {
         if (-not [regex]::IsMatch($skillNorm, $pattern)) {
@@ -1002,15 +1014,20 @@ function Assert-SubagentAutonomyPolicy {
         '(?i)subagent_continuation',
         '(?i)active_follow',
         '(?i)park_and_wake',
-        '(?i)(?:task carregada|loaded task).*(?:subagents_park|deepseek_park).*(?:sem (?:model )?polling|no model polling)',
-        '(?i)(?:desconectad[oa]|notLoaded).*(?:retomada externa|CLI)',
-        '(?i)(?:active writer|deferred_active_writer).*(?:entrega diferida dur[aá]vel|durable deferred)',
+        '(?i)active_follow.*(?:[u\u00fa]nico modo|espera dentro da run)',
+        '(?i)park_and_wake.*(?:retorna imediatamente|ParkReceipt).*(?:SUSPENDED)',
+        '(?i)(?:despach|dren).*(?:trabalho local [u\u00fa]til)',
+        '(?i)(?:ANY,\s*ALL,\s*QUORUM|predicados?.*ANY.*ALL.*QUORUM.*REQUIRED)',
+        '(?i)(?:mensagem vis[i\u00ed]vel de suspens[a\u00e3]o).*(?:condi[c\u00e7][a\u00e3]o)',
+        '(?i)(?:nova run|retomada externa).*(?:CLI)',
+        '(?i)(?:active writer|deferred_active_writer).*(?:entrega diferida dur[a\u00e1]vel|durable deferred)',
         '(?i)(?:proibid[oa]|nunca).*(?:arquivar|descarregar|auto-archive|auto-unload)',
-        '(?i)(?:encerrar o turno|obriga[cç][õo]es pendentes).*(?:SUSPENDED|ParkReceipt|externally armed)',
+        '(?i)(?:encerrar o turno|obriga[c\u00e7][\u00f5o]es pendentes).*(?:SUSPENDED|ParkReceipt|externally armed)',
         '(?i)(?:deliveryMode\s*=\s*none|unarmed).*(?:permanecer ativ[oa]|remain active)',
         '(?i)(?:subagents_follow)',
-        '(?i)(?:metadados confi[aá]veis|trusted metadata).*(?:nunca texto|sem texto de subagente)',
-        '(?i)(?:goal|meta).*(?:separad[oa]|separate)'
+        '(?i)(?:metadados confi[a\u00e1]veis|trusted metadata).*(?:nunca texto|sem texto de subagente)',
+        '(?i)(?:goal|meta).*(?:separad[oa]|separate)',
+        '(?i)DONE.*(?:proibid[oa]|estritamente proibida)'
     )
     foreach ($pattern in $agentsRequired) {
         if (-not [regex]::IsMatch($agentsNorm, $pattern)) {
@@ -1023,15 +1040,20 @@ function Assert-SubagentAutonomyPolicy {
         '(?i)subagent_continuation',
         '(?i)active_follow',
         '(?i)park_and_wake',
-        '(?i)(?:task carregada|loaded task).*(?:subagents_park|deepseek_park).*(?:sem (?:model )?polling|no model polling)',
-        '(?i)(?:desconectad[oa]|notLoaded).*(?:retomada externa|CLI)',
-        '(?i)(?:active writer|deferred_active_writer).*(?:entrega diferida dur[aá]vel|durable deferred)',
+        '(?i)active_follow.*(?:[u\u00fa]nico modo|espera dentro da run)',
+        '(?i)park_and_wake.*(?:retorna imediatamente|ParkReceipt).*(?:SUSPENDED)',
+        '(?i)(?:despach|dren).*(?:trabalho local [u\u00fa]til)',
+        '(?i)(?:ANY,\s*ALL,\s*QUORUM|predicados?.*ANY.*ALL.*QUORUM.*REQUIRED)',
+        '(?i)(?:mensagem vis[i\u00ed]vel de suspens[a\u00e3]o).*(?:condi[c\u00e7][a\u00e3]o)',
+        '(?i)(?:nova run|retomada externa).*(?:CLI)',
+        '(?i)(?:active writer|deferred_active_writer).*(?:entrega diferida dur[a\u00e1]vel|durable deferred)',
         '(?i)(?:proibid[oa]|nunca).*(?:arquivar|descarregar|auto-archive|auto-unload)',
-        '(?i)(?:encerrar o turno|obriga[cç][õo]es pendentes).*(?:SUSPENDED|ParkReceipt|externally armed)',
+        '(?i)(?:encerrar o turno|obriga[c\u00e7][\u00f5o]es pendentes).*(?:SUSPENDED|ParkReceipt|externally armed)',
         '(?i)(?:deliveryMode\s*=\s*none|unarmed).*(?:permanecer ativ[oa]|remain active)',
         '(?i)(?:subagents_follow)',
-        '(?i)(?:metadados confi[aá]veis|trusted metadata).*(?:nunca texto|sem texto de subagente)',
-        '(?i)(?:goal|meta).*(?:separad[oa]|separate)'
+        '(?i)(?:metadados confi[a\u00e1]veis|trusted metadata).*(?:nunca texto|sem texto de subagente)',
+        '(?i)(?:goal|meta).*(?:separad[oa]|separate)',
+        '(?i)DONE.*(?:proibid[oa]|estritamente proibida)'
     )
     foreach ($pattern in $geminiRequired) {
         if (-not [regex]::IsMatch($geminiNorm, $pattern)) {
@@ -1049,7 +1071,8 @@ function Assert-SubagentAutonomyPolicy {
         '(?i)subagent_continuation',
         '(?i)active_follow',
         '(?i)park_and_wake',
-        '(?i)(?:task carregada|loaded task).*(?:sem (?:model )?polling|no model polling|sem polling)',
+        '(?i)(?:active_follow.*(?:espera dentro da run|s[i\u00ed]ncrono))',
+        '(?i)(?:park_and_wake.*(?:retorna imediatamente|SUSPENDED|nova run via CLI))',
         '(?i)(?:active writer|deferred_active_writer)'
     )
     foreach ($pattern in $readmeRequired) {
@@ -1060,6 +1083,11 @@ function Assert-SubagentAutonomyPolicy {
 
     # 7. Forbiddens / Anti-patterns
     $forbidden = @(
+        '(?i)\bpark_and_wake\b[^.;]*(?:espera dentro da run|wait[s]? inside (?:the )?run|espera no turno|wait[s]? in-turn|aguarda no mesmo turno|open park tool call|task carregada[^.;]*suspende a infer[e\u00ea]ncia[^.;]*mesmo turno)',
+        '(?i)\b(?:sem emitir mensagem|mensagem de suspens[a\u00e3]o [e\u00e9] opcional|suspension message is optional|encerra(?:r)? silenciosamente)\b[^.;]*(?:suspens|SUSPENDED)',
+        '(?i)(?<!sem\s|proibid[oa]\s|proibida\s|estritamente proibida\s|never\s|without\s|zero\s)\b(?:wake\s+parcial|retomada\s+parcial|premature\s+(?:partial\s+)?wake|wake\s+prematur[oa])\b[^.;]*(?:antes|before).*(?:predicado|predicate|satisfeit[oa]|satisfied)',
+        '(?i)\b(?:aceita|permite|allows?)\b[^.;]*(?:quorum|QUORUM)\b[^.;]*(?:inv[a\u00e1]lido|invalid|k\s*>\s*total|k\s*<\s*1)|(?i)\b(?:aceita|permite|allows?)\b[^.;]*(?:REQUIRED|required)\b[^.;]*(?:vazio|empty|fora dos jobs|n[a\u00e3]o estacionados)',
+        '(?i)\b(?:m[u\u00fa]ltiplos wakes|duplicate wake|duplicar retomada)\b[^.;]*(?:mesma gera[c\u00e7][a\u00e3]o|same generation)',
         '(?i)\b(?:pode|autoriza|permite)\b[^.;]*(?:polling|loop de status)\b[^.;]*(?:estacionado|parked|aguarda)',
         '(?i)\b(?:active writer|active_writer)\b[^.;]*(?:autoriza|permite|pode)\b[^.;]*(?:arquivar|descarregar|archive|unload)',
         '(?i)\bbridge\b[^.;]*(?:injeta|injects?)\b[^.;]*(?:texto de resposta|texto do worker|worker text|synthetic user)',
