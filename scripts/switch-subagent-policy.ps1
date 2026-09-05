@@ -1,7 +1,7 @@
 [CmdletBinding(DefaultParameterSetName = 'Switch')]
 param(
     [Parameter(ParameterSetName = 'Switch', Mandatory = $true, Position = 0)]
-    [ValidateSet('balanced', 'aggressive')]
+    [ValidateSet('balanced', 'aggressive', 'swarm')]
     [string]$Policy,
 
     [Parameter(ParameterSetName = 'Status', Mandatory = $true)]
@@ -203,7 +203,7 @@ if ($Status) {
     if ($stateBackend -notin @('native', 'deepseek')) {
         throw "Install state has invalid selected backend: $stateBackend"
     }
-    if ($statePolicy -notin @('balanced', 'aggressive')) {
+    if ($statePolicy -notin @('balanced', 'aggressive', 'swarm')) {
         throw "Install state has invalid selected policy: $statePolicy"
     }
     if ($stateStrategy -notin @('worker', 'critical')) {
@@ -475,8 +475,11 @@ Write-Host "Selected delegation policy: $Policy"
 if ($Policy -ceq 'balanced') {
     Write-Host 'Balanced policy: optimizes wall time. Parent handles cohesive work and delegates for parallelism, specialization, or isolation.'
 }
-else {
+elseif ($Policy -ceq 'aggressive') {
     Write-Host 'Aggressive policy: optimizes parent token offload. All material read/research/write/test/review work is delegated to the selected backend.'
+}
+else {
+    Write-Host 'Swarm policy: elastic DAG fan-out. Parent builds ready waves and pulverizes independent slices, while preserving cohesive tracks and gating.'
 }
 Write-Host "Active subagent backend: $currentBackend"
 Write-Host "Active subagent strategy: $currentStrategy"

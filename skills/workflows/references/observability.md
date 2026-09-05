@@ -25,7 +25,10 @@ evidence.
 - Use the project's canonical logger or tracing path. Do not invent a second
   logger, a local dump directory, or a new dependency for a contained task.
 - Correlate related work with an existing request, run, trace, job, or attempt
-  identifier when one exists.
+  identifier when one exists. For autonomous subagents, observability relies on
+  events, heartbeat, and active lease without rigid completion timeouts; preserve
+  bounded transport, handshake, health, and connect timeouts for connection safety
+  and differentiate them explicitly from execution timeouts.
 - Allowlist small, structured fields. Never emit secrets, credentials, raw
   prompts, full tool output, source payloads, personal data, or unbounded
   objects. Refer to a separately governed artifact by identifier and hash when

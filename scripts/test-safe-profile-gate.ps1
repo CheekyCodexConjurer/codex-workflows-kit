@@ -376,7 +376,7 @@ function Invoke-BackendStatus {
 function Invoke-PolicySwitch {
     param(
         [Parameter(Mandatory)][string]$Root,
-        [Parameter(Mandatory)][ValidateSet('balanced', 'aggressive')][string]$Policy
+        [Parameter(Mandatory)][ValidateSet('balanced', 'aggressive', 'swarm')][string]$Policy
     )
 
     $switchScript = Join-Path $repo 'scripts\switch-subagent-policy.ps1'
@@ -393,7 +393,7 @@ function Invoke-PolicyStatus {
 function Invoke-PolicySwitchWithHost {
     param(
         [Parameter(Mandatory)][string]$Root,
-        [Parameter(Mandatory)][ValidateSet('balanced', 'aggressive')][string]$Policy,
+        [Parameter(Mandatory)][ValidateSet('balanced', 'aggressive', 'swarm')][string]$Policy,
         [Parameter(Mandatory)][object]$HostInfo
     )
 
@@ -1397,6 +1397,220 @@ function Test-SubagentAutonomySemantics {
     )
     foreach ($pattern in $forbidden) {
         if ([regex]::IsMatch($delegationNorm, $pattern) -or [regex]::IsMatch($skillNorm, $pattern) -or [regex]::IsMatch($agentsNorm, $pattern) -or [regex]::IsMatch($geminiNorm, $pattern)) {
+            return $false
+        }
+    }
+
+    return $true
+}
+
+function Test-AdaptiveSwarmSemantics {
+    param(
+        [Parameter(Mandatory)][string]$DelegationText,
+        [Parameter(Mandatory)][string]$SkillText,
+        [Parameter(Mandatory)][string]$AgentsText,
+        [Parameter(Mandatory)][string]$GeminiText,
+        [Parameter(Mandatory)][string]$ReadmeText
+    )
+
+    $delegationNorm = [regex]::Replace($DelegationText, '\s+', ' ').Trim()
+    $skillNorm = [regex]::Replace($SkillText, '\s+', ' ').Trim()
+    $agentsNorm = [regex]::Replace($AgentsText, '\s+', ' ').Trim()
+    $geminiNorm = [regex]::Replace($GeminiText, '\s+', ' ').Trim()
+    $readmeNorm = [regex]::Replace($ReadmeText, '\s+', ' ').Trim()
+
+    # 1. Delegation reference checks
+    $delegationRequired = @(
+        '(?i)delegation_policy.*swarm',
+        '(?i)GPT parent [e\u00e9] o [u\u00fa]nico orquestrador,\s*decisor,\s*integrador\s+e\s+gatekeeper|sole orchestrator,\s*decider,\s*integrator,\s*and\s*gatekeeper',
+        '(?i)ondas do DAG|DAG waves',
+        '(?i)pulveriza apenas fatias materialmente independentes|pulverizes only materially independent',
+        '(?i)trabalho coeso(?:/|\s+e\s+)sequencial fica na mesma trilha|cohesive/sequential work stays on the same track',
+        '(?i)fan-out l[o\u00f3]gico el[a\u00e1]stico|elastic logical fan-out',
+        '(?i)sem m[i\u00ed]nimo(?:/|\s+nem\s+)m[a\u00e1]ximo de agentes na pol[i\u00ed]tica|no min/max agents in policy',
+        '(?i)custo,\s*depend[e\u00ea]ncias,\s*exclusividade de recursos,\s*risco de integra[c\u00e7][a\u00e3]o\s+e\s+lat[e\u00ea]ncia',
+        '(?i)readers podem fan-out|readers can fan out',
+        '(?i)writers (?:s[o\u00f3]|apenas) com ownership disjunto(?:/|,\s*)worktrees(?:/|,\s*|\s+ou\s+)recursos exclusivos',
+        '(?i)backpressure (?:e|\/) cr[e\u00e9]ditos f[i\u00ed]sicos pertencem ao bridge|backpressure/credits belong to bridge',
+        '(?i)preflight swarm exige capability do batch scheduler|batch scheduler capability|preflight swarm operacionalmente inequ[i\u00ed]voco',
+        '(?i)falha fechado se ausente|fails closed if absent|falha fechada',
+        '(?i)(?:jamais|nunca|sem).{0,40}(?:rebaixa|fallback).{0,40}aggressive',
+        '(?i)native.*respeita capacidade exposta|native.*respects exposed capacity',
+        '(?i)REQUIRED.*QUORUM.*ALL.*ANY',
+        '(?i)jobs que n[a\u00e3]o acordam continuam obriga[c\u00e7][o\u00f5]es|unawakened jobs remain obligations',
+        '(?i)rollback seguro.*antes de instalar/downgrade.*trocar explicitamente para aggressive|safe rollback.*explicitly switch to aggressive',
+        '(?i)n[a\u00e3]o aumente schemaVersion|no schemaVersion bump',
+        '(?i)subagents_spawn_batch.*(?:tool can[o\u00f4]nica|canonical.*swarm|ondas do DAG)',
+        '(?i)deepseek_spawn_batch',
+        '(?i)spawn unit[a\u00e1]rio.*(?:fora de ondas|uma [u\u00fa]nica frente)|unitary.*outside waves',
+        '(?i)subagents_spawn_batch.*(?:callable|invoc[a\u00e1]vel)',
+        '(?i)(?:superf[i\u00ed]cie autoritativa de status/health|status/health).*batch_scheduler|batch_scheduler.*(?:superf[i\u00ed]cie autoritativa|status/health)',
+        '(?i)helper PowerShell isolado.*(?:n[a\u00e3]o|alone).*prov.*daemon',
+        '(?i)(?:estreitamento|exce[c\u00e7][a\u00e3]o).{0,250}balanced.{0,30}aggressive.{0,30}swarm',
+        '(?i)pulveriza todas as fatias ready e independentes [u\u00fa]teis para menor wall-clock|pulverizes all ready and useful independent slices',
+        '(?i)sem n[u\u00fa]mero fixo|no fixed number',
+        '(?i)(?:remo[c\u00e7][a\u00e3]o de timeout r[i\u00ed]gido|remove rigid completion timeout|sem timeout r[i\u00ed]gido)',
+        '(?i)job aceito e saud[a\u00e1]vel pode rodar indefinidamente|accepted and healthy jobs? (?:can )?run indefinitely',
+        '(?i)nenhuma janela de 900s(?:[,\/]\s*|\s+ou\s+)20m(?:[,\/]\s*|\s+ou\s+)25m prova falha|no (?:900s|20m|25m|900s\/20m\/25m) window proves failure',
+        '(?i)(?:graceful finalize|abort)',
+        '(?i)sem deadline de modelo|no model deadline',
+        '(?i)lease expirada sozinha n[a\u00e3]o prova morte|expired lease alone does not prove death',
+        '(?i)(?:takeover|terminaliza[c\u00e7][a\u00e3]o).*(?:PID|heartbeat|fence|quiesc[e\u00ea]ncia)',
+        '(?i)timeouts bounded de transporte,\s*handshake,\s*health\s+e\s+connect|bounded transport,\s*handshake,\s*health,\s*and\s*connect timeouts',
+        '(?i)(?:diferenci(?:ad[oa]s|e-os)\s+explicitamente|explicitamente\s+diferenci(?:ad[oa]s|e-os))\s+do\s+execution\s+timeout|explicitly differentiat(?:ed)? from execution timeout',
+        '(?i)(?:maximizar|maximize)\s+(?:o\s+)?(?:paralelismo [u\u00fa]til|useful parallelism)\b[^.;\r\n]*(?:sharding|estilha[c\u00e7]a|pulveriz).*(?:tarefas.*(?:fases|testes|revis)|tasks AND phases/tests/reviews)',
+        '(?i)agentes\s+(?:s[a\u00e3]o\s+)?tratados como efetivamente gratuitos|agents are treated as effectively free',
+        '(?i)(?:n[a\u00e3]o\s+(?:economiz[a-z]*|conserve\s+contagem\s+de\s+agentes)|do not conserve agent count)',
+        '(?i)fan-out l[o\u00f3]gico\s+(?:n[a\u00e3]o\s+tem|sem)\s+(?:m[i\u00ed]nimo,\s*m[a\u00e1]ximo\s+nem\s+faixa|min/max/range)|logical fanout has no fixed min/max/range',
+        '(?i)(?:dispara[r]?|lan[c\u00e7]a[r]?|spawn)\s+todas as frentes prontas e independentes em (?:uma\s+)?onda antes de esperar|spawn all ready independent fronts in a wave before waiting',
+        '(?i)(?:precis[a\u00e3]o|precision).*(?:atomic ownership|propriedade at[o\u00f4]mica).*(?:restri[c\u00e7][o\u00f5]es.*depend[e\u00ea]ncia|dependency/resource constraints).*(?:s[i\u00ed]ntese exclusiva.*GPT|GPT-only synthesis).*(?:valida[c\u00e7][a\u00e3]o.*revis[a\u00e3]o|validation and independent review)',
+        '(?i)(?:n[a\u00e3]o\s+dispara[r]?|proibid[oa]\s+disparar|do not spawn)\s+(?:trabalho duplicado|duplicate.*work).*(?:n[a\u00e3]o-acion[a\u00e1]vel|non-actionable)',
+        '(?i)(?:n[a\u00e3]o\s+paralelizar|proibid[oa]\s+paralelizar|do not parallelize)\s+(?:depend[e\u00ea]ncias verdadeiras|depend[e\u00ea]ncias causais|true dependencies)',
+        '(?i)(?:n[a\u00e3]o\s+(?:autorizar|permitir|realizar)|proibid[oa]\s+(?:permitir|autorizar|realizar)?|do not parallelize)\s+(?:escritas concorrentes|concurrent writes).*(?:mesm[oa] (?:propriedade|ownership|arquivo)|same ownership)'
+    )
+    foreach ($pattern in $delegationRequired) {
+        if (-not [regex]::IsMatch($delegationNorm, $pattern)) {
+            return $false
+        }
+    }
+
+    # 2. SKILL.md checks
+    $skillRequired = @(
+        '(?i)swarm',
+        '(?i)ondas do DAG|DAG waves',
+        '(?i)fan-out l[o\u00f3]gico el[a\u00e1]stico|elastic logical fan-out',
+        '(?i)batch scheduler',
+        '(?i)falha fechado se ausente|fails closed if absent',
+        '(?i)REQUIRED.*QUORUM.*ALL.*ANY',
+        '(?i)subagents_spawn_batch',
+        '(?i)deepseek_spawn_batch',
+        '(?i)subagents_spawn_batch.*callable|callable.*subagents_spawn_batch',
+        '(?i)pulverizes all ready and useful independent slices|pulveriza todas as fatias ready e independentes',
+        '(?i)sem n[u\u00fa]mero fixo|no fixed number',
+        '(?i)remo[c\u00e7][a\u00e3]o de timeout r[i\u00ed]gido|accepted and healthy jobs can run indefinitely',
+        '(?i)nenhuma janela de 900s(?:/|,|\s+ou\s+)20m(?:/|,|\s+ou\s+)25m prova falha|no 900s/20m/25m window proves failure',
+        '(?i)lease expirada sozinha n[a\u00e3]o prova morte',
+        '(?i)diferenciando-se explicitamente do execution timeout|explicitly differentiated from execution timeout',
+        '(?i)sharding tasks AND phases/tests/reviews|tarefas quanto fases,\s*testes e revis[o\u00f5]es',
+        '(?i)agents are treated as effectively free|agentes tratados como efetivamente gratuitos',
+        '(?i)do not conserve agent count|n[a\u00e3]o conservar contagem de agentes',
+        '(?i)logical fan-out has no fixed min/max/range|fan-out l[o\u00f3]gico sem m[i\u00ed]nimo,\s*m[a\u00e1]ximo nem faixa fixa',
+        '(?i)spawn all ready independent fronts in a wave before waiting|dispara todas as frentes prontas e independentes em uma onda antes de esperar',
+        '(?i)atomic ownership.*GPT-only synthesis|propriedade at[o\u00f4]mica.*s[i\u00ed]ntese exclusiva GPT-only',
+        '(?i)do not spawn duplicate/non-actionable work|sem trabalho duplicado/n[a\u00e3]o-acion[a\u00e1]vel',
+        '(?i)do not parallelize true dependencies|sem paralelizar depend[e\u00ea]ncias verdadeiras',
+        '(?i)do not parallelize concurrent writes to same ownership|sem escritas concorrentes sob o mesmo ownership'
+    )
+    foreach ($pattern in $skillRequired) {
+        if (-not [regex]::IsMatch($skillNorm, $pattern)) {
+            return $false
+        }
+    }
+
+    # 3. AGENTS.md checks
+    $agentsRequired = @(
+        '(?i)delegation_policy.*swarm',
+        '(?i)ondas do DAG',
+        '(?i)fan-out l[o\u00f3]gico el[a\u00e1]stico',
+        '(?i)batch scheduler',
+        '(?i)falha fechado se ausente|falha fechado bloqueando',
+        '(?i)REQUIRED.*QUORUM.*ALL.*ANY',
+        '(?i)subagents_spawn_batch',
+        '(?i)deepseek_spawn_batch',
+        '(?i)subagents_spawn_batch.*callable|callable.*subagents_spawn_batch',
+        '(?i)status/health.*batch_scheduler',
+        '(?i)pulveriza todas as fatias ready e independentes [u\u00fa]teis para menor wall-clock',
+        '(?i)sem n[u\u00fa]mero fixo',
+        '(?i)remo[c\u00e7][a\u00e3]o de timeout r[i\u00ed]gido de conclus[a\u00e3]o',
+        '(?i)job aceito e saud[a\u00e1]vel pode rodar indefinidamente',
+        '(?i)nenhuma janela de 900s/20m/25m prova falha ou dispara graceful finalize/abort',
+        '(?i)lease expirada sozinha n[a\u00e3]o prova morte',
+        '(?i)diferenciando-os explicitamente do execution timeout',
+        '(?i)sharding tasks AND phases/tests/reviews|tanto tarefas quanto fases,\s*testes e revis[o\u00f5]es',
+        '(?i)agentes s[a\u00e3]o tratados como efetivamente gratuitos|agents are treated as effectively free',
+        '(?i)n[a\u00e3]o conserva contagem de agentes|do not conserve agent count',
+        '(?i)sem m[i\u00ed]nimo,\s*m[a\u00e1]ximo nem faixa/range fixo|logical fanout has no fixed min/max/range',
+        '(?i)dispara todas as frentes prontas e independentes em uma onda antes de esperar|spawn all ready independent fronts in a wave before waiting',
+        '(?i)atomic ownership.*s[i\u00ed]ntese exclusiva GPT-only|atomic ownership.*GPT-only synthesis',
+        '(?i)n[a\u00e3]o dispara trabalho duplicado|do not spawn duplicate/non-actionable work',
+        '(?i)n[a\u00e3]o paraleliza depend[e\u00ea]ncias verdadeiras|do not parallelize true dependencies',
+        '(?i)n[a\u00e3]o permite escritas concorrentes na mesma propriedade/ownership|do not parallelize concurrent writes to same ownership'
+    )
+    foreach ($pattern in $agentsRequired) {
+        if (-not [regex]::IsMatch($agentsNorm, $pattern)) {
+            return $false
+        }
+    }
+
+    # 4. GEMINI.md checks
+    $geminiRequired = @(
+        '(?i)swarm',
+        '(?i)ondas do DAG',
+        '(?i)batch scheduler',
+        '(?i)pulveriza todas as fatias ready e independentes [u\u00fa]teis para menor wall-clock',
+        '(?i)sem n[u\u00fa]mero fixo',
+        '(?i)remo[c\u00e7][a\u00e3]o de timeout r[i\u00ed]gido de conclus[a\u00e3]o',
+        '(?i)job aceito e saud[a\u00e1]vel pode rodar indefinidamente',
+        '(?i)nenhuma janela de 900s/20m/25m prova falha ou dispara graceful finalize/abort',
+        '(?i)lease expirada sozinha n[a\u00e3]o prova morte',
+        '(?i)diferenciando-os explicitamente do execution timeout',
+        '(?i)tarefas E fases/testes/revis[o\u00f5]es|tarefas quanto fases,\s*testes e revis[o\u00f5]es',
+        '(?i)efetivamente gratuitos sem conservar contagem|agents are treated as effectively free',
+        '(?i)dispara todas as frentes prontas e independentes em onda antes de esperar|spawn all ready independent fronts in a wave before waiting',
+        '(?i)pro[i\u00ed]be trabalho duplicado/n[a\u00e3]o-acion[a\u00e1]vel|proibido disparar trabalho duplicado',
+        '(?i)pro[i\u00ed]be paralelizar depend[e\u00ea]ncias verdadeiras|proibido paralelizar depend[e\u00ea]ncias verdadeiras',
+        '(?i)pro[i\u00ed]be escritas concorrentes sob mesmo ownership|proibido escritas concorrentes sob mesmo ownership'
+    )
+    foreach ($pattern in $geminiRequired) {
+        if (-not [regex]::IsMatch($geminiNorm, $pattern)) {
+            return $false
+        }
+    }
+
+    # 5. README.md checks
+    $readmeRequired = @(
+        '(?i)delegation_policy.*swarm',
+        '(?i)switch-subagent-policy\.ps1 -Policy swarm',
+        '(?i)\^Numpad6',
+        '(?i)`?delegation_policy`?\s*\(`balanced`\s*\|\s*`aggressive`\s*\|\s*`swarm`\)',
+        '(?i)equil[i\u00ed]brio operacional.*(?:balanced|aggressive|swarm).*(?:ondas do DAG|pulveriza[c\u00e7][a\u00e3]o|swarm)',
+        '(?i)pulveriza[c\u00e7][a\u00e3]o din[a\u00e2]mica em ondas do DAG de todas as fatias ready e independentes [u\u00fa]teis para menor wall-clock',
+        '(?i)sem n[u\u00fa]mero fixo de agentes',
+        '(?i)remove-se o timeout r[i\u00ed]gido de conclus[a\u00e3]o',
+        '(?i)nenhuma janela de 900s/20m/25m prova falha ou dispara graceful finalize/abort',
+        '(?i)lease expirada sozinha n[a\u00e3]o prova morte',
+        '(?i)diferenciados do execution timeout',
+        '(?i)sharding tasks AND phases/tests/reviews|estilha[c\u00e7]amento de tarefas E fases/testes/revis[o\u00f5]es',
+        '(?i)efetivamente gratuitos sem conservar contagem|agents are treated as effectively free',
+        '(?i)disparando todas as frentes prontas e independentes em onda antes de esperar|disparando ondas antes de esperar',
+        '(?i)proibindo trabalho duplicado/n[a\u00e3]o-acion[a\u00e1]vel|sem trabalho duplicado',
+        '(?i)proibindo paralelizar depend[e\u00ea]ncias verdadeiras|proibindo paralelizar depend[e\u00ea]ncias',
+        '(?i)proibindo escritas concorrentes sob o mesmo ownership|escritas concorrentes no mesmo ownership'
+    )
+    foreach ($pattern in $readmeRequired) {
+        if (-not [regex]::IsMatch($readmeNorm, $pattern)) {
+            return $false
+        }
+    }
+
+    # 6. Forbiddens / Anti-patterns
+    $forbidden = @(
+        '(?i)\b(?:pool fixo|fixed pool|m[i\u00ed]nimo de \d+|m[a\u00e1]ximo de \d+)\b[^.;]*(?:agentes|workers|subagents)',
+        '(?i)(?<!jamais\s|nunca\s|sem\s|proibid[oa]\s)\b(?:rebaixa|rebaixar|fallback)\s+silencioso\s+para\s+aggressive\b',
+        '(?i)\bwriters\b[^.;]*(?:concorrente|mesmo arquivo|shared files)[^.;]*(?:sem worktree|sem exclusividade)',
+        '(?i)\b(?:subagente|worker)\b[^.;]*(?:faz o commit|decide aprova[c\u00e7][a\u00e3]o|dispensa o parent)',
+        '(?i)\$workflows mode=SWARM\b',
+        '(?i)\b(?:downgrade|vers[a\u00e3]o legada)\b[^.;]*(?:suporta swarm diretamente|sem trocar para aggressive)',
+        '(?i)(?<!nenhum[a-z]*\s+(?:janela\s+de\s+)?[^.;\r\n]*)\b(?:900s|20m|25m)\b[^.;\r\n]*(?:prova falha|dispara graceful finalize|dispara abort|finaliza o job)',
+        '(?i)\blease expirada\b[^.;]*(?:sozinha prova morte|autoriza takeover sem checar PID)',
+        '(?i)\b(?:timeout r[i\u00ed]gido de conclus[a\u00e3]o|rigid completion timeout)\b\s+(?:de \d+|obrigat[o\u00f3]rio)',
+        '(?i)\b(?:economizar agentes|conservar contagem de agentes|conserve agent count)\b[^.;]*(?:mesmo com|mesmo havendo|quando houver|artificialmente|por parcim[o\u00f4]nia)',
+        '(?i)(?<!(?:n[a\u00e3]o|sem|nunca|jamais|proibid[oa]|never|do not)\s+)\b(?:pode|deve|autoriza|permite|allows?|is allowed to)\s+(?:disparar|criar|spawn)\s+(?:trabalho duplicado|tarefas duplicadas|duplicate work|non-actionable work|trabalho n[a\u00e3]o-acion[a\u00e1]vel)\b',
+        '(?i)(?<!(?:n[a\u00e3]o|sem|nunca|jamais|proibid[oa]|never|do not)\s+)\b(?:pode|deve|autoriza|permite|allows?|is allowed to)\s+(?:paraleliz(?:ar|e)|iniciar juntos?|run in parallel)[^.;\r\n]*(?:depend[e\u00ea]ncias verdadeiras|depend[e\u00ea]ncias reais|true dependencies)\b',
+        '(?i)(?<!(?:n[a\u00e3]o|sem|nunca|jamais|proibid[oa]|never|do not)\s+)\b(?:pode|deve|autoriza|permite|allows?|is allowed to)\s+(?:escritas concorrentes|concurrent writes)[^.;\r\n]*(?:mesm[oa] (?:ownership|propriedade|arquivo)|same ownership)\b'
+    )
+    foreach ($pattern in $forbidden) {
+        if ([regex]::IsMatch($delegationNorm, $pattern) -or [regex]::IsMatch($skillNorm, $pattern) -or [regex]::IsMatch($agentsNorm, $pattern) -or [regex]::IsMatch($geminiNorm, $pattern) -or [regex]::IsMatch($readmeNorm, $pattern)) {
             return $false
         }
     }
@@ -3769,6 +3983,244 @@ enabled = true
         Invoke-ContinuationSwitch -Root $root41 -Continuation active_follow | Out-Null
         $consumerAfter = Get-Content -LiteralPath $consumerAgents -Raw -Encoding UTF8
         Assert-Condition 'S41 consumer repo AGENTS.md remains untouched by continuation operations' ($consumerBefore -ceq $consumerAfter) ''
+    }
+
+    $currentScenario = 42
+    if ($targetScenario -eq 0 -or $targetScenario -eq 42) {
+        Write-Host 'Scenario 42: Adaptive Swarm delegation policy (balanced|aggressive|swarm), elastic DAG fan-out, dynamic wake, fail-closed batch preflight, hotkey ^Numpad6, safe rollback before downgrade, and mirrors' -ForegroundColor Cyan
+
+        # 1. Semantic tests on canonical policies
+        $canonicalDelegation42 = Get-Content -LiteralPath (Join-Path $repo 'skills\workflows\references\delegation.md') -Raw -Encoding UTF8
+        $canonicalSkill42 = Get-Content -LiteralPath (Join-Path $repo 'skills\workflows\SKILL.md') -Raw -Encoding UTF8
+        $canonicalAgents42 = Get-Content -LiteralPath (Join-Path $repo 'codex\AGENTS.md') -Raw -Encoding UTF8
+        $canonicalGemini42 = Get-Content -LiteralPath (Join-Path $repo 'antigravity\GEMINI.md') -Raw -Encoding UTF8
+        $canonicalReadme42 = Get-Content -LiteralPath (Join-Path $repo 'README.md') -Raw -Encoding UTF8
+
+        Assert-Condition 'S42 canonical policies satisfy adaptive swarm delegation semantics' (Test-AdaptiveSwarmSemantics -DelegationText $canonicalDelegation42 -SkillText $canonicalSkill42 -AgentsText $canonicalAgents42 -GeminiText $canonicalGemini42 -ReadmeText $canonicalReadme42) ''
+
+        # 2. Tampers against swarm invariants (fixed fan-out, silent fallback, shared edit without worktree, parent abdication, workflow mode confusion, downgrade without rollback)
+        $tamperFixedFanout = $canonicalDelegation42 + $nl + 'A política swarm usa um pool fixo de 8 agentes para execução paralela.'
+        Assert-Condition 'S42 detects fixed fanout tamper' (-not (Test-AdaptiveSwarmSemantics -DelegationText $tamperFixedFanout -SkillText $canonicalSkill42 -AgentsText $canonicalAgents42 -GeminiText $canonicalGemini42 -ReadmeText $canonicalReadme42)) ''
+
+        $tamperSilentFallback = $canonicalDelegation42 + $nl + 'Se o batch scheduler estiver ausente no deepseek, ocorre fallback silencioso para aggressive.'
+        Assert-Condition 'S42 detects silent fallback to aggressive tamper' (-not (Test-AdaptiveSwarmSemantics -DelegationText $tamperSilentFallback -SkillText $canonicalSkill42 -AgentsText $canonicalAgents42 -GeminiText $canonicalGemini42 -ReadmeText $canonicalReadme42)) ''
+
+        $tamperWriterShared = $canonicalDelegation42 + $nl + 'Writers em swarm podem realizar edição concorrente no mesmo arquivo sem worktrees.'
+        Assert-Condition 'S42 detects writer concurrent edits tamper' (-not (Test-AdaptiveSwarmSemantics -DelegationText $tamperWriterShared -SkillText $canonicalSkill42 -AgentsText $canonicalAgents42 -GeminiText $canonicalGemini42 -ReadmeText $canonicalReadme42)) ''
+
+        $tamperParentAbdication = $canonicalDelegation42 + $nl + 'Em swarm, o subagente final faz o commit e merge diretamente, dispensando o parent.'
+        Assert-Condition 'S42 detects parent abdication tamper' (-not (Test-AdaptiveSwarmSemantics -DelegationText $tamperParentAbdication -SkillText $canonicalSkill42 -AgentsText $canonicalAgents42 -GeminiText $canonicalGemini42 -ReadmeText $canonicalReadme42)) ''
+
+        $tamperModeConfusion = $canonicalReadme42 + $nl + 'Para ativar o swarm, execute $workflows mode=SWARM no chat.'
+        Assert-Condition 'S42 detects mode confusion tamper' (-not (Test-AdaptiveSwarmSemantics -DelegationText $canonicalDelegation42 -SkillText $canonicalSkill42 -AgentsText $canonicalAgents42 -GeminiText $canonicalGemini42 -ReadmeText $tamperModeConfusion)) ''
+
+        $tamperDowngradeDirect = $canonicalDelegation42 + $nl + 'O downgrade para versões legadas suporta swarm diretamente mantendo a flag ativa sem necessidade de alteração.'
+        Assert-Condition 'S42 detects downgrade without rollback tamper' (-not (Test-AdaptiveSwarmSemantics -DelegationText $tamperDowngradeDirect -SkillText $canonicalSkill42 -AgentsText $canonicalAgents42 -GeminiText $canonicalGemini42 -ReadmeText $canonicalReadme42)) ''
+
+        $tamperInitialReadmeNoSwarm = $canonicalReadme42 -replace '`delegation_policy` \(`balanced` \| `aggressive` \| `swarm`\)', '`delegation_policy` (`balanced` | `aggressive`)'
+        Assert-Condition 'S42 detects initial readme no swarm tamper' (-not (Test-AdaptiveSwarmSemantics -DelegationText $canonicalDelegation42 -SkillText $canonicalSkill42 -AgentsText $canonicalAgents42 -GeminiText $canonicalGemini42 -ReadmeText $tamperInitialReadmeNoSwarm)) ''
+
+        $tamperNoBatchTool = $canonicalDelegation42 -replace 'subagents_spawn_batch', 'subagents_spawn_legacy'
+        Assert-Condition 'S42 detects missing batch tool tamper' (-not (Test-AdaptiveSwarmSemantics -DelegationText $tamperNoBatchTool -SkillText $canonicalSkill42 -AgentsText $canonicalAgents42 -GeminiText $canonicalGemini42 -ReadmeText $canonicalReadme42)) ''
+
+        $tamperNoAuthoritativeProbe = $canonicalDelegation42 -replace '(?i)(?:superf[íi]cie autoritativa de status/health|status/health).*batch_scheduler', 'batch_scheduler' -replace 'helper PowerShell isolado.*prov.*daemon', 'helper PowerShell isolado sozinho prova o daemon'
+        Assert-Condition 'S42 detects missing authoritative probe tamper' (-not (Test-AdaptiveSwarmSemantics -DelegationText $tamperNoAuthoritativeProbe -SkillText $canonicalSkill42 -AgentsText $canonicalAgents42 -GeminiText $canonicalGemini42 -ReadmeText $canonicalReadme42)) ''
+
+        $tamperWindowTimeout = $canonicalDelegation42 + $nl + 'Se o job atingir a janela de 900s sem concluir, isso prova falha e dispara graceful finalize.'
+        Assert-Condition 'S42 detects 900s timeout finalize tamper' (-not (Test-AdaptiveSwarmSemantics -DelegationText $tamperWindowTimeout -SkillText $canonicalSkill42 -AgentsText $canonicalAgents42 -GeminiText $canonicalGemini42 -ReadmeText $canonicalReadme42)) ''
+
+        $tamperLeaseAloneDeath = $canonicalDelegation42 + $nl + 'Uma lease expirada sozinha prova morte e autoriza takeover sem checar PID.'
+        Assert-Condition 'S42 detects lease expired alone proves death tamper' (-not (Test-AdaptiveSwarmSemantics -DelegationText $tamperLeaseAloneDeath -SkillText $canonicalSkill42 -AgentsText $canonicalAgents42 -GeminiText $canonicalGemini42 -ReadmeText $canonicalReadme42)) ''
+
+        $tamperRigidTimeout = $canonicalDelegation42 + $nl + 'A execução impõe timeout rígido de conclusão de 20m para cada worker.'
+        Assert-Condition 'S42 detects rigid completion timeout tamper' (-not (Test-AdaptiveSwarmSemantics -DelegationText $tamperRigidTimeout -SkillText $canonicalSkill42 -AgentsText $canonicalAgents42 -GeminiText $canonicalGemini42 -ReadmeText $canonicalReadme42)) ''
+
+        $tamperConserveAgentCount = $canonicalDelegation42 + $nl + 'Para economizar agentes e conservar contagem de agentes quando houver tarefas independentes, limite o fan-out do swarm.'
+        Assert-Condition 'S42 detects conserve agent count tamper' (-not (Test-AdaptiveSwarmSemantics -DelegationText $tamperConserveAgentCount -SkillText $canonicalSkill42 -AgentsText $canonicalAgents42 -GeminiText $canonicalGemini42 -ReadmeText $canonicalReadme42)) ''
+
+        $tamperParallelizeTrueDeps = $canonicalDelegation42 + $nl + 'O swarm deve paralelizar dependências verdadeiras na mesma onda para reduzir o tempo total.'
+        Assert-Condition 'S42 detects parallelize true dependencies tamper' (-not (Test-AdaptiveSwarmSemantics -DelegationText $tamperParallelizeTrueDeps -SkillText $canonicalSkill42 -AgentsText $canonicalAgents42 -GeminiText $canonicalGemini42 -ReadmeText $canonicalReadme42)) ''
+
+        $tamperConcurrentWritesSameOwnership = $canonicalDelegation42 + $nl + 'O swarm autoriza escritas concorrentes sobre o mesmo arquivo na mesma onda.'
+        Assert-Condition 'S42 detects concurrent writes same ownership tamper' (-not (Test-AdaptiveSwarmSemantics -DelegationText $tamperConcurrentWritesSameOwnership -SkillText $canonicalSkill42 -AgentsText $canonicalAgents42 -GeminiText $canonicalGemini42 -ReadmeText $canonicalReadme42)) ''
+
+        $tamperDuplicateWork = $canonicalDelegation42 + $nl + 'O parent pode disparar trabalho duplicado e não-acionável para redundância exploratória.'
+        Assert-Condition 'S42 detects duplicate non-actionable work tamper' (-not (Test-AdaptiveSwarmSemantics -DelegationText $tamperDuplicateWork -SkillText $canonicalSkill42 -AgentsText $canonicalAgents42 -GeminiText $canonicalGemini42 -ReadmeText $canonicalReadme42)) ''
+
+        $root42 = New-FixtureHome
+        $fixtures.Add($root42)
+
+        # 3. Installation establishes balanced by default
+        $originalConfig42 = '[features]' + $nl + 'multi_agent = false' + $nl + $nl + '[mcp_servers.subagents]' + $nl + 'command = "pwsh"' + $nl
+        Write-FixtureFile -Path (Join-Path (Get-CodexHome $root42) 'config.toml') -Content $originalConfig42
+        Invoke-SafeInstall -Root $root42
+
+        $state42 = Get-InstallState $root42
+        Assert-Condition 'S42 safe install records default balanced delegation in state' ($null -ne $state42 -and $state42.PSObject.Properties.Name -contains 'codexDelegation' -and [string]$state42.codexDelegation.selected -ceq 'balanced') ''
+
+        $agents42 = Get-Content -LiteralPath (Join-Path (Get-CodexHome $root42) 'AGENTS.md') -Raw -Encoding UTF8
+        $rt42 = Get-AgentsRuntimeBlock -Text $agents42
+        Assert-Condition 'S42 safe install establishes delegation_policy = balanced in AGENTS.md' ($rt42.Policy -ceq 'balanced') $rt42.Policy
+
+        # 4. Delegation policy switch to swarm
+        $swarmResult = Invoke-PolicySwitch -Root $root42 -Policy swarm
+        Assert-Condition 'S42 switch to swarm succeeds' ($swarmResult.ExitCode -eq 0) $swarmResult.Output
+        $state42AfterSwarm = Get-InstallState $root42
+        Assert-Condition 'S42 state updated to swarm delegation' ($null -ne $state42AfterSwarm.codexDelegation -and [string]$state42AfterSwarm.codexDelegation.selected -ceq 'swarm') ''
+        $agents42AfterSwarm = Get-Content -LiteralPath (Join-Path (Get-CodexHome $root42) 'AGENTS.md') -Raw -Encoding UTF8
+        $rt42AfterSwarm = Get-AgentsRuntimeBlock -Text $agents42AfterSwarm
+        Assert-Condition 'S42 AGENTS.md runtime block updated to delegation_policy = swarm' ($rt42AfterSwarm.Policy -ceq 'swarm') $rt42AfterSwarm.Policy
+        $config42AfterSwarm = Read-Config $root42
+        Assert-Condition 'S42 swarm switch leaves config.toml untouched' ($config42AfterSwarm -ceq ($originalConfig42 -replace "`r?`n", "`r`n")) ''
+
+        # 5. Status reporting across all switchers
+        $statusResult = Invoke-PolicyStatus -Root $root42
+        Assert-Condition 'S42 policy status reports active swarm' ($statusResult.ExitCode -eq 0 -and $statusResult.Output -match '(?i)Active delegation policy:\s*swarm') $statusResult.Output
+        $backendStatus = Invoke-BackendStatus -Root $root42
+        Assert-Condition 'S42 backend status reports active swarm policy' ($backendStatus.ExitCode -eq 0 -and $backendStatus.Output -match '(?i)Active delegation policy:\s*swarm') $backendStatus.Output
+        $strategyStatus = Invoke-StrategyStatus -Root $root42
+        Assert-Condition 'S42 strategy status reports active swarm policy' ($strategyStatus.ExitCode -eq 0 -and $strategyStatus.Output -match '(?i)Active delegation policy:\s*swarm') $strategyStatus.Output
+        $continuationStatus = Invoke-ContinuationStatus -Root $root42
+        Assert-Condition 'S42 continuation status reports active swarm policy' ($continuationStatus.ExitCode -eq 0 -and $continuationStatus.Output -match '(?i)Active delegation policy:\s*swarm') $continuationStatus.Output
+
+        # 6. Idempotence
+        $swarmRerun = Invoke-PolicySwitch -Root $root42 -Policy swarm
+        $agents42Rerun = Get-Content -LiteralPath (Join-Path (Get-CodexHome $root42) 'AGENTS.md') -Raw -Encoding UTF8
+        Assert-Condition 'S42 repeated switch to swarm is byte-identical' ($swarmRerun.ExitCode -eq 0 -and $agents42Rerun -ceq $agents42AfterSwarm) $swarmRerun.Output
+
+        # 7. Multi-host policy switch (PowerShell Core and Windows PowerShell 5.1)
+        foreach ($hostInfo in (Get-SwitchHosts)) {
+            $hSwarm = Invoke-PolicySwitchWithHost -Root $root42 -Policy swarm -HostInfo $hostInfo
+            Assert-Condition "S42 $($hostInfo.Name) switch to swarm succeeds" ($hSwarm.ExitCode -eq 0) $hSwarm.Output
+            $hBalanced = Invoke-PolicySwitchWithHost -Root $root42 -Policy balanced -HostInfo $hostInfo
+            Assert-Condition "S42 $($hostInfo.Name) switch to balanced succeeds" ($hBalanced.ExitCode -eq 0) $hBalanced.Output
+            $hAggressive = Invoke-PolicySwitchWithHost -Root $root42 -Policy aggressive -HostInfo $hostInfo
+            Assert-Condition "S42 $($hostInfo.Name) switch to aggressive succeeds" ($hAggressive.ExitCode -eq 0) $hAggressive.Output
+            $hSwarm2 = Invoke-PolicySwitchWithHost -Root $root42 -Policy swarm -HostInfo $hostInfo
+            Assert-Condition "S42 $($hostInfo.Name) switch back to swarm succeeds" ($hSwarm2.ExitCode -eq 0) $hSwarm2.Output
+        }
+
+        # 8. Fail-closed on invalid selector parameter and tampered AGENTS.md
+        $switchScript = Join-Path $repo 'scripts\switch-subagent-policy.ps1'
+        $invalidParamResult = Invoke-ProcessCapture -FilePath 'pwsh' -ArgumentList @('-NoProfile', '-File', $switchScript, '-Policy', 'invalid_policy', '-CodexHome', (Get-CodexHome $root42))
+        Assert-Condition 'S42 switcher fails closed on invalid policy parameter' ($invalidParamResult.ExitCode -ne 0) $invalidParamResult.Output
+
+        $tamperedAgents = (Get-Content -LiteralPath (Join-Path (Get-CodexHome $root42) 'AGENTS.md') -Raw -Encoding UTF8) -replace 'delegation_policy = swarm', 'delegation_policy = invalid_policy'
+        Write-FixtureFile -Path (Join-Path (Get-CodexHome $root42) 'AGENTS.md') -Content $tamperedAgents
+        $tamperSwitchResult = Invoke-PolicySwitch -Root $root42 -Policy swarm
+        Assert-Condition 'S42 switcher fails closed when AGENTS.md contains invalid policy' ($tamperSwitchResult.ExitCode -ne 0) $tamperSwitchResult.Output
+        # Restore valid AGENTS.md
+        Write-FixtureFile -Path (Join-Path (Get-CodexHome $root42) 'AGENTS.md') -Content $agents42AfterSwarm
+
+        # 9. Cross-selector orthogonality
+        Invoke-BackendSwitch -Root $root42 -Backend native | Out-Null
+        $rtAfterBackend = Get-AgentsRuntimeBlock -Text (Get-Content -LiteralPath (Join-Path (Get-CodexHome $root42) 'AGENTS.md') -Raw -Encoding UTF8)
+        Assert-Condition 'S42 backend switch preserves active swarm policy' ($rtAfterBackend.Policy -ceq 'swarm' -and $rtAfterBackend.Backend -ceq 'native') ''
+        $stateAfterBackend = Get-InstallState $root42
+        Assert-Condition 'S42 backend switch preserves swarm in state' ([string]$stateAfterBackend.codexDelegation.selected -ceq 'swarm') ''
+
+        Invoke-StrategySwitch -Root $root42 -Strategy critical | Out-Null
+        $rtAfterStrategy = Get-AgentsRuntimeBlock -Text (Get-Content -LiteralPath (Join-Path (Get-CodexHome $root42) 'AGENTS.md') -Raw -Encoding UTF8)
+        Assert-Condition 'S42 strategy switch preserves active swarm policy' ($rtAfterStrategy.Policy -ceq 'swarm' -and $rtAfterStrategy.Strategy -ceq 'critical') ''
+        $stateAfterStrategy = Get-InstallState $root42
+        Assert-Condition 'S42 strategy switch preserves swarm in state' ([string]$stateAfterStrategy.codexDelegation.selected -ceq 'swarm') ''
+
+        Invoke-ContinuationSwitch -Root $root42 -Continuation park_and_wake | Out-Null
+        $rtAfterContinuation = Get-AgentsRuntimeBlock -Text (Get-Content -LiteralPath (Join-Path (Get-CodexHome $root42) 'AGENTS.md') -Raw -Encoding UTF8)
+        Assert-Condition 'S42 continuation switch preserves active swarm policy' ($rtAfterContinuation.Policy -ceq 'swarm' -and $rtAfterContinuation.Continuation -ceq 'park_and_wake') ''
+        $stateAfterContinuation = Get-InstallState $root42
+        Assert-Condition 'S42 continuation switch preserves swarm in state' ([string]$stateAfterContinuation.codexDelegation.selected -ceq 'swarm') ''
+
+        # Policy switch to swarm preserves the other 3 selectors (native, critical, park_and_wake)
+        Invoke-PolicySwitch -Root $root42 -Policy balanced | Out-Null
+        Invoke-PolicySwitch -Root $root42 -Policy swarm | Out-Null
+        $rtAfterAllThree = Get-AgentsRuntimeBlock -Text (Get-Content -LiteralPath (Join-Path (Get-CodexHome $root42) 'AGENTS.md') -Raw -Encoding UTF8)
+        Assert-Condition 'S42 swarm switch preserves backend, strategy, and continuation' ($rtAfterAllThree.Policy -ceq 'swarm' -and $rtAfterAllThree.Backend -ceq 'native' -and $rtAfterAllThree.Strategy -ceq 'critical' -and $rtAfterAllThree.Continuation -ceq 'park_and_wake') ''
+
+        # 10. Safe reinstall preserves swarm
+        Invoke-SafeInstall -Root $root42
+        $rtAfterReinstall = Get-AgentsRuntimeBlock -Text (Get-Content -LiteralPath (Join-Path (Get-CodexHome $root42) 'AGENTS.md') -Raw -Encoding UTF8)
+        Assert-Condition 'S42 safe reinstall preserves active swarm in AGENTS.md' ($rtAfterReinstall.Policy -ceq 'swarm') ''
+        $stateAfterReinstall = Get-InstallState $root42
+        Assert-Condition 'S42 safe reinstall preserves active swarm in state' ([string]$stateAfterReinstall.codexDelegation.selected -ceq 'swarm') ''
+
+        # 11. Safe Rollback Before Downgrade (explicit switch to aggressive; schemaVersion remains 5)
+        $rbResult = Invoke-PolicySwitch -Root $root42 -Policy aggressive
+        Assert-Condition 'S42 rollback to aggressive before downgrade succeeds' ($rbResult.ExitCode -eq 0) $rbResult.Output
+        $stateAfterRollback = Get-InstallState $root42
+        Assert-Condition 'S42 state reflects aggressive after rollback' ([string]$stateAfterRollback.codexDelegation.selected -ceq 'aggressive') ''
+        Assert-Condition 'S42 schemaVersion remains 5 without bump' ([string]$stateAfterRollback.schemaVersion -ceq '5') ''
+
+        # Switch back to swarm for remaining tests
+        Invoke-PolicySwitch -Root $root42 -Policy swarm | Out-Null
+
+        # 12. Batch capability gate tests
+        Import-Module (Join-Path $repo 'scripts\backend-routing.psm1') -Force
+
+        # Deepseek + swarm + absent batch scheduler -> fails closed (Pass = $false)
+        $deepseekNoBatch = Test-CodexBatchCapabilityGate -Backend deepseek -Policy swarm -Capabilities @('other_capability')
+        Assert-Condition 'S42 batch capability gate blocks deepseek swarm without batch scheduler' (-not $deepseekNoBatch.Pass -and $deepseekNoBatch.Detail -match '(?i)silent demotion.*forbidden|jamais rebaixa silenciosamente') $deepseekNoBatch.Detail
+
+        # Deepseek + swarm + absent batch scheduler throws on assert
+        $deepseekAssertThrows = $false
+        try {
+            Assert-CodexBatchCapabilityGate -Backend deepseek -Policy swarm -Capabilities @()
+        }
+        catch {
+            $deepseekAssertThrows = $true
+        }
+        Assert-Condition 'S42 Assert-CodexBatchCapabilityGate throws on absent batch scheduler' $deepseekAssertThrows ''
+
+        # Deepseek + swarm + batch_scheduler present -> passes
+        $deepseekWithBatch = Test-CodexBatchCapabilityGate -Backend deepseek -Policy swarm -Capabilities @('batch_scheduler')
+        Assert-Condition 'S42 batch capability gate passes deepseek swarm with batch scheduler' ($deepseekWithBatch.Pass -eq $true) $deepseekWithBatch.Detail
+
+        # Callable tools missing subagents_spawn_batch blocks
+        $deepseekNoCallableBatch = Test-CodexBatchCapabilityGate -Backend deepseek -Policy swarm -Capabilities @('batch_scheduler') -CallableTools @('subagents_spawn', 'subagents_continue', 'subagents_follow')
+        Assert-Condition 'S42 batch capability gate blocks when batch tool is not callable' (-not $deepseekNoCallableBatch.Pass -and $deepseekNoCallableBatch.Detail -match '(?i)subagents_spawn_batch') $deepseekNoCallableBatch.Detail
+
+        # Authoritative bridge probe unhealthy blocks
+        $deepseekProbeUnhealthy = Test-CodexBatchCapabilityGate -Backend deepseek -Policy swarm -Capabilities @('batch_scheduler') -AuthoritativeBridgeProbe @{ status = 'error'; capabilities = @('batch_scheduler') }
+        Assert-Condition 'S42 batch capability gate blocks when bridge probe is unhealthy' (-not $deepseekProbeUnhealthy.Pass) $deepseekProbeUnhealthy.Detail
+
+        # Authoritative bridge probe missing batch_scheduler blocks
+        $deepseekProbeNoBatch = Test-CodexBatchCapabilityGate -Backend deepseek -Policy swarm -Capabilities @('batch_scheduler') -AuthoritativeBridgeProbe @{ status = 'ok'; capabilities = @('other_cap') }
+        Assert-Condition 'S42 batch capability gate blocks when bridge probe lacks batch capability' (-not $deepseekProbeNoBatch.Pass) $deepseekProbeNoBatch.Detail
+
+        # Authoritative bridge probe + callable tools both present passes
+        $deepseekProbeValid = Test-CodexBatchCapabilityGate -Backend deepseek -Policy swarm -CallableTools @('subagents_spawn_batch') -AuthoritativeBridgeProbe @{ status = 'ok'; capabilities = @('batch_scheduler') }
+        Assert-Condition 'S42 batch capability gate passes with valid bridge probe and callable tools' ($deepseekProbeValid.Pass -eq $true) $deepseekProbeValid.Detail
+
+        # Native + swarm + capacity > 0 -> passes
+        $nativeWithCapacity = Test-CodexBatchCapabilityGate -Backend native -Policy swarm -ExposedCapacity 4
+        Assert-Condition 'S42 batch capability gate passes native swarm with capacity' ($nativeWithCapacity.Pass -eq $true) $nativeWithCapacity.Detail
+
+        # Native + swarm + capacity = 0 -> blocks
+        $nativeZeroCapacity = Test-CodexBatchCapabilityGate -Backend native -Policy swarm -ExposedCapacity 0
+        Assert-Condition 'S42 batch capability gate blocks native swarm with zero capacity' (-not $nativeZeroCapacity.Pass) $nativeZeroCapacity.Detail
+
+        # Balanced and Aggressive don't require batch scheduler
+        $balancedNoBatch = Test-CodexBatchCapabilityGate -Backend deepseek -Policy balanced -Capabilities @()
+        Assert-Condition 'S42 balanced policy does not require batch scheduler' ($balancedNoBatch.Pass -eq $true) ''
+        $aggressiveNoBatch = Test-CodexBatchCapabilityGate -Backend deepseek -Policy aggressive -Capabilities @()
+        Assert-Condition 'S42 aggressive policy does not require batch scheduler' ($aggressiveNoBatch.Pass -eq $true) ''
+
+        # 13. Hotkey verification (^Numpad6 for swarm, plain Numpad6 for DEBUG preserved, balanced/aggressive preserved)
+        $ahkContent = Get-Content -LiteralPath (Join-Path $repo 'ahk\codex_prompt_pad.ahk') -Raw -Encoding UTF8
+        Assert-Condition 'S42 ahk contains ^Numpad6 binding for swarm' ($ahkContent -match '(?m)^\^Numpad6::PastePrompt\("\.\\scripts\\switch-subagent-policy\.ps1 -Policy swarm"\)') ''
+        Assert-Condition 'S42 ahk preserves plain Numpad6 for DEBUG' ($ahkContent -match '(?m)^Numpad6::PastePrompt\("\$workflows mode=DEBUG"\)') ''
+        Assert-Condition 'S42 ahk preserves ^Numpad4 for balanced' ($ahkContent -match '(?m)^\^Numpad4::PastePrompt\("\.\\scripts\\switch-subagent-policy\.ps1 -Policy balanced"\)') ''
+        Assert-Condition 'S42 ahk preserves ^Numpad5 for aggressive' ($ahkContent -match '(?m)^\^Numpad5::PastePrompt\("\.\\scripts\\switch-subagent-policy\.ps1 -Policy aggressive"\)') ''
+
+        # 14. Consumer repo AGENTS.md remains untouched
+        $consumerRepo42 = Join-Path $root42 'consumer-app'
+        New-Item -ItemType Directory -Path $consumerRepo42 -Force | Out-Null
+        $consumerAgents42 = Join-Path $consumerRepo42 'AGENTS.md'
+        Set-Content -LiteralPath $consumerAgents42 -Value '# User project AGENTS' -Encoding UTF8
+        $consumerBefore42 = Get-Content -LiteralPath $consumerAgents42 -Raw -Encoding UTF8
+        Invoke-PolicySwitch -Root $root42 -Policy swarm | Out-Null
+        $consumerAfter42 = Get-Content -LiteralPath $consumerAgents42 -Raw -Encoding UTF8
+        Assert-Condition 'S42 consumer repo AGENTS.md remains untouched by swarm operations' ($consumerBefore42 -ceq $consumerAfter42) ''
     }
 }
 finally {

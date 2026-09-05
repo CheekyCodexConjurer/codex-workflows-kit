@@ -63,6 +63,8 @@ Numpad9::PastePrompt("$workflows mode=RESEARCH.DEEP")
 
 ^Numpad5::PastePrompt(".\scripts\switch-subagent-policy.ps1 -Policy aggressive")
 
+^Numpad6::PastePrompt(".\scripts\switch-subagent-policy.ps1 -Policy swarm")
+
 ^Numpad0::PastePrompt(".\scripts\switch-subagent-backend.ps1 -Status")
 
 #HotIf

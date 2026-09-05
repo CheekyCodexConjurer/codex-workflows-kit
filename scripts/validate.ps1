@@ -1102,6 +1102,220 @@ function Assert-SubagentAutonomyPolicy {
     }
 }
 
+function Assert-AdaptiveSwarmPolicy {
+    param(
+        [Parameter(Mandatory)][string]$AgentsText,
+        [Parameter(Mandatory)][string]$GeminiText,
+        [Parameter(Mandatory)][string]$SkillText,
+        [Parameter(Mandatory)][string]$DelegationText,
+        [Parameter(Mandatory)][string]$ReadmeText,
+        [string]$LabelPrefix = ''
+    )
+
+    $pfx = if ([string]::IsNullOrWhiteSpace($LabelPrefix)) { '' } else { "$LabelPrefix " }
+    $agentsNorm = [regex]::Replace($AgentsText, '\s+', ' ').Trim()
+    $geminiNorm = [regex]::Replace($GeminiText, '\s+', ' ').Trim()
+    $skillNorm = [regex]::Replace($SkillText, '\s+', ' ').Trim()
+    $delegationNorm = [regex]::Replace($DelegationText, '\s+', ' ').Trim()
+    $readmeNorm = [regex]::Replace($ReadmeText, '\s+', ' ').Trim()
+
+    # 1. Delegation reference checks
+    $delegationRequired = @(
+        '(?i)delegation_policy.*swarm',
+        '(?i)GPT parent [e\u00e9] o [u\u00fa]nico orquestrador,\s*decisor,\s*integrador\s+e\s+gatekeeper|sole orchestrator,\s*decider,\s*integrator,\s*and\s*gatekeeper',
+        '(?i)ondas do DAG|DAG waves',
+        '(?i)pulveriza apenas fatias materialmente independentes|pulverizes only materially independent',
+        '(?i)trabalho coeso(?:/|\s+e\s+)sequencial fica na mesma trilha|cohesive/sequential work stays on the same track',
+        '(?i)fan-out l[o\u00f3]gico el[a\u00e1]stico|elastic logical fan-out',
+        '(?i)sem m[i\u00ed]nimo(?:/|\s+nem\s+)m[a\u00e1]ximo de agentes na pol[i\u00ed]tica|no min/max agents in policy',
+        '(?i)custo,\s*depend[e\u00ea]ncias,\s*exclusividade de recursos,\s*risco de integra[c\u00e7][a\u00e3]o\s+e\s+lat[e\u00ea]ncia',
+        '(?i)readers podem fan-out|readers can fan out',
+        '(?i)writers (?:s[o\u00f3]|apenas) com ownership disjunto(?:/|,\s*)worktrees(?:/|,\s*|\s+ou\s+)recursos exclusivos',
+        '(?i)backpressure (?:e|\/) cr[e\u00e9]ditos f[i\u00ed]sicos pertencem ao bridge|backpressure/credits belong to bridge',
+        '(?i)preflight swarm exige capability do batch scheduler|batch scheduler capability|preflight swarm operacionalmente inequ[i\u00ed]voco',
+        '(?i)falha fechado se ausente|fails closed if absent|falha fechada',
+        '(?i)(?:jamais|nunca|sem).{0,40}(?:rebaixa|fallback).{0,40}aggressive',
+        '(?i)native.*respeita capacidade exposta|native.*respects exposed capacity',
+        '(?i)REQUIRED.*QUORUM.*ALL.*ANY',
+        '(?i)jobs que n[a\u00e3]o acordam continuam obriga[c\u00e7][o\u00f5]es|unawakened jobs remain obligations',
+        '(?i)rollback seguro.*antes de instalar/downgrade.*trocar explicitamente para aggressive|safe rollback.*explicitly switch to aggressive',
+        '(?i)n[a\u00e3]o aumente schemaVersion|no schemaVersion bump',
+        '(?i)subagents_spawn_batch.*(?:tool can[o\u00f4]nica|canonical.*swarm|ondas do DAG)',
+        '(?i)deepseek_spawn_batch',
+        '(?i)spawn unit[a\u00e1]rio.*(?:fora de ondas|uma [u\u00fa]nica frente)|unitary.*outside waves',
+        '(?i)subagents_spawn_batch.*(?:callable|invoc[a\u00e1]vel)',
+        '(?i)(?:superf[i\u00ed]cie autoritativa de status/health|status/health).*batch_scheduler|batch_scheduler.*(?:superf[i\u00ed]cie autoritativa|status/health)',
+        '(?i)helper PowerShell isolado.*(?:n[a\u00e3]o|alone).*prov.*daemon',
+        '(?i)(?:estreitamento|exce[c\u00e7][a\u00e3]o).{0,250}balanced.{0,30}aggressive.{0,30}swarm',
+        '(?i)pulveriza todas as fatias ready e independentes [u\u00fa]teis para menor wall-clock|pulverizes all ready and useful independent slices',
+        '(?i)sem n[u\u00fa]mero fixo|no fixed number',
+        '(?i)(?:remo[c\u00e7][a\u00e3]o de timeout r[i\u00ed]gido|remove rigid completion timeout|sem timeout r[i\u00ed]gido)',
+        '(?i)job aceito e saud[a\u00e1]vel pode rodar indefinidamente|accepted and healthy jobs? (?:can )?run indefinitely',
+        '(?i)nenhuma janela de 900s(?:[,\/]\s*|\s+ou\s+)20m(?:[,\/]\s*|\s+ou\s+)25m prova falha|no (?:900s|20m|25m|900s\/20m\/25m) window proves failure',
+        '(?i)(?:graceful finalize|abort)',
+        '(?i)sem deadline de modelo|no model deadline',
+        '(?i)lease expirada sozinha n[a\u00e3]o prova morte|expired lease alone does not prove death',
+        '(?i)(?:takeover|terminaliza[c\u00e7][a\u00e3]o).*(?:PID|heartbeat|fence|quiesc[e\u00ea]ncia)',
+        '(?i)timeouts bounded de transporte,\s*handshake,\s*health\s+e\s+connect|bounded transport,\s*handshake,\s*health,\s*and\s*connect timeouts',
+        '(?i)(?:diferenci(?:ad[oa]s|e-os)\s+explicitamente|explicitamente\s+diferenci(?:ad[oa]s|e-os))\s+do\s+execution\s+timeout|explicitly differentiat(?:ed)? from execution timeout',
+        '(?i)(?:maximizar|maximize)\s+(?:o\s+)?(?:paralelismo [u\u00fa]til|useful parallelism)\b[^.;\r\n]*(?:sharding|estilha[c\u00e7]a|pulveriz).*(?:tarefas.*(?:fases|testes|revis)|tasks AND phases/tests/reviews)',
+        '(?i)agentes\s+(?:s[a\u00e3]o\s+)?tratados como efetivamente gratuitos|agents are treated as effectively free',
+        '(?i)(?:n[a\u00e3]o\s+(?:economiz[a-z]*|conserve\s+contagem\s+de\s+agentes)|do not conserve agent count)',
+        '(?i)fan-out l[o\u00f3]gico\s+(?:n[a\u00e3]o\s+tem|sem)\s+(?:m[i\u00ed]nimo,\s*m[a\u00e1]ximo\s+nem\s+faixa|min/max/range)|logical fanout has no fixed min/max/range',
+        '(?i)(?:dispara[r]?|lan[c\u00e7]a[r]?|spawn)\s+todas as frentes prontas e independentes em (?:uma\s+)?onda antes de esperar|spawn all ready independent fronts in a wave before waiting',
+        '(?i)(?:precis[a\u00e3]o|precision).*(?:atomic ownership|propriedade at[o\u00f4]mica).*(?:restri[c\u00e7][o\u00f5]es.*depend[e\u00ea]ncia|dependency/resource constraints).*(?:s[i\u00ed]ntese exclusiva.*GPT|GPT-only synthesis).*(?:valida[c\u00e7][a\u00e3]o.*revis[a\u00e3]o|validation and independent review)',
+        '(?i)(?:n[a\u00e3]o\s+dispara[r]?|proibid[oa]\s+disparar|do not spawn)\s+(?:trabalho duplicado|duplicate.*work).*(?:n[a\u00e3]o-acion[a\u00e1]vel|non-actionable)',
+        '(?i)(?:n[a\u00e3]o\s+paralelizar|proibid[oa]\s+paralelizar|do not parallelize)\s+(?:depend[e\u00ea]ncias verdadeiras|depend[e\u00ea]ncias causais|true dependencies)',
+        '(?i)(?:n[a\u00e3]o\s+(?:autorizar|permitir|realizar)|proibid[oa]\s+(?:permitir|autorizar|realizar)?|do not parallelize)\s+(?:escritas concorrentes|concurrent writes).*(?:mesm[oa] (?:propriedade|ownership|arquivo)|same ownership)'
+    )
+    foreach ($pattern in $delegationRequired) {
+        if (-not [regex]::IsMatch($delegationNorm, $pattern)) {
+            throw "${pfx}skills/workflows/references/delegation.md is missing required adaptive swarm pattern: $pattern"
+        }
+    }
+
+    # 2. SKILL.md checks
+    $skillRequired = @(
+        '(?i)swarm',
+        '(?i)ondas do DAG|DAG waves',
+        '(?i)fan-out l[o\u00f3]gico el[a\u00e1]stico|elastic logical fan-out',
+        '(?i)batch scheduler',
+        '(?i)falha fechado se ausente|fails closed if absent',
+        '(?i)REQUIRED.*QUORUM.*ALL.*ANY',
+        '(?i)subagents_spawn_batch',
+        '(?i)deepseek_spawn_batch',
+        '(?i)subagents_spawn_batch.*callable|callable.*subagents_spawn_batch',
+        '(?i)pulverizes all ready and useful independent slices|pulveriza todas as fatias ready e independentes',
+        '(?i)sem n[u\u00fa]mero fixo|no fixed number',
+        '(?i)remo[c\u00e7][a\u00e3]o de timeout r[i\u00ed]gido|accepted and healthy jobs can run indefinitely',
+        '(?i)nenhuma janela de 900s(?:/|,|\s+ou\s+)20m(?:/|,|\s+ou\s+)25m prova falha|no 900s/20m/25m window proves failure',
+        '(?i)lease expirada sozinha n[a\u00e3]o prova morte',
+        '(?i)diferenciando-se explicitamente do execution timeout|explicitly differentiated from execution timeout',
+        '(?i)sharding tasks AND phases/tests/reviews|tarefas quanto fases,\s*testes e revis[o\u00f5]es',
+        '(?i)agents are treated as effectively free|agentes tratados como efetivamente gratuitos',
+        '(?i)do not conserve agent count|n[a\u00e3]o conservar contagem de agentes',
+        '(?i)logical fan-out has no fixed min/max/range|fan-out l[o\u00f3]gico sem m[i\u00ed]nimo,\s*m[a\u00e1]ximo nem faixa fixa',
+        '(?i)spawn all ready independent fronts in a wave before waiting|dispara todas as frentes prontas e independentes em uma onda antes de esperar',
+        '(?i)atomic ownership.*GPT-only synthesis|propriedade at[o\u00f4]mica.*s[i\u00ed]ntese exclusiva GPT-only',
+        '(?i)do not spawn duplicate/non-actionable work|sem trabalho duplicado/n[a\u00e3]o-acion[a\u00e1]vel',
+        '(?i)do not parallelize true dependencies|sem paralelizar depend[e\u00ea]ncias verdadeiras',
+        '(?i)do not parallelize concurrent writes to same ownership|sem escritas concorrentes sob o mesmo ownership'
+    )
+    foreach ($pattern in $skillRequired) {
+        if (-not [regex]::IsMatch($skillNorm, $pattern)) {
+            throw "${pfx}skills/workflows/SKILL.md is missing required adaptive swarm pattern: $pattern"
+        }
+    }
+
+    # 3. AGENTS.md checks
+    $agentsRequired = @(
+        '(?i)delegation_policy.*swarm',
+        '(?i)ondas do DAG',
+        '(?i)fan-out l[o\u00f3]gico el[a\u00e1]stico',
+        '(?i)batch scheduler',
+        '(?i)falha fechado se ausente|falha fechado bloqueando',
+        '(?i)REQUIRED.*QUORUM.*ALL.*ANY',
+        '(?i)subagents_spawn_batch',
+        '(?i)deepseek_spawn_batch',
+        '(?i)subagents_spawn_batch.*callable|callable.*subagents_spawn_batch',
+        '(?i)status/health.*batch_scheduler',
+        '(?i)pulveriza todas as fatias ready e independentes [u\u00fa]teis para menor wall-clock',
+        '(?i)sem n[u\u00fa]mero fixo',
+        '(?i)remo[c\u00e7][a\u00e3]o de timeout r[i\u00ed]gido de conclus[a\u00e3]o',
+        '(?i)job aceito e saud[a\u00e1]vel pode rodar indefinidamente',
+        '(?i)nenhuma janela de 900s/20m/25m prova falha ou dispara graceful finalize/abort',
+        '(?i)lease expirada sozinha n[a\u00e3]o prova morte',
+        '(?i)diferenciando-os explicitamente do execution timeout',
+        '(?i)sharding tasks AND phases/tests/reviews|tanto tarefas quanto fases,\s*testes e revis[o\u00f5]es',
+        '(?i)agentes s[a\u00e3]o tratados como efetivamente gratuitos|agents are treated as effectively free',
+        '(?i)n[a\u00e3]o conserva contagem de agentes|do not conserve agent count',
+        '(?i)sem m[i\u00ed]nimo,\s*m[a\u00e1]ximo nem faixa/range fixo|logical fanout has no fixed min/max/range',
+        '(?i)dispara todas as frentes prontas e independentes em uma onda antes de esperar|spawn all ready independent fronts in a wave before waiting',
+        '(?i)atomic ownership.*s[i\u00ed]ntese exclusiva GPT-only|atomic ownership.*GPT-only synthesis',
+        '(?i)n[a\u00e3]o dispara trabalho duplicado|do not spawn duplicate/non-actionable work',
+        '(?i)n[a\u00e3]o paraleliza depend[e\u00ea]ncias verdadeiras|do not parallelize true dependencies',
+        '(?i)n[a\u00e3]o permite escritas concorrentes na mesma propriedade/ownership|do not parallelize concurrent writes to same ownership'
+    )
+    foreach ($pattern in $agentsRequired) {
+        if (-not [regex]::IsMatch($agentsNorm, $pattern)) {
+            throw "${pfx}codex AGENTS.md is missing required adaptive swarm pattern: $pattern"
+        }
+    }
+
+    # 4. GEMINI.md checks
+    $geminiRequired = @(
+        '(?i)swarm',
+        '(?i)ondas do DAG',
+        '(?i)batch scheduler',
+        '(?i)pulveriza todas as fatias ready e independentes [u\u00fa]teis para menor wall-clock',
+        '(?i)sem n[u\u00fa]mero fixo',
+        '(?i)remo[c\u00e7][a\u00e3]o de timeout r[i\u00ed]gido de conclus[a\u00e3]o',
+        '(?i)job aceito e saud[a\u00e1]vel pode rodar indefinidamente',
+        '(?i)nenhuma janela de 900s/20m/25m prova falha ou dispara graceful finalize/abort',
+        '(?i)lease expirada sozinha n[a\u00e3]o prova morte',
+        '(?i)diferenciando-os explicitamente do execution timeout',
+        '(?i)tarefas E fases/testes/revis[o\u00f5]es|tarefas quanto fases,\s*testes e revis[o\u00f5]es',
+        '(?i)efetivamente gratuitos sem conservar contagem|agents are treated as effectively free',
+        '(?i)dispara todas as frentes prontas e independentes em onda antes de esperar|spawn all ready independent fronts in a wave before waiting',
+        '(?i)pro[i\u00ed]be trabalho duplicado/n[a\u00e3]o-acion[a\u00e1]vel|proibido disparar trabalho duplicado',
+        '(?i)pro[i\u00ed]be paralelizar depend[e\u00ea]ncias verdadeiras|proibido paralelizar depend[e\u00ea]ncias verdadeiras',
+        '(?i)pro[i\u00ed]be escritas concorrentes sob mesmo ownership|proibido escritas concorrentes sob mesmo ownership'
+    )
+    foreach ($pattern in $geminiRequired) {
+        if (-not [regex]::IsMatch($geminiNorm, $pattern)) {
+            throw "${pfx}antigravity GEMINI.md is missing required adaptive swarm pattern: $pattern"
+        }
+    }
+
+    # 5. README.md checks
+    $readmeRequired = @(
+        '(?i)delegation_policy.*swarm',
+        '(?i)switch-subagent-policy\.ps1 -Policy swarm',
+        '(?i)\^Numpad6',
+        '(?i)`?delegation_policy`?\s*\(`balanced`\s*\|\s*`aggressive`\s*\|\s*`swarm`\)',
+        '(?i)equil[i\u00ed]brio operacional.*(?:balanced|aggressive|swarm).*(?:ondas do DAG|pulveriza[c\u00e7][a\u00e3]o|swarm)',
+        '(?i)pulveriza[c\u00e7][a\u00e3]o din[a\u00e2]mica em ondas do DAG de todas as fatias ready e independentes [u\u00fa]teis para menor wall-clock',
+        '(?i)sem n[u\u00fa]mero fixo de agentes',
+        '(?i)remove-se o timeout r[i\u00ed]gido de conclus[a\u00e3]o',
+        '(?i)nenhuma janela de 900s/20m/25m prova falha ou dispara graceful finalize/abort',
+        '(?i)lease expirada sozinha n[a\u00e3]o prova morte',
+        '(?i)diferenciados do execution timeout',
+        '(?i)sharding tasks AND phases/tests/reviews|estilha[c\u00e7]amento de tarefas E fases/testes/revis[o\u00f5]es',
+        '(?i)efetivamente gratuitos sem conservar contagem|agents are treated as effectively free',
+        '(?i)disparando todas as frentes prontas e independentes em onda antes de esperar|disparando ondas antes de esperar',
+        '(?i)proibindo trabalho duplicado/n[a\u00e3]o-acion[a\u00e1]vel|sem trabalho duplicado',
+        '(?i)proibindo paralelizar depend[e\u00ea]ncias verdadeiras|proibindo paralelizar depend[e\u00ea]ncias',
+        '(?i)proibindo escritas concorrentes sob o mesmo ownership|escritas concorrentes no mesmo ownership'
+    )
+    foreach ($pattern in $readmeRequired) {
+        if (-not [regex]::IsMatch($readmeNorm, $pattern)) {
+            throw "${pfx}README.md is missing required adaptive swarm pattern: $pattern"
+        }
+    }
+
+    # 6. Forbiddens / Anti-patterns
+    $forbidden = @(
+        '(?i)\b(?:pool fixo|fixed pool|m[i\u00ed]nimo de \d+|m[a\u00e1]ximo de \d+)\b[^.;]*(?:agentes|workers|subagents)',
+        '(?i)(?<!jamais\s|nunca\s|sem\s|proibid[oa]\s)\b(?:rebaixa|rebaixar|fallback)\s+silencioso\s+para\s+aggressive\b',
+        '(?i)\bwriters\b[^.;]*(?:concorrente|mesmo arquivo|shared files)[^.;]*(?:sem worktree|sem exclusividade)',
+        '(?i)\b(?:subagente|worker)\b[^.;]*(?:faz o commit|decide aprova[c\u00e7][a\u00e3]o|dispensa o parent)',
+        '(?i)\$workflows mode=SWARM\b',
+        '(?i)\b(?:downgrade|vers[a\u00e3]o legada)\b[^.;]*(?:suporta swarm diretamente|sem trocar para aggressive)',
+        '(?i)(?<!nenhum[a-z]*\s+(?:janela\s+de\s+)?[^.;\r\n]*)\b(?:900s|20m|25m)\b[^.;\r\n]*(?:prova falha|dispara graceful finalize|dispara abort|finaliza o job)',
+        '(?i)\blease expirada\b[^.;]*(?:sozinha prova morte|autoriza takeover sem checar PID)',
+        '(?i)\b(?:timeout r[i\u00ed]gido de conclus[a\u00e3]o|rigid completion timeout)\b\s+(?:de \d+|obrigat[o\u00f3]rio)',
+        '(?i)\b(?:economizar agentes|conservar contagem de agentes|conserve agent count)\b[^.;]*(?:mesmo com|mesmo havendo|quando houver|artificialmente|por parcim[o\u00f4]nia)',
+        '(?i)(?<!(?:n[a\u00e3]o|sem|nunca|jamais|proibid[oa]|never|do not)\s+)\b(?:pode|deve|autoriza|permite|allows?|is allowed to)\s+(?:disparar|criar|spawn)\s+(?:trabalho duplicado|tarefas duplicadas|duplicate work|non-actionable work|trabalho n[a\u00e3]o-acion[a\u00e1]vel)\b',
+        '(?i)(?<!(?:n[a\u00e3]o|sem|nunca|jamais|proibid[oa]|never|do not)\s+)\b(?:pode|deve|autoriza|permite|allows?|is allowed to)\s+(?:paraleliz(?:ar|e)|iniciar juntos?|run in parallel)[^.;\r\n]*(?:depend[e\u00ea]ncias verdadeiras|depend[e\u00ea]ncias reais|true dependencies)\b',
+        '(?i)(?<!(?:n[a\u00e3]o|sem|nunca|jamais|proibid[oa]|never|do not)\s+)\b(?:pode|deve|autoriza|permite|allows?|is allowed to)\s+(?:escritas concorrentes|concurrent writes)[^.;\r\n]*(?:mesm[oa] (?:ownership|propriedade|arquivo)|same ownership)\b'
+    )
+    foreach ($pattern in $forbidden) {
+        if ([regex]::IsMatch($delegationNorm, $pattern) -or [regex]::IsMatch($skillNorm, $pattern) -or [regex]::IsMatch($agentsNorm, $pattern) -or [regex]::IsMatch($geminiNorm, $pattern) -or [regex]::IsMatch($readmeNorm, $pattern)) {
+            throw "${pfx}contains forbidden adaptive swarm anti-pattern: $pattern"
+        }
+    }
+}
+
 function Assert-DelegationContract {
     param(
         [Parameter(Mandatory)][string]$Label,
@@ -1115,6 +1329,10 @@ function Assert-DelegationContract {
         '(?i)delegation_policy',
         '(?i)balanced',
         '(?i)aggressive',
+        '(?i)swarm',
+        '(?i)ondas do DAG|DAG waves',
+        '(?i)fan-out l[o\u00f3]gico el[a\u00e1]stico|elastic logical fan-out',
+        '(?i)batch scheduler',
         '(?i)wall-clock|wall time',
         '(?i)token offload|desonera[c\u00e7][a\u00e3]o de tokens',
         '(?i)(?:subagents_continue|deepseek_continue)',
@@ -1127,7 +1345,10 @@ function Assert-DelegationContract {
         '(?i)sem microdelega[c\u00e7][a\u00e3]o|proibida microdelega[c\u00e7][a\u00e3]o|no microdelegation',
         '(?i)nova trilha apenas para deliverable independentemente aceit[a\u00e1]vel|new track only for independently acceptable deliverable',
         '(?i)instala[c\u00e7][a\u00e3]o global preserva/instala a flag selecionada como aggressive|global installation preserves/installs selected flag as aggressive',
-        '(?i)n[a\u00e3]o injeta flags em repos consumidores|never inject flags into consumer repos|sem inje[c\u00e7][a\u00e3]o de flags em reposit[oó]rios consumidores'
+        '(?i)n[a\u00e3]o injeta flags em repos consumidores|never inject flags into consumer repos|sem inje[c\u00e7][a\u00e3]o de flags em reposit[oó]rios consumidores',
+        '(?i)sharding tasks AND phases/tests/reviews|estilha[c\u00e7]amento.*tarefas.*(?:fases|testes|revis)',
+        '(?i)agents are treated as effectively free|agentes.*efetivamente gratuitos',
+        '(?i)spawn all ready independent fronts in a wave before waiting|disparar todas as frentes prontas e independentes em (?:uma )?onda antes de esperar'
     )
     foreach ($pattern in $requiredPatterns) {
         if (-not [regex]::IsMatch($normalized, $pattern)) {
@@ -1141,7 +1362,10 @@ function Assert-DelegationContract {
         '(?i)allow_respawn\s*=\s*true[^.;]*(?:rotineir|rotina|normalmente|routine|habitual)',
         '(?i)\b(?:pode|deve|autorizado a|is allowed to|may)\b[^.;]*\b(?:refazer bulk|refazer trabalho delegado|redo delegated bulk)\b',
         '(?i)\b(?:pode|deve|autorizado a|is allowed to|may)\b[^.;]*\b(?:microdelegar|micro-delegar|microdelegation)\b',
-        '(?i)\b(?:injetar flags em reposit[o\u00f3]rios|gravar flags no workspace do consumidor|inject flags into consumer repos)\b'
+        '(?i)\b(?:injetar flags em reposit[o\u00f3]rios|gravar flags no workspace do consumidor|inject flags into consumer repos)\b',
+        '(?i)(?<!(?:n[a\u00e3]o|sem|nunca|jamais|proibid[oa]|never|do not)\s+)\b(?:pode|deve|autoriza|permite|allows?|is allowed to)\s+(?:economizar agentes|conservar contagem de agentes|conserve agent count)\b',
+        '(?i)(?<!(?:n[a\u00e3]o|sem|nunca|jamais|proibid[oa]|never|do not)\s+)\b(?:pode|deve|autoriza|permite|allows?|is allowed to)\s+(?:paralelizar depend[e\u00ea]ncias verdadeiras|parallelize true dependencies)\b',
+        '(?i)(?<!(?:n[a\u00e3]o|sem|nunca|jamais|proibid[oa]|never|do not)\s+)\b(?:pode|deve|autoriza|permite|allows?|is allowed to)\s+(?:escritas concorrentes|concurrent writes)[^.;\r\n]*(?:mesmo ownership|same ownership|mesmo arquivo|mesma propriedade)\b'
     )
     foreach ($pattern in $forbiddenPatterns) {
         if ([regex]::IsMatch($normalized, $pattern)) {
@@ -2204,7 +2428,8 @@ Assert-AllContractRules -Checks @(
     { Assert-McpTemplateRouting -Label 'codex AGENTS.md' -Text $agentsText },
     { Assert-McpTemplateRouting -Label 'antigravity GEMINI.md' -Text $geminiText },
     { Assert-CriticalStrategyPolicy -AgentsText $agentsText -GeminiText $geminiText -SkillText $skill -DelegationText $delegationRef -ReadmeText $readmeText },
-    { Assert-SubagentAutonomyPolicy -AgentsText $agentsText -GeminiText $geminiText -SkillText $skill -DelegationText $delegationRef -DeliveryReviewText $deliveryReviewRef -ReadmeText $readmeText }
+    { Assert-SubagentAutonomyPolicy -AgentsText $agentsText -GeminiText $geminiText -SkillText $skill -DelegationText $delegationRef -DeliveryReviewText $deliveryReviewRef -ReadmeText $readmeText },
+    { Assert-AdaptiveSwarmPolicy -AgentsText $agentsText -GeminiText $geminiText -SkillText $skill -DelegationText $delegationRef -ReadmeText $readmeText }
 )
 
 $legacyPaths = @(
@@ -2332,6 +2557,7 @@ $expectedPromptMap = [ordered]@{
     '^Numpad2' = '.\scripts\switch-subagent-backend.ps1 -Backend deepseek'
     '^Numpad4' = '.\scripts\switch-subagent-policy.ps1 -Policy balanced'
     '^Numpad5' = '.\scripts\switch-subagent-policy.ps1 -Policy aggressive'
+    '^Numpad6' = '.\scripts\switch-subagent-policy.ps1 -Policy swarm'
     '^Numpad0' = '.\scripts\switch-subagent-backend.ps1 -Status'
 }
 
@@ -2482,6 +2708,7 @@ if (-not $SkipInstalled) {
         Assert-AlinhamentoPolicy -AgentsText $installedAgents -GeminiText $installedGemini -SkillText (Read-RequiredText (Join-Path $workflowsDest 'SKILL.md')) -DelegationText (Read-RequiredText (Join-Path (Join-Path $workflowsDest 'references') 'delegation.md')) -ReadmeText $readmeText -LabelPrefix 'installed (safe profile)'
         Assert-CriticalStrategyPolicy -AgentsText $installedAgents -GeminiText $installedGemini -SkillText (Read-RequiredText (Join-Path $workflowsDest 'SKILL.md')) -DelegationText (Read-RequiredText (Join-Path (Join-Path $workflowsDest 'references') 'delegation.md')) -ReadmeText $readmeText -LabelPrefix 'installed (safe profile)'
         Assert-SubagentAutonomyPolicy -AgentsText $installedAgents -GeminiText $installedGemini -SkillText (Read-RequiredText (Join-Path $workflowsDest 'SKILL.md')) -DelegationText (Read-RequiredText (Join-Path (Join-Path $workflowsDest 'references') 'delegation.md')) -DeliveryReviewText $installedDeliveryAgents -ReadmeText $readmeText -LabelPrefix 'installed (safe profile)'
+        Assert-AdaptiveSwarmPolicy -AgentsText $installedAgents -GeminiText $installedGemini -SkillText (Read-RequiredText (Join-Path $workflowsDest 'SKILL.md')) -DelegationText (Read-RequiredText (Join-Path (Join-Path $workflowsDest 'references') 'delegation.md')) -ReadmeText $readmeText -LabelPrefix 'installed (safe profile)'
     }
 
     Assert-MirrorTree -Source $workflowSource -Installed $workflowsDest -Label 'workflows skill (agents)'

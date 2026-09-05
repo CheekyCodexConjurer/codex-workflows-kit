@@ -29,6 +29,7 @@ Operating policy for the local owned DeepSeek Sub-Agent daemon under standing ex
 - **Budget**: Bounded single attempt per incident. If recovery fails, report blocked status with evidence; never loop or retry indefinitely.
 - **Job Preservation**: Active jobs only allow recovery when all have proven durable spool/recovery in `bridge.sqlite`. Stale-running with absent daemon reconciles only with installed durable capacity; do not assume database status alone indicates live activity. Fail closed if unproven.
 - **Lineage**: After ready, resume, follow, or recover the original job via the same lineage; never duplicate front, agent, or logical job.
+- **Timeout Differentiation & Liveness**: Bounded timeouts for transport, handshake, probe/health (`GET /health`), and connect remain active and bounded; differentiate them explicitly from execution timeout. Accepted and healthy jobs run indefinitely under events, heartbeat, and lease; no window of 900s, 20m, or 25m proves failure or triggers graceful finalize or abort. An expired lease alone does not prove death; takeover or termination requires verified PID absence, dead process, heartbeat verification, fence token check, quiescence, or a persisted terminal error.
 
 ### Operational Decision Matrix
 

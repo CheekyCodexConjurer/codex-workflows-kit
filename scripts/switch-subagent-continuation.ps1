@@ -203,7 +203,7 @@ if ($Status) {
     if ($stateBackend -notin @('native', 'deepseek')) {
         throw "Install state has invalid selected backend: $stateBackend"
     }
-    if ($statePolicy -notin @('balanced', 'aggressive')) {
+    if ($statePolicy -notin @('balanced', 'aggressive', 'swarm')) {
         throw "Install state has invalid selected policy: $statePolicy"
     }
     if ($stateStrategy -notin @('worker', 'critical')) {
@@ -289,7 +289,7 @@ $currentPolicy = if ($null -ne $existingState -and ($existingState.PSObject.Prop
 else {
     $rtInfo = Get-CodexRuntimeBlockInfo -Text $existingAgentsText
     if ($rtInfo.Present -and -not [string]::IsNullOrWhiteSpace($rtInfo.Policy)) {
-        if ($rtInfo.Policy -notin @('balanced', 'aggressive')) {
+        if ($rtInfo.Policy -notin @('balanced', 'aggressive', 'swarm')) {
             throw "Invalid delegation policy '$($rtInfo.Policy)' in AGENTS.md runtime block."
         }
         $rtInfo.Policy
@@ -301,7 +301,7 @@ else {
         throw 'Install state is missing delegation policy.'
     }
 }
-if ($currentPolicy -notin @('balanced', 'aggressive')) {
+if ($currentPolicy -notin @('balanced', 'aggressive', 'swarm')) {
     throw "Invalid delegation policy '$currentPolicy'; switching is blocked."
 }
 

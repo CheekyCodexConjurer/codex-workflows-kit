@@ -1,6 +1,6 @@
 # Subagent Delegation Policies
 
-Esta referência detalha as duas políticas de delegação globais ortogonais (`balanced` e `aggressive`) e sua interação com os seletores de backend (`native` e `deepseek`) para tarefas e sessões do Codex.
+Esta referência detalha as três políticas de delegação globais ortogonais (`balanced`, `aggressive` e `swarm`) e sua interação com os seletores de backend (`native` e `deepseek`) para tarefas e sessões do Codex.
 
 ---
 
@@ -11,10 +11,10 @@ Existem quatro seletores globais ortogonais e independentes:
 1. **`subagent_backend` (`native` | `deepseek`)**:
    - Governa estritamente a família de ferramentas autorizada para delegação.
    - `native`: autoriza subagentes nativos do Codex (`multi_agent_v1__spawn_agent`/`spawn_agent`/`wait_agent`) com `model="gpt-5.6-luna"`, `reasoning_effort="max"` e modo default/normal (`fast_mode = false`); proíbe contato com o SubAgents MCP. Não requer solicitação explícita prévia do usuário.
-   - `deepseek`: autoriza as ferramentas do SubAgents MCP (`subagents_spawn`, `subagents_continue`, `subagents_follow`; compatível com `deepseek_continue` como identificador de continuação legado do backend e compatibilidade com aliases `deepseek_*`); proíbe o uso de ferramentas nativas de trabalho pelo parent.
+   - `deepseek`: autoriza as ferramentas do SubAgents MCP (`subagents_spawn`, `subagents_spawn_batch`, `subagents_continue`, `subagents_follow`, onde `subagents_spawn_batch` é a tool canônica de swarm e o spawn unitário `subagents_spawn` continua válido fora de ondas ou para uma única frente; compatível com `deepseek_continue` como identificador de continuação legado do backend e compatibilidade com aliases `deepseek_*` incluindo `deepseek_spawn_batch`); proíbe o uso de ferramentas nativas de trabalho pelo parent.
    - Fixação estrita de rota (*route pinning*): fallback silencioso entre backends é estritamente proibido.
 
-2. **`delegation_policy` (`balanced` | `aggressive`)**:
+2. **`delegation_policy` (`balanced` | `aggressive` | `swarm`)**:
    - Governa a estratégia de divisão de trabalho entre o parent GPT e os subagentes delegados.
 
 3. **`subagent_strategy` (`worker` | `critical`)**:
@@ -27,7 +27,7 @@ Existem quatro seletores globais ortogonais e independentes:
      - **Pacote de Evidências Decisórias (*Decision Evidence Packet*)**: pacote pequeno contendo target/diff congelado, regiões críticas, evidências de validação/revisão, contradições e lacunas.
      - **Progresso Semântico (*Semantic Progress*)**: acompanhamento por marcos semânticos de evolução na trilha persistente sem polling destrutivo nem inferência precipitada de indisponibilidade.
      - **Saída Antecipada (*Early-Exit*)**: interrupção limpa assim que uma evidência determinante ou bloqueio for provado, evitando custo e latência desnecessários.
-     - **Limites do Bridge**: executado estritamente através do conjunto de ferramentas exposto pelo SubAgents MCP (`subagents_spawn`, `subagents_continue`, `subagents_follow`, etc.), sem prometer capacidades que o bridge ainda não expõe (capabilities that the bridge does not yet expose).
+     - **Limites do Bridge**: executado estritamente através do conjunto de ferramentas exposto pelo SubAgents MCP (`subagents_spawn`, `subagents_spawn_batch`, `subagents_continue`, `subagents_follow`, etc.), sem prometer capacidades que o bridge ainda não expõe (capabilities that the bridge does not yet expose).
 
 4. **`subagent_continuation` (`active_follow` | `park_and_wake`)**:
    - Governa a continuidade da sessão e a capacidade de suspensão durável (*Sub-agent Autonomy*).
@@ -66,9 +66,12 @@ Existem quatro seletores globais ortogonais e independentes:
 ### Invariantes Comuns a Ambas as Políticas:
 - **Ciclo de Vida de Completude (*Completion Lifecycle*)**: Todo job delegado deve ser consumido com resposta terminal e resultado terminal antes de um gate dependente ou da resposta final.
 - **Contrato de Liveness e Status (*Liveness and Status Contract*)**:
-  - A janela de 900s é estritamente uma janela mínima e limite de espera (*wait limit*), nunca prova de morte do agente ou processo delegado.
-  - O parent deve consultar ativamente status, heartbeat e lease antes de inferir indisponibilidade.
-  - Takeover de trilha ou sessão só é autorizado com morte provada do processo/agente anterior; estado `unknown` bloqueia o avanço (*gate open/BLOCKED*).
+  - Remoção de timeout rígido de conclusão: jobs aceitos e saudáveis podem rodar indefinidamente sob eventos, heartbeat e lease ativas (*accepted and healthy jobs can run indefinitely under events/heartbeat/lease*).
+  - Nenhuma janela de 900s/20m/25m prova falha ou dispara graceful finalize ou abort (*no window of 900s, 20m, or 25m proves failure or triggers graceful finalize/abort; no 900s/20m/25m window proves failure*).
+  - Sob `park_and_wake`, encerra a run e acorda por evento ou predicado, sem polling e sem deadline de modelo (*ends run and wakes on event/predicate, zero polling, no model deadline*).
+  - Lease expirada sozinha não prova morte (*expired lease alone does not prove death*); takeover de trilha ou terminalização exige verificação de PID, heartbeat, fence token, quiescência comprovada ou erro terminal persistido.
+  - Timeouts bounded de transporte, handshake, health e connect são preservados, diferenciando-os explicitamente do execution timeout (*preserve bounded transport, handshake, health, and connect timeouts; explicitly differentiated from execution timeout*).
+  - O parent deve consultar ativamente status, heartbeat e lease antes de inferir indisponibilidade; estado `unknown` bloqueia o avanço (*gate open/BLOCKED*).
   - Mecanismos de fence (fence tokens), contador de tentativa (*attempt*) e PID impedem escritas obsoletas (*stale writes*).
   - Quiescência do processo/trilha anterior deve ser rigorosamente provada antes de liberar recursos ou abrir nova tentativa.
   - Sem fallback silencioso de rota, provedor ou modelo.
@@ -106,22 +109,62 @@ Existem quatro seletores globais ortogonais e independentes:
   - **Trilhas Coesas e Persistentes**: Mantém uma trilha persistente por frente coesa (*one persistent track per cohesive front*) continuando a mesma sessão aberta via `subagents_continue` (compatível com `deepseek_continue` ou controle de sessão nativo), sem `allow_respawn`.
   - **Sem Microdelegação**: Proibida microdelegação (*no microdelegation*); abre nova trilha apenas para deliverable independentemente aceitável (*new track only for independently acceptable deliverable*) ou rejeitável.
   - **Fan-Out Antecipado em Lote**: Mapeia todas as frentes materiais independentes e as lança em lote (*batch spawn*) antes do primeiro comando de espera (`follow`/`wait`), maximizando a taxa de transferência.
-  - **Fechamento e Timeouts**: Fatias são desenhadas para fechar terminalmente dentro da janela; após timeout ou ausência de fechamento, continua na mesma trilha pedindo inventário mínimo e fatias pequenas de fechamento (*closure slices pequenos*), sendo proibido repetir integralmente a frente ou abrir novo agente substituto.
+  - **Fechamento e Continuidade**: Fatias são desenhadas para fechar terminalmente; sob eventos/heartbeat/lease, job aceito e saudável pode rodar indefinidamente; se ocorrer ausência de fechamento ou erro terminal comprovado, continua na mesma trilha pedindo inventário mínimo e fatias pequenas de fechamento (*closure slices pequenos*), sendo proibido repetir integralmente a frente ou abrir novo agente substituto.
   - O parent recebe e sintetiza apenas os resultados terminais estruturados para validar e tomar as decisões de roteamento e aceitação.
 
 ---
 
-## 4. Delegação no Estado Implícito ALINHAMENTO
+## 4. Política `swarm` (Adaptive Swarm)
+
+**Foco Principal**: Decomposição em ondas do DAG (*DAG waves*), fan-out lógico elástico (*elastic logical fan-out*), maximização do paralelismo útil e autonomia dinâmica com suspensão durável (*dynamic wake*).
+
+- **Filosofia do Swarm (Swarm Philosophy)**:
+  - **Maximizar o Paralelismo Útil via Estilhaçamento (Sharding)**: Maximizar o paralelismo útil pulverizando e estilhaçando tanto tarefas quanto fases, testes e revisões sempre que forem independentes (*maximize useful parallelism by sharding tasks AND phases/tests/reviews whenever independent*). Toda frente de trabalho, checagem, validação determinística ou revisão que não dependa causalmente de outra deve ser desacoplada e disparada em paralelo.
+  - **Agentes Tratados como Efetivamente Gratuitos**: Subagentes são tratados como recursos com custo marginal computacional desprezível; portanto, o parent não economiza nem conserva a contagem de agentes (*agents are treated as effectively free so do not conserve agent count*). Jamais contraia ou limite artificialmente o número de frentes independentes prontas por uma premissa de parcimônia de agentes.
+  - **Fan-Out Lógico Sem Limite Rígido**: O fan-out lógico não tem mínimo, máximo nem faixa/range fixo de agentes na política (*logical fanout has no fixed min/max/range; no min/max agents in policy; sem número fixo*). A amplitude da onda é dimensionada puramente pela quantidade de fatias prontas e independentes descobertas no DAG.
+  - **Disparo em Onda Antes de Esperar**: Todas as frentes prontas e independentes da onda do DAG são disparadas em lote em uma onda antes de qualquer comando de espera (*spawn all ready independent fronts in a wave before waiting*), seja follow, wait ou barreira de estacionamento.
+  - **Retenção de Precisão e Disciplina Operacional**: A pulverização agressiva nunca sacrifica o rigor de engenharia (*retain precision through atomic ownership, dependency/resource constraints, GPT-only synthesis, validation and independent review*):
+    - **Propriedade Atômica (Atomic Ownership)**: Cada writer opera sobre conjunto estritamente disjunto de arquivos ou diretórios (*atomic ownership; writers apenas com ownership disjunto, worktrees ou recursos exclusivos*).
+    - **Restrições Reais de Dependência e Recursos**: Frentes respeitam as restrições causais e a exclusividade de recursos do sistema (*dependency/resource constraints*).
+    - **Síntese Exclusiva GPT-Only**: Apenas o GPT parent integra evidências, decide aceitação ou rejeição e emite o direcionamento final (*GPT-only synthesis; GPT parent é o único orquestrador, decisor, integrador e gatekeeper*).
+    - **Validação Determinística e Revisão Independente**: Alvo congelado, testes determinísticos diretos e revisão independente sem falsos-verdes estáticos (*validation and independent review*).
+- **Anti-Padrões e Restrições Negativas do Swarm**:
+  - **Proibido Trabalho Duplicado ou Não-Acionável**: Não disparar trabalho duplicado nem frentes especulativas ou não-acionáveis (*do not spawn duplicate/non-actionable work*); todo subagente deve possuir deliverable claro e terminalmente aceitável ou rejeitável.
+  - **Proibido Paralelizar Dependências Verdadeiras**: Não paralelizar dependências causais reais ou verdadeiras (*do not parallelize true dependencies*); frentes dependentes devem ser sequenciadas em ondas subsequentes do DAG.
+  - **Proibido Escritas Concorrentes sob a Mesma Propriedade**: Proibido realizar escritas concorrentes sobre o mesmo arquivo ou escopo de propriedade (*do not parallelize concurrent writes to same ownership*); sem worktree ou ownership segregado, a mutação permanece estritamente serial.
+- **Comportamento do Parent GPT**:
+  - Sob `delegation_policy = swarm`, o GPT parent é o único orquestrador, decisor, integrador e gatekeeper (*sole orchestrator, decider, integrator, and gatekeeper*).
+  - Constrói ondas do DAG (*DAG waves*) prontas para execução.
+  - Pulveriza todas as fatias ready e independentes úteis para menor wall-clock, sem número fixo de agentes (*pulverizes all ready and useful independent slices for lowest wall-clock, no fixed number*), pulverizando apenas fatias materialmente independentes (*pulverizes only materially independent*) e terminalmente aceitáveis ou rejeitáveis; trabalho coeso e sequencial fica na mesma trilha (*cohesive/sequential work stays on the same track*).
+- **Fan-Out Lógico Elástico e Perfis de Agente**:
+  - Opera com fan-out lógico elástico (*elastic logical fan-out*), sem mínimo nem máximo de agentes na política (*no min/max agents in policy*), sem número fixo de agentes.
+  - O número de agentes e frentes é governado dinamicamente por custo, dependências, exclusividade de recursos, risco de integração e latência.
+  - Readers podem fan-out (*readers can fan out*); writers apenas com ownership disjunto, worktrees ou recursos exclusivos (*disjoint ownership, worktrees, or exclusive resources*; writers continuam exigindo ownership disjunto), sem concorrência desordenada.
+- **Backpressure Físico e Preflight Gate**:
+  - O backpressure e créditos físicos pertencem ao bridge (*backpressure/credits belong to bridge; adaptive physical credit/backpressure safety*); o parent gerencia a topologia lógica.
+  - Preflight swarm operacionalmente inequívoco: sob o backend `deepseek`, o parent deve confirmar tanto que `subagents_spawn_batch` está callable quanto que a superfície autoritativa de status/health do bridge anuncia capability `batch_scheduler` (*batch scheduler capability*); ausência ou inconsistência bloqueia com falha fechada (*fails closed if absent or inconsistent*), jamais rebaixando para aggressive sem comando explícito (sem fallback silencioso para aggressive). O helper PowerShell isolado modela a verificação mas não deve ser apresentado como se sozinho provasse o daemon real em runtime.
+  - Sob `deepseek`, `subagents_spawn_batch` (alias `deepseek_spawn_batch`) é a tool canônica para ondas do DAG no swarm, enquanto o spawn unitário `subagents_spawn` continua válido fora de ondas ou para uma única frente.
+  - O backend native respeita capacidade exposta (*native respects exposed capacity*).
+- **Dynamic Wake e Barreira de Suspensão**:
+  - Sob `subagent_continuation = park_and_wake`, despacha frentes independentes da onda e arma barreira com predicados determinísticos `REQUIRED`, `QUORUM`, `ALL` e `ANY`.
+  - Jobs que não acordam continuam obrigações (*unawakened jobs remain obligations*) e devem ser consumidos e encerrados antes da conclusão.
+- **Rollback Seguro e Versionamento**:
+  - Rollback seguro: antes de instalar/downgrade para uma versão legada que não conheça swarm, trocar explicitamente para aggressive (`.\scripts\switch-subagent-policy.ps1 -Policy aggressive`).
+  - Não aumente schemaVersion (*no schemaVersion bump*); o schema de estado permanece na versão 5.
+
+---
+
+## 5. Delegação no Estado Implícito ALINHAMENTO
 
 No ALINHAMENTO (estado implícito quando não há modo explícito de workflow ativo):
 - **Conversa Simples e Sem Cerimônia**: Permanece direta no parent GPT sem spawn de subagentes, sem cerimônia de workflow (sem planos formais, specs, todo lists, gates ou classificação de delivery), sem narrar roteamento interno e sem inspeção do repositório a menos que haja dependência material real. Respostas em português do Brasil compacto com confirmação curta de entendimento. Em transcrições de áudio, normaliza ruído óbvio com premissas explícitas, perguntando apenas se houver ambiguidade material. Quando ação for o próximo passo, recomenda o modo explícito exato de workflow.
 - **Delegação Condicional Somente Leitura**: Subagentes são autorizados condicionalmente exclusivamente para tarefas de inspeção somente leitura do repositório quando a resposta depender materialmente do repositório e a escala do repositório, frentes de busca concorrentes e independentes ou compressão volumosa de contexto trouxerem ganho material de velocidade ou qualidade.
 - **Escopo e Restrições**: Devem utilizar estritamente o backend global selecionado (`subagent_backend`), capacidade estritamente `analyze`/`read`, sem fallback de backend, sem acionar ferramentas/ativações que criem metadados ou estado no workspace (falha fechado se a leitura exigir mutação), seguindo o ciclo normal de ledger de requisições, consumo e fechamento de lifecycle. A estratégia nunca concede escrita; vigora estritamente somente leitura.
-- **Estreitamento da Política**: Esta regra constitui um estreitamento delimitado e uma exceção à política `aggressive` apenas sob `ALINHAMENTO`; execuções sob modos explícitos de workflow retêm integralmente a política configurada (`balanced` ou `aggressive`).
+- **Estreitamento da Política**: Esta regra constitui um estreitamento delimitado e uma exceção às políticas `aggressive` e `swarm` apenas sob `ALINHAMENTO`; execuções sob modos explícitos de workflow retêm integralmente a política configurada (`balanced`, `aggressive` ou `swarm`).
 
 ---
 
-## 5. Persistência de Sessão vs. Recuperação
+## 6. Persistência de Sessão vs. Recuperação
 
 - **Continuação Normal (Persistência de Trilha)**:
   - Uma trilha persistente continua normalmente o mesmo agente/sessão aberto com `subagents_continue` (compatível com `deepseek_continue` e compatibilidade com aliases `deepseek_*`), sem usar `allow_respawn`.
@@ -133,22 +176,22 @@ No ALINHAMENTO (estado implícito quando não há modo explícito de workflow at
 
 ---
 
-## 6. Instalação e Escopo de Configuração
+## 7. Instalação e Escopo de Configuração
 
-- A instalação global preserva/instala a flag selecionada como aggressive (ou balanced) na configuração de usuário (`~/.codex/config.toml`).
+- A instalação global preserva/instala a flag selecionada como aggressive, balanced ou swarm na configuração de usuário (`~/.codex/config.toml`).
 - Não injeta flags em repos consumidores: repositórios de trabalho e projetos dos usuários nunca recebem flags injetadas ou arquivos de configuração no workspace.
 
 ---
 
-## 7. Matriz de Decisão Rápida
+## 8. Matriz de Decisão Rápida
 
-| Critério | `balanced` (Padrão) | `aggressive` |
-| :--- | :--- | :--- |
-| **Meta Principal** | Menor tempo total de entrega (*wall-clock time*) | Menor consumo de tokens do parent GPT (*token offload*) |
-| **Papel do Parent** | Executor direto no caminho crítico e integrador | Arquiteto, decisor, integrador e gatekeeper |
-| **Trabalho Sequencial/Coeso** | Executado diretamente pelo Parent GPT se eficiente | Delegado a subagente persistente por frente coesa |
-| **Pesquisa e Exploração** | Híbrida: direta se concisa, delegada se ampla/volumosa | Sempre delegada |
-| **Escrita e Edição** | Direta se linear/crítica, delegada se paralelizável | Sempre delegada (sem refazer bulk delegado) |
-| **Revisão e Validação** | Validação determinística direta + revisão por modo | Validação e revisão via subagentes dedicados |
-| **Backend de Execução** | Determinado por `subagent_backend` | Determinado por `subagent_backend` |
-| **Fan-Out de Delegação** | Condicional (paralelismo real / risco / contexto) | Exaustivo em lote para frentes independentes |
+| Critério | `balanced` (Padrão) | `aggressive` | `swarm` (Adaptive Swarm) |
+| :--- | :--- | :--- | :--- |
+| **Meta Principal** | Menor tempo total de entrega (*wall-clock time*) | Menor consumo de tokens do parent GPT (*token offload*) | Pulverização dinâmica em ondas do DAG (*DAG waves*), maximizando paralelismo útil por estilhaçamento de tarefas E fases/testes/revisões independentes |
+| **Papel do Parent** | Executor direto no caminho crítico e integrador | Arquiteto, decisor, integrador e gatekeeper | Único orquestrador, decisor, integrador e gatekeeper (síntese exclusiva GPT-only) |
+| **Trabalho Sequencial/Coeso** | Executado diretamente pelo Parent GPT se eficiente | Delegado a subagente persistente por frente coesa | Mesma trilha persistente para frentes coesas |
+| **Pesquisa e Exploração** | Híbrida: direta se concisa, delegada se ampla/volumosa | Sempre delegada | Ondas paralelas de readers com fan-out elástico |
+| **Escrita e Edição** | Direta se linear/crítica, delegada se paralelizável | Sempre delegada (sem refazer bulk delegado) | Writers com ownership disjunto ou worktrees |
+| **Revisão e Validação** | Validação determinística direta + revisão por modo | Validação e revisão via subagentes dedicados | Validação e revisão desacopladas da onda |
+| **Backend de Execução** | Determinado por `subagent_backend` | Determinado por `subagent_backend` | Preflight batch scheduler (deepseek: subagents_spawn_batch callable + capability batch_scheduler na superfície autoritativa de status/health) ou capacidade exposta (`native`) |
+| **Fan-Out de Delegação** | Condicional (paralelismo real / risco / contexto) | Exaustivo em lote para frentes independentes | Elástico sem min/max/faixa fixa; agentes tratados como efetivamente gratuitos sem conservar contagem; todas as frentes prontas em onda antes de esperar |
