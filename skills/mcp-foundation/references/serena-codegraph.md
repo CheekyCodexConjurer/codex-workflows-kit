@@ -9,11 +9,12 @@ All workflow modes perform an MCP maintenance preflight before operational actio
 1. **Universal Preflight**: Every workflow mode executes a maintenance preflight to verify server readiness and index freshness.
 2. **No-MCP-Write / Read-Only Modes** (`PLAN`, `PLAN.AUTO`, `P.DEEP`, `RESEARCH.DEEP`, `REVIEW`, `COMMIT`, `BUG.INV`, `REWORK`, `TN.SKILL`, and implicit `ALINHAMENTO`):
    - Status-only verification (`apenas verificam`).
-   - Strictly no index modification, no synchronization, no background writes, and no stateful mutations.
+   - Strictly no index modification, no synchronization, no background writes, and no stateful mutations. Codebase Memory (CBM) preparation, index creation, caches, and monitors are strictly forbidden in read-only modes (`sem instalações/indices/cache/monitores induzidos em PLAN/RESEARCH/ALINHAMENTO/COMMIT`).
    - `COMMIT` may operate on the Git index under its separate git-only contract, but never mutates an MCP index.
    - If an index is absent or stale, use available read tools or fall back to targeted `rg` without triggering updates.
 3. **Implementation / Write Delivery Modes** (`IMPL`, `IMPL.AUTO`, `IMPL.PHASE`, `DELIVER.AUTO`, `BUG.FIX`, `DEBUG`, `R.A.F.V`):
    - May synchronize CodeGraph (`codegraph sync`) when status explicitly indicates delay, stale state, or pending updates (`quando o status indicar atraso`).
+   - Codebase Memory (CBM) auto-preparation is permitted only when useful in authorized write delivery modes under verified exclusions, single-owner lock per canonical root between swarm agents (`owner único por raiz canônica/lock entre swarm`), without `.codegraph init`. Index is not authority: validate original source and freshness.
    - Follow the strict **status -> sync -> recheck** lifecycle:
      1. Probe status using `codegraph status --json`.
      2. If stale or pending updates are reported, execute incremental synchronization (`codegraph sync`).

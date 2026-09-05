@@ -1122,7 +1122,9 @@ function Test-CorrectionAdequacyGateSemantics {
         [Parameter(Mandatory)][string]$SkillText,
         [Parameter(Mandatory)][string]$AgentsText,
         [Parameter(Mandatory)][string]$GeminiText,
-        [Parameter(Mandatory)][string]$ReadmeText
+        [Parameter(Mandatory)][string]$ReadmeText,
+        [string]$CommitText = '',
+        [string]$DelegationText = ''
     )
 
     $deliveryNorm = [regex]::Replace($DeliveryReviewText, '\s+', ' ').Trim()
@@ -1132,6 +1134,8 @@ function Test-CorrectionAdequacyGateSemantics {
     $agentsNorm = [regex]::Replace($AgentsText, '\s+', ' ').Trim()
     $geminiNorm = [regex]::Replace($GeminiText, '\s+', ' ').Trim()
     $readmeNorm = [regex]::Replace($ReadmeText, '\s+', ' ').Trim()
+    $commitNorm = [regex]::Replace($CommitText, '\s+', ' ').Trim()
+    $delegationNorm = [regex]::Replace($DelegationText, '\s+', ' ').Trim()
 
     # 1. Delivery review must define Correction Adequacy Gate and sustainable/sufficient fix
     $deliveryRequired = @(
@@ -1155,7 +1159,20 @@ function Test-CorrectionAdequacyGateSemantics {
         '(?i)tn-paydown-gate',
         '(?i)replan-gate',
         '(?i)debug_ledger\.md|debug ledger',
-        '(?i)m[a\u00e1]ximo (?:de )?(?:2|duas) rodadas',
+        '(?i)pol[i\u00ed]tica de reparo orientada a evid[e\u00ea]ncia|evidence-based repair',
+        '(?i)hip[o\u00f3]tese|hypothesis',
+        '(?i)observa[c\u00e7][a\u00e3]o discriminante|expected discriminating observation',
+        '(?i)delta observado|observed delta',
+        '(?i)(?:admiss[a\u00e3]o|admission).{0,150}(?:hip[o\u00f3]tese|hypothesis).{0,150}(?:observa[c\u00e7][a\u00e3]o discriminante|expected discriminating observation)',
+        '(?i)(?:admiss[a\u00e3]o|admission).{0,150}(?:delta.{0,40}(?:n[a\u00e3]o est[a\u00e1] dispon[i\u00ed]vel|not yet available|pendente|pending)|delta pendente)',
+        '(?i)(?:p[o\u00f3]s-resultado|post-result).{0,120}(?:delta observado|observed delta|falsif)',
+        '(?i)pr[o\u00f3]xima decis[a\u00e3]o|next decision',
+        '(?i)dire[c\u00e7][a\u00e3]o diagn[o\u00f3]stica diferente|different diagnostic direction',
+        '(?i)(?:sem|proibid[oa]|nunca).{0,50}(?:retentativa id[e\u00ea]ntica|duplicate retry|worker swarm)',
+        '(?i)(?:terceir[ao]|subsequente).{0,50}(?:reparo|tentativa).{0,50}(?:permitid[ao]|avalan|avan[c\u00e7]a)|novas evid[e\u00ea]ncias [u\u00fa]teis e hip[o\u00f3]teses test[a\u00e1]veis',
+        '(?i)bloqueio genu[i\u00ed]no de (?:autoridade|acesso|decis[a\u00e3]o do usu[a\u00e1]rio)',
+        '(?i)sem caminho seguro acion[a\u00e1]vel|no safe actionable path',
+        '(?i)(?:sem|proibid[oa]|nunca).{0,50}(?:limite num[e\u00e9]rico fixo|contador(?:es)? disfar[c\u00e7]ado|numerical stopping rule)',
         '(?i)transporte neutro|neutral transport'
     )
     foreach ($pattern in $deliveryRequired) {
@@ -1220,18 +1237,25 @@ function Test-CorrectionAdequacyGateSemantics {
     }
 
     # 6. Forbiddens / Tampers across the policies
+    $staleMax2Pattern = '(?i)(?:(?:at\s+most|max(?:imum)?(?:\s+of)?|up\s+to)\s+(?:\d+|two)\s+(?:(?:consolidated\s+)?repair\s+)?rounds?|max(?:imum)?\s+two\b|(?:(?:no\s+)?m(?:[a\u00e1]|\u00c3\u00a1)x(?:imo|\u00c3\u00admo)?\.?(?:\s+de)?|at(?:[e\u00e9]|\u00c3\u00a9)|limite\s+(?:fixo\s+)?de)\s+(?:\d+|duas?|dois)\s+(?:rodadas?(?:\s+de\s+reparo)?|tentativas?)|m(?:[a\u00e1]|\u00c3\u00a1)x\.?\s*2(?:\s+rodadas?)?|\blimite\s+num(?:[e\u00e9]|\u00c3\u00a9)rico\s+fixo\s+de\s+\d+)'
     $forbidden = @(
-        '(?i)"required_fix":\s*"corre[c\u00e7][a\u00e3]o m[i\u00ed]nima exigida"',
-        '(?i)\bmeta de corre[c\u00e7][a\u00e3]o m[i\u00ed]nima\b',
+        '(?i)"required_fix":\s*"corre(?:[c\u00e7]|\u00c3\u00a7)(?:[a\u00e3]|\u00c3\u00a3)o m(?:[i\u00ed]|\u00c3\u00ad)nima exigida"',
+        '(?i)\bmeta de corre(?:[c\u00e7]|\u00c3\u00a7)(?:[a\u00e3]|\u00c3\u00a3)o m(?:[i\u00ed]|\u00c3\u00ad)nima\b',
         '(?i)\b(?:pode|deve|autoriza|permite)\b\s+(?!n[a\u00e3]o\b|nunca\b|sem\b)[^.;]*\b(?:troca|trocar|transi[c\u00e7][a\u00e3]o)\s+autom[a\u00e1]tica(?:mente)?\s+de\s+modo\b',
         '(?i)\bbridge\b\s+(?:decide|aprova|rejeita)\b',
         '(?i)\b(?:regras de workflow|workflow rules)\s+residem\s+no\s+bridge\b',
         '(?i)\b(?:concede|permite|autoriza)\s+escrita\b[^.;]*(?:no ALINHAMENTO|em PLAN|em REWORK|em RESEARCH)',
-        '(?i)\bacionado a cada turno\b|\bacionado em todo turno\b'
+        '(?i)\bacionado a cada turno\b|\bacionado em todo turno\b',
+        $staleMax2Pattern
     )
+    $allSurfaces = @($deliveryNorm, $skillNorm, $agentsNorm, $geminiNorm, $qualityNorm, $validationNorm, $readmeNorm)
+    if (-not [string]::IsNullOrWhiteSpace($commitNorm)) { $allSurfaces += $commitNorm }
+    if (-not [string]::IsNullOrWhiteSpace($delegationNorm)) { $allSurfaces += $delegationNorm }
     foreach ($pattern in $forbidden) {
-        if ([regex]::IsMatch($deliveryNorm, $pattern) -or [regex]::IsMatch($skillNorm, $pattern) -or [regex]::IsMatch($agentsNorm, $pattern) -or [regex]::IsMatch($geminiNorm, $pattern)) {
-            return $false
+        foreach ($surf in $allSurfaces) {
+            if ([regex]::IsMatch($surf, $pattern)) {
+                return $false
+            }
         }
     }
 
@@ -3795,31 +3819,94 @@ enabled = true
         $canonicalDelivery40 = Get-Content -LiteralPath (Join-Path $repo 'skills\workflows\references\delivery-review.md') -Raw -Encoding UTF8
         $canonicalQuality40 = Get-Content -LiteralPath (Join-Path $repo 'skills\workflows\references\quality-ratchet.md') -Raw -Encoding UTF8
         $canonicalValidation40 = Get-Content -LiteralPath (Join-Path $repo 'skills\workflows\references\validation.md') -Raw -Encoding UTF8
+        $canonicalCommit40 = Get-Content -LiteralPath (Join-Path $repo 'skills\workflows\references\commit.md') -Raw -Encoding UTF8
+        $canonicalDelegation40 = Get-Content -LiteralPath (Join-Path $repo 'skills\workflows\references\delegation.md') -Raw -Encoding UTF8
         $canonicalSkill40 = Get-Content -LiteralPath (Join-Path $repo 'skills\workflows\SKILL.md') -Raw -Encoding UTF8
         $canonicalAgents40 = Get-Content -LiteralPath (Join-Path $repo 'codex\AGENTS.md') -Raw -Encoding UTF8
         $canonicalGemini40 = Get-Content -LiteralPath (Join-Path $repo 'antigravity\GEMINI.md') -Raw -Encoding UTF8
         $canonicalReadme40 = Get-Content -LiteralPath (Join-Path $repo 'README.md') -Raw -Encoding UTF8
 
-        Assert-Condition 'S40 canonical policies satisfy correction adequacy gate semantics' (Test-CorrectionAdequacyGateSemantics -DeliveryReviewText $canonicalDelivery40 -QualityRatchetText $canonicalQuality40 -ValidationText $canonicalValidation40 -SkillText $canonicalSkill40 -AgentsText $canonicalAgents40 -GeminiText $canonicalGemini40 -ReadmeText $canonicalReadme40) ''
+        Assert-Condition 'S40 canonical policies satisfy correction adequacy gate semantics' (Test-CorrectionAdequacyGateSemantics -DeliveryReviewText $canonicalDelivery40 -QualityRatchetText $canonicalQuality40 -ValidationText $canonicalValidation40 -SkillText $canonicalSkill40 -AgentsText $canonicalAgents40 -GeminiText $canonicalGemini40 -ReadmeText $canonicalReadme40 -CommitText $canonicalCommit40 -DelegationText $canonicalDelegation40) ''
 
         # 2. Tampers
-        $tamperMinFix = $canonicalDelivery40 -replace 'correção suficiente e sustentável/delimitada', 'correção mínima'
-        Assert-Condition 'S40 detects minimum-fix tamper' (-not (Test-CorrectionAdequacyGateSemantics -DeliveryReviewText $tamperMinFix -QualityRatchetText $canonicalQuality40 -ValidationText $canonicalValidation40 -SkillText $canonicalSkill40 -AgentsText $canonicalAgents40 -GeminiText $canonicalGemini40 -ReadmeText $canonicalReadme40)) ''
+        $minFixStr = 'corre' + [char]0x00e7 + [char]0x00e3 + 'o m' + [char]0x00ed + 'nima'
+        $tamperMinFix = $canonicalDelivery40 -replace '(?i)corre[c\u00e7][a\u00e3]o suficiente e sustent[a\u00e1]vel(?:/delimitada)?', $minFixStr
+        Assert-Condition 'S40 detects minimum-fix tamper' (-not (Test-CorrectionAdequacyGateSemantics -DeliveryReviewText $tamperMinFix -QualityRatchetText $canonicalQuality40 -ValidationText $canonicalValidation40 -SkillText $canonicalSkill40 -AgentsText $canonicalAgents40 -GeminiText $canonicalGemini40 -ReadmeText $canonicalReadme40 -CommitText $canonicalCommit40 -DelegationText $canonicalDelegation40)) ''
 
         $tamperAutoMode = $canonicalDelivery40 + $nl + 'O gate pode trocar automaticamente de modo quando julgar necessário.'
-        Assert-Condition 'S40 detects automatic mode switch tamper' (-not (Test-CorrectionAdequacyGateSemantics -DeliveryReviewText $tamperAutoMode -QualityRatchetText $canonicalQuality40 -ValidationText $canonicalValidation40 -SkillText $canonicalSkill40 -AgentsText $canonicalAgents40 -GeminiText $canonicalGemini40 -ReadmeText $canonicalReadme40)) ''
+        Assert-Condition 'S40 detects automatic mode switch tamper' (-not (Test-CorrectionAdequacyGateSemantics -DeliveryReviewText $tamperAutoMode -QualityRatchetText $canonicalQuality40 -ValidationText $canonicalValidation40 -SkillText $canonicalSkill40 -AgentsText $canonicalAgents40 -GeminiText $canonicalGemini40 -ReadmeText $canonicalReadme40 -CommitText $canonicalCommit40 -DelegationText $canonicalDelegation40)) ''
 
         $tamperBridgeDecides = $canonicalSkill40 + $nl + 'O bridge decide regras de workflow e aprovação.'
-        Assert-Condition 'S40 detects bridge decider tamper' (-not (Test-CorrectionAdequacyGateSemantics -DeliveryReviewText $canonicalDelivery40 -QualityRatchetText $canonicalQuality40 -ValidationText $canonicalValidation40 -SkillText $tamperBridgeDecides -AgentsText $canonicalAgents40 -GeminiText $canonicalGemini40 -ReadmeText $canonicalReadme40)) ''
+        Assert-Condition 'S40 detects bridge decider tamper' (-not (Test-CorrectionAdequacyGateSemantics -DeliveryReviewText $canonicalDelivery40 -QualityRatchetText $canonicalQuality40 -ValidationText $canonicalValidation40 -SkillText $tamperBridgeDecides -AgentsText $canonicalAgents40 -GeminiText $canonicalGemini40 -ReadmeText $canonicalReadme40 -CommitText $canonicalCommit40 -DelegationText $canonicalDelegation40)) ''
 
         $tamperWriteNoWrite = $canonicalAgents40 + $nl + 'A correção concede escrita no ALINHAMENTO para acelerar fixes.'
-        Assert-Condition 'S40 detects write in ALINHAMENTO tamper' (-not (Test-CorrectionAdequacyGateSemantics -DeliveryReviewText $canonicalDelivery40 -QualityRatchetText $canonicalQuality40 -ValidationText $canonicalValidation40 -SkillText $canonicalSkill40 -AgentsText $tamperWriteNoWrite -GeminiText $canonicalGemini40 -ReadmeText $canonicalReadme40)) ''
+        Assert-Condition 'S40 detects write in ALINHAMENTO tamper' (-not (Test-CorrectionAdequacyGateSemantics -DeliveryReviewText $canonicalDelivery40 -QualityRatchetText $canonicalQuality40 -ValidationText $canonicalValidation40 -SkillText $canonicalSkill40 -AgentsText $tamperWriteNoWrite -GeminiText $canonicalGemini40 -ReadmeText $canonicalReadme40 -CommitText $canonicalCommit40 -DelegationText $canonicalDelegation40)) ''
 
         $tamperPerTurn = $canonicalDelivery40 + $nl + 'O gate de adequação é acionado a cada turno conversacional.'
-        Assert-Condition 'S40 detects per-turn trigger tamper' (-not (Test-CorrectionAdequacyGateSemantics -DeliveryReviewText $tamperPerTurn -QualityRatchetText $canonicalQuality40 -ValidationText $canonicalValidation40 -SkillText $canonicalSkill40 -AgentsText $canonicalAgents40 -GeminiText $canonicalGemini40 -ReadmeText $canonicalReadme40)) ''
+        Assert-Condition 'S40 detects per-turn trigger tamper' (-not (Test-CorrectionAdequacyGateSemantics -DeliveryReviewText $tamperPerTurn -QualityRatchetText $canonicalQuality40 -ValidationText $canonicalValidation40 -SkillText $canonicalSkill40 -AgentsText $canonicalAgents40 -GeminiText $canonicalGemini40 -ReadmeText $canonicalReadme40 -CommitText $canonicalCommit40 -DelegationText $canonicalDelegation40)) ''
 
-        $tamperOldRequiredFix = $canonicalDelivery40 -replace '(?i)"required_fix":\s*"[^"]+"', '"required_fix": "correção mínima exigida"'
-        Assert-Condition 'S40 detects obsolete required_fix minimum semantics tamper' (-not (Test-CorrectionAdequacyGateSemantics -DeliveryReviewText $tamperOldRequiredFix -QualityRatchetText $canonicalQuality40 -ValidationText $canonicalValidation40 -SkillText $canonicalSkill40 -AgentsText $canonicalAgents40 -GeminiText $canonicalGemini40 -ReadmeText $canonicalReadme40)) ''
+        $oldReqFix = '"required_fix": "corre' + [char]0x00e7 + [char]0x00e3 + 'o m' + [char]0x00ed + 'nima exigida"'
+        $tamperOldRequiredFix = $canonicalDelivery40 -replace '(?i)"required_fix":\s*"[^"]+"', $oldReqFix
+        Assert-Condition 'S40 detects obsolete required_fix minimum semantics tamper' (-not (Test-CorrectionAdequacyGateSemantics -DeliveryReviewText $tamperOldRequiredFix -QualityRatchetText $canonicalQuality40 -ValidationText $canonicalValidation40 -SkillText $canonicalSkill40 -AgentsText $canonicalAgents40 -GeminiText $canonicalGemini40 -ReadmeText $canonicalReadme40 -CommitText $canonicalCommit40 -DelegationText $canonicalDelegation40)) ''
+
+        # Stale max2 policy rejected across all canonical surfaces and synonyms
+        $tamperStaleMax2 = $canonicalDelivery40 + $nl + "$([char]0x00c9) permitido um m$([char]0x00e1)ximo de 2 rodadas de reparo."
+        Assert-Condition 'S40 detects stale max2 policy tamper' (-not (Test-CorrectionAdequacyGateSemantics -DeliveryReviewText $tamperStaleMax2 -QualityRatchetText $canonicalQuality40 -ValidationText $canonicalValidation40 -SkillText $canonicalSkill40 -AgentsText $canonicalAgents40 -GeminiText $canonicalGemini40 -ReadmeText $canonicalReadme40 -CommitText $canonicalCommit40 -DelegationText $canonicalDelegation40)) ''
+
+        $tamperSkillStaleMax2 = $canonicalSkill40 + $nl + 'blocked verdicts apply consolidated repair rounds at most 2 rounds'
+        Assert-Condition 'S40 detects at most 2 rounds tamper in SKILL.md' (-not (Test-CorrectionAdequacyGateSemantics -DeliveryReviewText $canonicalDelivery40 -QualityRatchetText $canonicalQuality40 -ValidationText $canonicalValidation40 -SkillText $tamperSkillStaleMax2 -AgentsText $canonicalAgents40 -GeminiText $canonicalGemini40 -ReadmeText $canonicalReadme40 -CommitText $canonicalCommit40 -DelegationText $canonicalDelegation40)) ''
+
+        $tamperSkillMaxTwo = $canonicalSkill40 + $nl + 'repair rounds have a maximum two limit'
+        Assert-Condition 'S40 detects maximum two tamper in SKILL.md' (-not (Test-CorrectionAdequacyGateSemantics -DeliveryReviewText $canonicalDelivery40 -QualityRatchetText $canonicalQuality40 -ValidationText $canonicalValidation40 -SkillText $tamperSkillMaxTwo -AgentsText $canonicalAgents40 -GeminiText $canonicalGemini40 -ReadmeText $canonicalReadme40 -CommitText $canonicalCommit40 -DelegationText $canonicalDelegation40)) ''
+
+        $tamperSkillPtMax2 = $canonicalSkill40 + $nl + "no m$([char]0x00e1)ximo duas rodadas de reparo"
+        Assert-Condition 'S40 detects Portuguese max2 tamper in SKILL.md' (-not (Test-CorrectionAdequacyGateSemantics -DeliveryReviewText $canonicalDelivery40 -QualityRatchetText $canonicalQuality40 -ValidationText $canonicalValidation40 -SkillText $tamperSkillPtMax2 -AgentsText $canonicalAgents40 -GeminiText $canonicalGemini40 -ReadmeText $canonicalReadme40 -CommitText $canonicalCommit40 -DelegationText $canonicalDelegation40)) ''
+
+        $tamperSkillMax2Short = $canonicalSkill40 + $nl + "com m$([char]0x00e1)x 2 rodadas"
+        Assert-Condition 'S40 detects Portuguese máx 2 tamper in SKILL.md' (-not (Test-CorrectionAdequacyGateSemantics -DeliveryReviewText $canonicalDelivery40 -QualityRatchetText $canonicalQuality40 -ValidationText $canonicalValidation40 -SkillText $tamperSkillMax2Short -AgentsText $canonicalAgents40 -GeminiText $canonicalGemini40 -ReadmeText $canonicalReadme40 -CommitText $canonicalCommit40 -DelegationText $canonicalDelegation40)) ''
+
+        $tamperValidStaleMax2 = $canonicalValidation40 + $nl + 'at most 2 rounds allowed'
+        Assert-Condition 'S40 detects stale max2 tamper in validation.md' (-not (Test-CorrectionAdequacyGateSemantics -DeliveryReviewText $canonicalDelivery40 -QualityRatchetText $canonicalQuality40 -ValidationText $tamperValidStaleMax2 -SkillText $canonicalSkill40 -AgentsText $canonicalAgents40 -GeminiText $canonicalGemini40 -ReadmeText $canonicalReadme40 -CommitText $canonicalCommit40 -DelegationText $canonicalDelegation40)) ''
+
+        $tamperCommitStaleMax2 = $canonicalCommit40 + $nl + 'at most 2 rounds'
+        Assert-Condition 'S40 detects stale max2 tamper in commit.md' (-not (Test-CorrectionAdequacyGateSemantics -DeliveryReviewText $canonicalDelivery40 -QualityRatchetText $canonicalQuality40 -ValidationText $canonicalValidation40 -SkillText $canonicalSkill40 -AgentsText $canonicalAgents40 -GeminiText $canonicalGemini40 -ReadmeText $canonicalReadme40 -CommitText $tamperCommitStaleMax2 -DelegationText $canonicalDelegation40)) ''
+
+        $tamperQualityStaleMax2 = $canonicalQuality40 + $nl + 'maximum two rounds of repair'
+        Assert-Condition 'S40 detects stale max2 tamper in quality-ratchet.md' (-not (Test-CorrectionAdequacyGateSemantics -DeliveryReviewText $canonicalDelivery40 -QualityRatchetText $tamperQualityStaleMax2 -ValidationText $canonicalValidation40 -SkillText $canonicalSkill40 -AgentsText $canonicalAgents40 -GeminiText $canonicalGemini40 -ReadmeText $canonicalReadme40 -CommitText $canonicalCommit40 -DelegationText $canonicalDelegation40)) ''
+
+        $tamperDelegaStaleMax2 = $canonicalDelegation40 + $nl + 'up to 2 rounds'
+        Assert-Condition 'S40 detects stale max2 tamper in delegation.md' (-not (Test-CorrectionAdequacyGateSemantics -DeliveryReviewText $canonicalDelivery40 -QualityRatchetText $canonicalQuality40 -ValidationText $canonicalValidation40 -SkillText $canonicalSkill40 -AgentsText $canonicalAgents40 -GeminiText $canonicalGemini40 -ReadmeText $canonicalReadme40 -CommitText $canonicalCommit40 -DelegationText $tamperDelegaStaleMax2)) ''
+
+        $tamperAgentsStaleMax2 = $canonicalAgents40 + $nl + 'at most 2 rounds'
+        Assert-Condition 'S40 detects stale max2 tamper in AGENTS.md' (-not (Test-CorrectionAdequacyGateSemantics -DeliveryReviewText $canonicalDelivery40 -QualityRatchetText $canonicalQuality40 -ValidationText $canonicalValidation40 -SkillText $canonicalSkill40 -AgentsText $tamperAgentsStaleMax2 -GeminiText $canonicalGemini40 -ReadmeText $canonicalReadme40 -CommitText $canonicalCommit40 -DelegationText $canonicalDelegation40)) ''
+
+        $tamperGeminiStaleMax2 = $canonicalGemini40 + $nl + 'at most 2 rounds'
+        Assert-Condition 'S40 detects stale max2 tamper in GEMINI.md' (-not (Test-CorrectionAdequacyGateSemantics -DeliveryReviewText $canonicalDelivery40 -QualityRatchetText $canonicalQuality40 -ValidationText $canonicalValidation40 -SkillText $canonicalSkill40 -AgentsText $canonicalAgents40 -GeminiText $tamperGeminiStaleMax2 -ReadmeText $canonicalReadme40 -CommitText $canonicalCommit40 -DelegationText $canonicalDelegation40)) ''
+
+        $tamperReadmeStaleMax2 = $canonicalReadme40 + $nl + 'at most 2 rounds'
+        Assert-Condition 'S40 detects stale max2 tamper in README.md' (-not (Test-CorrectionAdequacyGateSemantics -DeliveryReviewText $canonicalDelivery40 -QualityRatchetText $canonicalQuality40 -ValidationText $canonicalValidation40 -SkillText $canonicalSkill40 -AgentsText $canonicalAgents40 -GeminiText $canonicalGemini40 -ReadmeText $tamperReadmeStaleMax2 -CommitText $canonicalCommit40 -DelegationText $canonicalDelegation40)) ''
+
+        # Missing anti-loop invariants rejected
+        $tamperMissingHypothesis = $canonicalDelivery40 -replace '(?i)hip[o\u00f3]tes', 'suposic' -replace '(?i)hypothesis', 'guess'
+        Assert-Condition 'S40 detects missing anti-loop hypothesis invariant tamper' (-not (Test-CorrectionAdequacyGateSemantics -DeliveryReviewText $tamperMissingHypothesis -QualityRatchetText $canonicalQuality40 -ValidationText $canonicalValidation40 -SkillText $canonicalSkill40 -AgentsText $canonicalAgents40 -GeminiText $canonicalGemini40 -ReadmeText $canonicalReadme40 -CommitText $canonicalCommit40 -DelegationText $canonicalDelegation40)) ''
+
+        $tamperMissingExpectedObs = $canonicalDelivery40 -replace '(?i)observa[c\u00e7][a\u00e3]o discriminante', 'resultado' -replace '(?i)discriminating observation', 'result'
+        Assert-Condition 'S40 detects missing anti-loop expected observation invariant tamper' (-not (Test-CorrectionAdequacyGateSemantics -DeliveryReviewText $tamperMissingExpectedObs -QualityRatchetText $canonicalQuality40 -ValidationText $canonicalValidation40 -SkillText $canonicalSkill40 -AgentsText $canonicalAgents40 -GeminiText $canonicalGemini40 -ReadmeText $canonicalReadme40 -CommitText $canonicalCommit40 -DelegationText $canonicalDelegation40)) ''
+
+        $tamperMissingObservedDelta = $canonicalDelivery40 -replace '(?i)delta observado', 'mudanca' -replace '(?i)observed delta', 'change'
+        Assert-Condition 'S40 detects missing anti-loop observed delta invariant tamper' (-not (Test-CorrectionAdequacyGateSemantics -DeliveryReviewText $tamperMissingObservedDelta -QualityRatchetText $canonicalQuality40 -ValidationText $canonicalValidation40 -SkillText $canonicalSkill40 -AgentsText $canonicalAgents40 -GeminiText $canonicalGemini40 -ReadmeText $canonicalReadme40 -CommitText $canonicalCommit40 -DelegationText $canonicalDelegation40)) ''
+
+        $tamperMissingNextDecision = $canonicalDelivery40 -replace '(?i)pr[o\u00f3]xima decis[a\u00e3]o', 'passo' -replace '(?i)next decision', 'step'
+        Assert-Condition 'S40 detects missing anti-loop next decision invariant tamper' (-not (Test-CorrectionAdequacyGateSemantics -DeliveryReviewText $tamperMissingNextDecision -QualityRatchetText $canonicalQuality40 -ValidationText $canonicalValidation40 -SkillText $canonicalSkill40 -AgentsText $canonicalAgents40 -GeminiText $canonicalGemini40 -ReadmeText $canonicalReadme40 -CommitText $canonicalCommit40 -DelegationText $canonicalDelegation40)) ''
+
+        $tamperMissingDiffDirection = $canonicalDelivery40 -replace '(?i)dire[c\u00e7][a\u00e3]o diagn[o\u00f3]stica diferente', 'mesma' -replace '(?i)different diagnostic direction', 'same'
+        Assert-Condition 'S40 detects missing different diagnostic direction on no-delta tamper' (-not (Test-CorrectionAdequacyGateSemantics -DeliveryReviewText $tamperMissingDiffDirection -QualityRatchetText $canonicalQuality40 -ValidationText $canonicalValidation40 -SkillText $canonicalSkill40 -AgentsText $canonicalAgents40 -GeminiText $canonicalGemini40 -ReadmeText $canonicalReadme40 -CommitText $canonicalCommit40 -DelegationText $canonicalDelegation40)) ''
+
+        $tamperMissingAuthBoundary = $canonicalDelivery40 -replace '(?i)bloqueio genu[i\u00ed]no de', 'bloqueio arbitrario de'
+        Assert-Condition 'S40 detects missing genuine authority safety boundary tamper' (-not (Test-CorrectionAdequacyGateSemantics -DeliveryReviewText $tamperMissingAuthBoundary -QualityRatchetText $canonicalQuality40 -ValidationText $canonicalValidation40 -SkillText $canonicalSkill40 -AgentsText $canonicalAgents40 -GeminiText $canonicalGemini40 -ReadmeText $canonicalReadme40 -CommitText $canonicalCommit40 -DelegationText $canonicalDelegation40)) ''
+
+        $tamperDisguisedCounter = $canonicalDelivery40 + $nl + "O reparo possui um limite num$([char]0x00e9)rico fixo de 3 tentativas."
+        Assert-Condition 'S40 detects disguised numerical stopping rule tamper' (-not (Test-CorrectionAdequacyGateSemantics -DeliveryReviewText $tamperDisguisedCounter -QualityRatchetText $canonicalQuality40 -ValidationText $canonicalValidation40 -SkillText $canonicalSkill40 -AgentsText $canonicalAgents40 -GeminiText $canonicalGemini40 -ReadmeText $canonicalReadme40 -CommitText $canonicalCommit40 -DelegationText $canonicalDelegation40)) ''
     }
 
     $currentScenario = 41

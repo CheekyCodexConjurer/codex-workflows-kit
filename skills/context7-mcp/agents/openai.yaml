@@ -1,0 +1,4 @@
+interface:
+  display_name: "Context7 MCP"
+  short_description: "Fetch current library and framework documentation safely."
+  default_prompt: "Fetch current documentation for external libraries using Context7."

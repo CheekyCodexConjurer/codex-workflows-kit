@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codebase Memory MCP"
+  short_description: "Knowledge-graph code intelligence, call chains, architecture, and structural exploration."
+  default_prompt: "Explore codebase architecture, call chains, and structure using codebase-memory-mcp safely."

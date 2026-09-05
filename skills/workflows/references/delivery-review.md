@@ -42,13 +42,13 @@ O processo de revisão de entrega ocorre imediatamente após a conclusão do tra
          │
          ├───► [Veredito: APPROVED] ──► [Commit de Entrega Fechado]
          │
-         └───► [Veredito: BLOCKED]
-                     │
-                     ▼ (Máximo 2 rodadas)
-              [Lote Único Consolidado de Reparo]
-                     │
-                     ▼
-              [Revalidação & Delta Re-Revisão]
+          └───► [Veredito: BLOCKED]
+                      │
+                      ▼ (Reparo Orientado a Evidência / Anti-Loop Ledger)
+               [Lote Único Consolidado de Reparo]
+                      │
+                      ▼
+               [Revalidação & Delta Re-Revisão]
 ```
 
 ---
@@ -107,7 +107,7 @@ O Gate de Adequação da Correção é um portão de qualidade transversal para 
 ### Princípios e Substituição Semântica:
 - **Correção Suficiente**: atinge e elimina comprovadamente a causa-raiz identificada, prevenindo recorrências do mesmo defeito.
 - **Sustentável**: preserva a integridade estrutural do subsistema sem acumular débito técnico oculto nem adotar patches paliativos frágeis.
-- **Delimitada**: respeita estritamente o limite de *blast radius* (apenas os caminhos aprovados do escopo), o portão de refatoração oportuna (`tn-paydown-gate`), o portão de replanejamento (`replan-gate`), o registro obrigatório em `.scratchpad/debug_ledger.md` (anti-loop) e o limite estrito de até duas rodadas de reparo consolidado.
+- **Delimitada**: respeita estritamente o limite de *blast radius* (apenas os caminhos aprovados do escopo), o portão de refatoração oportuna (`tn-paydown-gate`), o portão de replanejamento (`replan-gate`), a política de reparo orientada a evidência e o registro obrigatório em `.scratchpad/debug_ledger.md` (anti-loop: hipótese testável, observação discriminante esperada, delta observado e próxima decisão; admissão distingue nova hipótese e observação esperada antes de delta versus pós-resultado com delta/falsificação; ausência de delta ou informação exige direção diagnóstica diferente, nunca retentativa idêntica ou proliferação de worker swarm; sem limite numérico fixo ou contadores disfarçados).
 
 ### Eventos de Acionamento (*Event Triggers*):
 O gate é acionado estritamente em eventos determinísticos (**nunca a cada turno**, sem *per-turn polling* ou *turn chatter*) e opera **sem trocar automaticamente de modo** (a transição de modo permanece prerrogativa explícita do usuário):
@@ -123,7 +123,7 @@ O gate é acionado estritamente em eventos determinísticos (**nunca a cada turn
 3. **`REWORK`**: causa-raiz estrutural ou design inadequado onde fixes incrementais degradam a arquitetura; interrompe edições e recomenda o modo explícito `REWORK` para roadmap de reengenharia sustentável.
 4. **`RESEARCH`**: causa-raiz desconhecida ou dependente de incerteza técnica externa; recomenda o modo explícito `RESEARCH.DEEP` para investigação em fontes primárias antes de novas edições.
 5. **`RESEARCH_THEN_REWORK`**: incerteza externa combinada com necessidade de redesenho estrutural; recomenda `RESEARCH.DEEP` seguido de `REWORK`.
-6. **`BLOCKED`**: violação de invariantes, ausência de prova operacional obrigatória sob gatilho de risco, necessidade de autorização humana ou persistência de bloqueios após duas rodadas; falha fechado.
+6. **`BLOCKED`**: violação de invariantes, ausência de prova operacional obrigatória sob gatilho de risco, bloqueio genuíno de autoridade, acesso ou decisão do usuário, ausência de caminho seguro acionável, ou tentativa de retentativa sem evidência/delta; falha fechado.
 
 ### Fronteira de Transporte Neutro do Bridge MCP:
 O SubAgents MCP e o daemon bridge permanecem estritamente como **transporte neutro** (`neutral transport`). Reutilizam contratos existentes (`EvidenceBundle`, `ExecutionReceipt`, `ProgressSnapshot`, heartbeat, lease, fence tokens, relations `correction` e `review`). Nenhuma regra de workflow, lógica de portão de adequação ou poder de decisão/aprovação reside no bridge (**nenhuma regra de workflow ou aprovação no bridge**).
@@ -212,11 +212,24 @@ O revisor emite formalmente um pacote de revisão estruturado contendo:
 ## 6. Ciclo de Reparo Consolidado (quando `BLOCKED`)
 
 - **Lote Único Consolidado no Writer**: Todos os bloqueios identificados no pacote de revisão são consolidados em um lote de reparo consolidado no mesmo writer que executou a implementação original.
-- **Correção Suficiente e Sustentável/Delimitada**: O executor aplica a correção necessária para eliminar a causa-raiz de forma sustentável e satisfazer a adequação sem remendos paliativos, mantendo estritamente o limite de blast radius, tn-paydown-gate, replan-gate, debug ledger e o limite de até duas rodadas.
+- **Correção Suficiente e Sustentável/Delimitada**: O executor aplica a correção necessária para eliminar a causa-raiz de forma sustentável e satisfazer a adequação sem remendos paliativos, mantendo estritamente o limite de blast radius, `tn-paydown-gate`, `replan-gate` e a política de reparo orientada a evidência.
+- **Política de Reparo Orientada a Evidência (*Evidence-Based Repair Policy*)**:
+  - **Continuidade por Evidência Útil e Distinção entre Admissão e Pós-Resultado**: A continuidade do reparo é governada pela produção de novas evidências úteis e hipóteses testáveis, nunca por um contador numérico arbitrário. Terceira rodada de reparo ou tentativas subsequentes são expressamente permitidas e admitidas enquanto houver nova hipótese testável distinta. Distingue-se formalmente a admissão pré-execução do registro pós-resultado:
+    - **Fase de Admissão Pré-Execução (*Admission*)**: Para admitir qualquer tentativa de reparo proposta (incluindo terceira rodada ou subsequentes), o executor deve formular uma nova hipótese testável distinta (*new distinct testable hypothesis*), definir uma observação discriminante esperada (*expected discriminating observation*) e planejar um experimento seguro autorizado (*authorized safe experiment*). Na admissão pré-execução, o delta observado ainda não está disponível (*observed delta not yet available*); exigir delta antes da execução é um erro conceitual e de desenho que impediria novos experimentos legítimos. A admissão é aprovada desde que haja caminho seguro e hipótese distinta em direção diagnóstica não-estagnada.
+    - **Fase de Registro Pós-Resultado (*Post-Result*)**: Após executar o experimento autorizado, registra-se a evidência observada (*observed evidence*) como delta observado (*observed delta*). Hipótese falsificada ou estreitamento de possibilidades causais (*falsified hypothesis or narrowed possibilities*) conta validamente como informação útil (*counts as information*), mesmo que o sintoma superficial permaneça o mesmo. Apenas a retentativa idêntica sem informação nova (*identical no-information retry*) em mesma direção estagnada é estritamente proibida e exige mudança mandatória de abordagem (*change approach* para direção diagnóstica diferente ou replanejamento).
+  - **Ledger Anti-Loop Obrigatório (`.scratchpad/debug_ledger.md`)**: A cada tentativa de reparo, o executor deve obrigatoriamente registrar quatro campos estruturados:
+    1. **Hipótese (*hypothesis*)**: explicação testável, fundamentada e distinta do mecanismo da falha ou bloqueio (definida na admissão).
+    2. **Observação Discriminante Esperada (*expected discriminating observation*)**: resultado mensurável e específico esperado se a hipótese for verdadeira (definida na admissão).
+    3. **Delta Observado (*observed delta*)**: variação concreta e verificável nas evidências, logs, testes ou comportamento do sistema após a intervenção, incluindo hipótese falsificada ou possibilidades estreitadas (registrado no pós-resultado).
+    4. **Próxima Decisão (*next decision*)**: avanço para validação, congelamento de novo alvo, nova hipótese distinta ou mudança de rota.
+  - **Ausência de Delta Exige Mudança de Direção Diagnóstica**: Constatada ausência de delta ou informação nova (falha idêntica ou estagnação sem novas evidências nem estreitamento de hipótese), é estritamente proibida retentativa idêntica (*duplicate retry*) ou proliferação cega de agentes via worker swarm. Exige-se mudança mandatória para uma direção diagnóstica diferente (*different diagnostic direction*) ou transição para replanejamento (`replan-gate` / decisão `REWORK` ou `RESEARCH`).
+  - **Critérios Estritos de Parada (*Stop Conditions*)**: A interrupção e falha fechada (*fail closed* / `BLOCKED`) ocorrem **única e exclusivamente** sob:
+    1. Bloqueio genuíno de autoridade, credenciais/acesso externo ou decisão de negócio do usuário que não possa ser resolvida no escopo concedido.
+    2. Constatação de que não há alternativa viável ou sem caminho seguro acionável (*no safe actionable path forward*).
+    - É estritamente proibido o uso de limite numérico fixo (como o limite arbitrário anterior de 2 rodadas), substitutos configuráveis ocultos ou contadores numéricos disfarçados de portão semântico.
 - **Revalidação Determinística**: Toda a suíte de validação relevante e checagens determinísticas são reexecutadas.
 - **Novo Alvo Congelado**: Um novo alvo congelado com `target_id` determinístico invariante a staging e hashes SHA256 atualizados é gerado.
 - **Closure Review de Delta**: Uma nova revisão independente (closure review de delta) foca nos bloqueios corrigidos e no raio de impacto afetado (*affected blast radius*), enquanto re-checa e revalida a identidade completa do alvo (`target_id`) e todos os invariantes de integração para evitar regressões (sem restringir a análise exclusivamente ao delta).
-- **Limite Estrito de Rodadas**: É permitido um máximo de **duas rodadas de reparo** (máximo 2 rodadas). Se persistirem bloqueios após a segunda rodada, a operação falha fechado (*fail closed*), interrompendo o pipeline e reportando o status ao usuário.
 
 ---
 

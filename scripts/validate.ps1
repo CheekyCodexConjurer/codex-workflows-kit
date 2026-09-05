@@ -548,7 +548,20 @@ function Assert-DeliveryReviewContract {
         '(?i)(?:bloqueios|blockers).{0,60}(?:blast radius|raio de impacto|impacto afetado)',
         '(?i)(?:re-checa|reverifi|revalid|checagem|avalia).{0,60}(?:identidade|alvo|target).{0,60}(?:invariantes|invariants)',
         '(?i)(?:recomput|recalcul).{0,60}(?:target_id|identidade do alvo|target identity).{0,60}(?:igualdade exata|exact equality|coincid)',
-        '(?i)(?:m[a\u00e1]ximo|max).{0,30}(?:2|duas|two).{0,30}rodadas?',
+        '(?i)pol[i\u00ed]tica de reparo orientada a evid[e\u00ea]ncia|evidence-based repair',
+        '(?i)hip[o\u00f3]tese|hypothesis',
+        '(?i)observa[c\u00e7][a\u00e3]o discriminante|expected discriminating observation',
+        '(?i)delta observado|observed delta',
+        '(?i)(?:admiss[a\u00e3]o|admission).{0,150}(?:hip[o\u00f3]tese|hypothesis).{0,150}(?:observa[c\u00e7][a\u00e3]o discriminante|expected discriminating observation)',
+        '(?i)(?:admiss[a\u00e3]o|admission).{0,150}(?:delta.{0,40}(?:n[a\u00e3]o est[a\u00e1] dispon[i\u00ed]vel|not yet available|pendente|pending)|delta pendente)',
+        '(?i)(?:p[o\u00f3]s-resultado|post-result).{0,120}(?:delta observado|observed delta|falsif)',
+        '(?i)pr[o\u00f3]xima decis[a\u00e3]o|next decision',
+        '(?i)dire[c\u00e7][a\u00e3]o diagn[o\u00f3]stica diferente|different diagnostic direction',
+        '(?i)(?:sem|proibid[oa]|nunca).{0,50}(?:retentativa id[e\u00ea]ntica|duplicate retry|worker swarm)',
+        '(?i)(?:terceir[ao]|subsequente).{0,50}(?:reparo|tentativa).{0,50}(?:permitid[ao]|avalan|avan[c\u00e7]a)|novas evid[e\u00ea]ncias [u\u00fa]teis e hip[o\u00f3]teses test[a\u00e1]veis',
+        '(?i)bloqueio genu[i\u00ed]no de (?:autoridade|acesso|decis[a\u00e3]o do usu[a\u00e1]rio)',
+        '(?i)sem caminho seguro acion[a\u00e1]vel|no safe actionable path',
+        '(?i)(?:sem|proibid[oa]|nunca).{0,50}(?:limite num[e\u00e9]rico fixo|contador(?:es)? disfar[c\u00e7]ado|numerical stopping rule)',
         '(?i)falha fechado|fail closed',
         '(?i)zero (?:bloqueios|blockers)',
         '(?i)invariante a staging|staging-invariant',
@@ -597,6 +610,11 @@ function Assert-DeliveryReviewContract {
         }
     }
 
+    $staleMax2Pattern = '(?i)(?:(?:at\s+most|max(?:imum)?(?:\s+of)?|up\s+to)\s+(?:\d+|two)\s+(?:(?:consolidated\s+)?repair\s+)?rounds?|max(?:imum)?\s+two\b|(?:(?:no\s+)?m(?:[a\u00e1]|\u00c3\u00a1)x(?:imo|\u00c3\u00admo)?\.?(?:\s+de)?|at(?:[e\u00e9]|\u00c3\u00a9)|limite\s+(?:fixo\s+)?de)\s+(?:\d+|duas?|dois)\s+(?:rodadas?(?:\s+de\s+reparo)?|tentativas?)|m(?:[a\u00e1]|\u00c3\u00a1)x\.?\s*2(?:\s+rodadas?)?|\blimite\s+num(?:[e\u00e9]|\u00c3\u00a9)rico\s+fixo\s+de\s+\d+)'
+    if ([regex]::IsMatch($normalized, $staleMax2Pattern)) {
+        throw "$Label contains obsolete max2 repair rule: $staleMax2Pattern"
+    }
+
     $forbidden = @(
         'Review-And-Fix-Vigorously',
         'Review and Fix Vigorously',
@@ -624,6 +642,11 @@ function Assert-DeliveryReviewPolicy {
         [Parameter(Mandatory)][string]$SkillText,
         [Parameter(Mandatory)][string]$AgentsText,
         [Parameter(Mandatory)][string]$GeminiText,
+        [string]$ValidationText = '',
+        [string]$CommitText = '',
+        [string]$QualityRatchetText = '',
+        [string]$DelegationText = '',
+        [string]$ReadmeText = '',
         [string]$LabelPrefix = ''
     )
 
@@ -653,17 +676,53 @@ function Assert-DeliveryReviewPolicy {
     if (-not [regex]::IsMatch($geminiNorm, '(?i)Gate de Adequa[c\u00e7][a\u00e3]o|corre[c\u00e7][a\u00e3]o suficiente e sustent[a\u00e1]vel')) {
         throw "${pfx}antigravity GEMINI.md is missing correction adequacy gate pattern"
     }
+    if (-not [regex]::IsMatch($skillNorm, '(?i)(?:reparo orientad[ao] a evid[e\u00ea]ncia|evidence-based repair)|debug_ledger\.md')) {
+        throw "${pfx}SKILL.md is missing evidence-based repair policy pattern"
+    }
+    if (-not [regex]::IsMatch($agentsNorm, '(?i)(?:reparo orientad[ao] a evid[e\u00ea]ncia|evidence-based repair)|debug_ledger\.md')) {
+        throw "${pfx}codex AGENTS.md is missing evidence-based repair policy pattern"
+    }
+    if (-not [regex]::IsMatch($geminiNorm, '(?i)(?:reparo orientad[ao] a evid[e\u00ea]ncia|evidence-based repair)|debug_ledger\.md')) {
+        throw "${pfx}antigravity GEMINI.md is missing evidence-based repair policy pattern"
+    }
 
+    $staleMax2Pattern = '(?i)(?:(?:at\s+most|max(?:imum)?(?:\s+of)?|up\s+to)\s+(?:\d+|two)\s+(?:(?:consolidated\s+)?repair\s+)?rounds?|max(?:imum)?\s+two\b|(?:(?:no\s+)?m(?:[a\u00e1]|\u00c3\u00a1)x(?:imo|\u00c3\u00admo)?\.?(?:\s+de)?|at(?:[e\u00e9]|\u00c3\u00a9)|limite\s+(?:fixo\s+)?de)\s+(?:\d+|duas?|dois)\s+(?:rodadas?(?:\s+de\s+reparo)?|tentativas?)|m(?:[a\u00e1]|\u00c3\u00a1)x\.?\s*2(?:\s+rodadas?)?|\blimite\s+num(?:[e\u00e9]|\u00c3\u00a9)rico\s+fixo\s+de\s+\d+)'
     $policyForbidden = @(
         '(?i)\b(?:pode|deve|autoriza|permite)\b\s+(?!n[a\u00e3]o\b|nunca\b|sem\b)[^.;]*\b(?:troca|trocar|transi[c\u00e7][a\u00e3]o)\s+autom[a\u00e1]tica(?:mente)?\s+de\s+modo\b',
         '(?i)\bbridge\b\s+(?:decide|aprova|rejeita)\b',
         '(?i)\b(?:regras de workflow|workflow rules)\s+residem\s+no\s+bridge\b',
         '(?i)\b(?:concede|permite|autoriza)\s+escrita\b[^.;]*(?:no ALINHAMENTO|em PLAN|em REWORK|em RESEARCH)',
-        '(?i)"required_fix":\s*"corre[c\u00e7][a\u00e3]o m[i\u00ed]nima exigida"'
+        '(?i)"required_fix":\s*"corre(?:[c\u00e7]|\u00c3\u00a7)(?:[a\u00e3]|\u00c3\u00a3)o m(?:[i\u00ed]|\u00c3\u00ad)nima exigida"',
+        '(?i)\bmeta de corre(?:[c\u00e7]|\u00c3\u00a7)(?:[a\u00e3]|\u00c3\u00a3)o m(?:[i\u00ed]|\u00c3\u00ad)nima\b',
+        $staleMax2Pattern
     )
+    $surfaces = @(
+        @{ Name = "${pfx}delivery-review.md"; Text = $DeliveryReviewText },
+        @{ Name = "${pfx}SKILL.md"; Text = $skillNorm },
+        @{ Name = "${pfx}codex AGENTS.md"; Text = $agentsNorm },
+        @{ Name = "${pfx}antigravity GEMINI.md"; Text = $geminiNorm }
+    )
+    if (-not [string]::IsNullOrWhiteSpace($ValidationText)) {
+        $surfaces += @{ Name = "${pfx}validation.md"; Text = [regex]::Replace($ValidationText, '\s+', ' ').Trim() }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($CommitText)) {
+        $surfaces += @{ Name = "${pfx}commit.md"; Text = [regex]::Replace($CommitText, '\s+', ' ').Trim() }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($QualityRatchetText)) {
+        $surfaces += @{ Name = "${pfx}quality-ratchet.md"; Text = [regex]::Replace($QualityRatchetText, '\s+', ' ').Trim() }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($DelegationText)) {
+        $surfaces += @{ Name = "${pfx}delegation.md"; Text = [regex]::Replace($DelegationText, '\s+', ' ').Trim() }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ReadmeText)) {
+        $surfaces += @{ Name = "${pfx}README.md"; Text = [regex]::Replace($ReadmeText, '\s+', ' ').Trim() }
+    }
+
     foreach ($pat in $policyForbidden) {
-        if ([regex]::IsMatch($DeliveryReviewText, $pat) -or [regex]::IsMatch($skillNorm, $pat) -or [regex]::IsMatch($agentsNorm, $pat) -or [regex]::IsMatch($geminiNorm, $pat)) {
-            throw "${pfx}contract contains forbidden adequacy gate violation: $pat"
+        foreach ($s in $surfaces) {
+            if ([regex]::IsMatch($s.Text, $pat)) {
+                throw "$($s.Name) contains forbidden adequacy gate violation: $pat"
+            }
         }
     }
 }
@@ -2259,6 +2318,23 @@ function Test-FullyQualifiedPath {
 $workflowSource = Join-Path $repo 'skills\workflows'
 $evidenceSource = Join-Path $repo 'skills\evidence-first'
 $mcpSource = Join-Path $repo 'skills\mcp-foundation'
+$codebaseMemorySource = Join-Path $repo 'skills\codebase-memory-mcp'
+$context7Source = Join-Path $repo 'skills\context7-mcp'
+
+if (-not (Test-Path -LiteralPath $codebaseMemorySource -PathType Container)) {
+    throw "Canonical codebase-memory-mcp skill is missing: $codebaseMemorySource"
+}
+if (-not (Test-Path -LiteralPath (Join-Path $codebaseMemorySource 'SKILL.md') -PathType Leaf)) {
+    throw "Canonical codebase-memory-mcp skill is missing SKILL.md: $codebaseMemorySource"
+}
+
+if (-not (Test-Path -LiteralPath $context7Source -PathType Container)) {
+    throw "Canonical context7-mcp skill is missing: $context7Source"
+}
+if (-not (Test-Path -LiteralPath (Join-Path $context7Source 'SKILL.md') -PathType Leaf)) {
+    throw "Canonical context7-mcp skill is missing SKILL.md: $context7Source"
+}
+
 $agentsMd = Join-Path $repo 'codex\AGENTS.md'
 $geminiTemplate = Join-Path $repo 'antigravity\GEMINI.md'
 $skill = Read-RequiredText (Join-Path $workflowSource 'SKILL.md')
@@ -2266,6 +2342,8 @@ $delegationRef = Read-RequiredText (Join-Path (Join-Path $workflowSource 'refere
 $deliveryReviewRef = Read-RequiredText (Join-Path (Join-Path $workflowSource 'references') 'delivery-review.md')
 $validationRef = Read-RequiredText (Join-Path (Join-Path $workflowSource 'references') 'validation.md')
 $commitRef = Read-RequiredText (Join-Path (Join-Path $workflowSource 'references') 'commit.md')
+$qualityRatchetPath = Join-Path (Join-Path $workflowSource 'references') 'quality-ratchet.md'
+$qualityRatchetRef = if (Test-Path -LiteralPath $qualityRatchetPath) { Read-RequiredText $qualityRatchetPath } else { '' }
 $designSpec = Read-RequiredText (Join-Path $repo 'docs\superpowers\specs\2026-08-26-workflow-rearchitecture-design.md')
 $adequacySpec = Read-RequiredText (Join-Path $repo 'docs\superpowers\specs\2026-09-03-correction-adequacy-gate-design.md')
 $implPlan = Read-RequiredText (Join-Path $repo 'docs\superpowers\plans\2026-08-26-workflow-rearchitecture-implementation-plan.md')
@@ -2423,7 +2501,7 @@ Assert-AllContractRules -Checks @(
     { Assert-SupersededSpecContract -Label 'docs/superpowers/specs/2026-08-19-promptpad-superpowers-compatibility-design.md' -Text $supersededSpec },
     { Assert-McpFoundationSkill -Label 'mcp-foundation skill' -Text $mcpSkill },
     { Assert-DeepSeekDaemonRestartPolicy -SkillText $mcpSkill -LifecycleText $mcpLifecycle -AgentsText $agentsText -GeminiText $geminiText },
-    { Assert-DeliveryReviewPolicy -DeliveryReviewText $deliveryReviewRef -SkillText $skill -AgentsText $agentsText -GeminiText $geminiText },
+    { Assert-DeliveryReviewPolicy -DeliveryReviewText $deliveryReviewRef -SkillText $skill -AgentsText $agentsText -GeminiText $geminiText -ValidationText $validationRef -CommitText $commitRef -QualityRatchetText $qualityRatchetRef -DelegationText $delegationRef -ReadmeText $readmeText },
     { Assert-AlinhamentoPolicy -AgentsText $agentsText -GeminiText $geminiText -SkillText $skill -DelegationText $delegationRef -ReadmeText $readmeText },
     { Assert-McpTemplateRouting -Label 'codex AGENTS.md' -Text $agentsText },
     { Assert-McpTemplateRouting -Label 'antigravity GEMINI.md' -Text $geminiText },
@@ -2479,7 +2557,29 @@ foreach ($relativePath in @(git -C $repo ls-files)) {
 
     if ($relativePath -ne 'CHANGELOG.md' -and $relativePath -ne 'scripts/validate.ps1') {
         foreach ($token in $legacyTokens) {
-            if (($relativePath.StartsWith('scripts/') -or $relativePath.StartsWith('docs/superpowers/') -or $relativePath -eq 'codex/AGENTS.md' -or $relativePath -eq 'antigravity/GEMINI.md' -or $relativePath -eq 'skills/workflows/references/delivery-review.md' -or $relativePath -eq 'README.md' -or $relativePath -eq 'docs/security.md' -or $relativePath -eq 'skills/workflows/SKILL.md' -or $relativePath -eq 'skills/workflows/references/delegation.md') -and $token -in @('writer', 'reviewer', 'worker')) {
+            # Permitted role surface exceptions for 'writer', 'reviewer', 'worker':
+            # - scripts/, docs/superpowers/, README.md, docs/security.md: tooling, design, and security docs
+            # - codex/AGENTS.md, antigravity/GEMINI.md: host routing rules and delegation contract
+            # - skills/workflows/SKILL.md, skills/workflows/references/delegation.md, skills/workflows/references/delivery-review.md: delivery review, swarm, active writer, and delegation policies
+            # - skills/codebase-memory-mcp/SKILL.md, skills/codebase-memory-mcp/references/scenarios.md: CBM peer worker lock and graph reuse protocol
+            # - skills/context7-mcp/SKILL.md: Context7 multi-worker deduplication and evidence packet sharing
+            $isPermittedRoleSurface = (
+                $relativePath.StartsWith('scripts/') -or
+                $relativePath.StartsWith('docs/superpowers/') -or
+                $relativePath -eq 'codex/AGENTS.md' -or
+                $relativePath -eq 'antigravity/GEMINI.md' -or
+                $relativePath -eq 'README.md' -or
+                $relativePath -eq 'docs/security.md' -or
+                $relativePath -eq 'skills/workflows/SKILL.md' -or
+                $relativePath -eq 'skills/workflows/references/delegation.md' -or
+                $relativePath -eq 'skills/workflows/references/delivery-review.md' -or
+                $relativePath -eq 'skills/workflows/references/commit.md' -or
+                $relativePath -eq 'skills/workflows/references/validation.md' -or
+                $relativePath -eq 'skills/codebase-memory-mcp/SKILL.md' -or
+                $relativePath -eq 'skills/codebase-memory-mcp/references/scenarios.md' -or
+                $relativePath -eq 'skills/context7-mcp/SKILL.md'
+            )
+            if ($isPermittedRoleSurface -and $token -in @('writer', 'reviewer', 'worker')) {
                 continue
             }
             if ($text.IndexOf($token, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
@@ -2623,12 +2723,26 @@ $forbidden = @(
     (-join [char[]]@(119, 97, 116, 99, 104, 101, 114))
 )
 foreach ($relativePath in @(git -C $repo ls-files)) {
+    if ($relativePath -eq 'CHANGELOG.md' -or $relativePath -eq 'scripts/validate.ps1') {
+        continue
+    }
     $path = Join-Path $repo $relativePath
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         continue
     }
     $text = Get-Content -LiteralPath $path -Raw -Encoding UTF8
     foreach ($token in $forbidden) {
+        # Forbidden watcher token is rejected across all surfaces, except specific canonical CBM skill files
+        # where background daemon watchers are explicitly prohibited:
+        # - skills/codebase-memory-mcp/SKILL.md
+        # - skills/codebase-memory-mcp/references/scenarios.md
+        $isPermittedWatcherSurface = (
+            $relativePath -eq 'skills/codebase-memory-mcp/SKILL.md' -or
+            $relativePath -eq 'skills/codebase-memory-mcp/references/scenarios.md'
+        )
+        if ($token -eq (-join [char[]]@(119, 97, 116, 99, 104, 101, 114)) -and $isPermittedWatcherSurface) {
+            continue
+        }
         if ($text.IndexOf($token, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
             throw "Unsupported retained token in $relativePath"
         }
@@ -2651,12 +2765,20 @@ if (-not $SkipInstalled) {
     $workflowsDest = Join-Path $agentsHome 'skills\workflows'
     $evidenceDest = Join-Path $agentsHome 'skills\evidence-first'
     $mcpDest = Join-Path $agentsHome 'skills\mcp-foundation'
+    $codebaseMemoryDest = Join-Path $agentsHome 'skills\codebase-memory-mcp'
+    $context7Dest = Join-Path $agentsHome 'skills\context7-mcp'
+
     $agWorkflows1 = Join-Path $antigravityHome 'antigravity\skills\workflows'
     $agEvidence1 = Join-Path $antigravityHome 'antigravity\skills\evidence-first'
     $agMcp1 = Join-Path $antigravityHome 'antigravity\skills\mcp-foundation'
+    $agCodebaseMemory1 = Join-Path $antigravityHome 'antigravity\skills\codebase-memory-mcp'
+    $agContext7_1 = Join-Path $antigravityHome 'antigravity\skills\context7-mcp'
+
     $agWorkflows2 = Join-Path $antigravityHome 'config\skills\workflows'
     $agEvidence2 = Join-Path $antigravityHome 'config\skills\evidence-first'
     $agMcp2 = Join-Path $antigravityHome 'config\skills\mcp-foundation'
+    $agCodebaseMemory2 = Join-Path $antigravityHome 'config\skills\codebase-memory-mcp'
+    $agContext7_2 = Join-Path $antigravityHome 'config\skills\context7-mcp'
 
     # DeepSeek restart-policy semantic assertions on all installed mcp-foundation skill & lifecycle mirrors (fail-closed on missing/unreadable)
     $installedSkillAgents = Read-RequiredText (Join-Path $mcpDest 'SKILL.md')
@@ -2704,7 +2826,11 @@ if (-not $SkipInstalled) {
         Assert-McpTemplateRouting -Label 'installed GEMINI.md' -Text $installedGemini
 
         Assert-DeepSeekDaemonRestartPolicy -SkillText $installedSkillAgents -LifecycleText $installedLifecycleAgents -AgentsText $installedAgents -GeminiText $installedGemini -LabelPrefix 'installed (safe profile)'
-        Assert-DeliveryReviewPolicy -DeliveryReviewText $installedDeliveryAgents -SkillText (Read-RequiredText (Join-Path $workflowsDest 'SKILL.md')) -AgentsText $installedAgents -GeminiText $installedGemini -LabelPrefix 'installed (safe profile)'
+        $installedValidation = if (Test-Path -LiteralPath (Join-Path (Join-Path $workflowsDest 'references') 'validation.md')) { Read-RequiredText (Join-Path (Join-Path $workflowsDest 'references') 'validation.md') } else { '' }
+        $installedCommit = if (Test-Path -LiteralPath (Join-Path (Join-Path $workflowsDest 'references') 'commit.md')) { Read-RequiredText (Join-Path (Join-Path $workflowsDest 'references') 'commit.md') } else { '' }
+        $installedQuality = if (Test-Path -LiteralPath (Join-Path (Join-Path $workflowsDest 'references') 'quality-ratchet.md')) { Read-RequiredText (Join-Path (Join-Path $workflowsDest 'references') 'quality-ratchet.md') } else { '' }
+        $installedDelegation = if (Test-Path -LiteralPath (Join-Path (Join-Path $workflowsDest 'references') 'delegation.md')) { Read-RequiredText (Join-Path (Join-Path $workflowsDest 'references') 'delegation.md') } else { '' }
+        Assert-DeliveryReviewPolicy -DeliveryReviewText $installedDeliveryAgents -SkillText (Read-RequiredText (Join-Path $workflowsDest 'SKILL.md')) -AgentsText $installedAgents -GeminiText $installedGemini -ValidationText $installedValidation -CommitText $installedCommit -QualityRatchetText $installedQuality -DelegationText $installedDelegation -ReadmeText $readmeText -LabelPrefix 'installed (safe profile)'
         Assert-AlinhamentoPolicy -AgentsText $installedAgents -GeminiText $installedGemini -SkillText (Read-RequiredText (Join-Path $workflowsDest 'SKILL.md')) -DelegationText (Read-RequiredText (Join-Path (Join-Path $workflowsDest 'references') 'delegation.md')) -ReadmeText $readmeText -LabelPrefix 'installed (safe profile)'
         Assert-CriticalStrategyPolicy -AgentsText $installedAgents -GeminiText $installedGemini -SkillText (Read-RequiredText (Join-Path $workflowsDest 'SKILL.md')) -DelegationText (Read-RequiredText (Join-Path (Join-Path $workflowsDest 'references') 'delegation.md')) -ReadmeText $readmeText -LabelPrefix 'installed (safe profile)'
         Assert-SubagentAutonomyPolicy -AgentsText $installedAgents -GeminiText $installedGemini -SkillText (Read-RequiredText (Join-Path $workflowsDest 'SKILL.md')) -DelegationText (Read-RequiredText (Join-Path (Join-Path $workflowsDest 'references') 'delegation.md')) -DeliveryReviewText $installedDeliveryAgents -ReadmeText $readmeText -LabelPrefix 'installed (safe profile)'
@@ -2722,6 +2848,14 @@ if (-not $SkipInstalled) {
     Assert-MirrorTree -Source $workflowSource -Installed $agWorkflows2 -Label 'workflows skill (antigravity 2)'
     Assert-MirrorTree -Source $evidenceSource -Installed $agEvidence2 -Label 'evidence skill (antigravity 2)'
     Assert-MirrorTree -Source $mcpSource -Installed $agMcp2 -Label 'mcp-foundation skill (antigravity 2)'
+
+    Assert-MirrorTree -Source $codebaseMemorySource -Installed $codebaseMemoryDest -Label 'codebase-memory-mcp skill (agents)'
+    Assert-MirrorTree -Source $codebaseMemorySource -Installed $agCodebaseMemory1 -Label 'codebase-memory-mcp skill (antigravity 1)'
+    Assert-MirrorTree -Source $codebaseMemorySource -Installed $agCodebaseMemory2 -Label 'codebase-memory-mcp skill (antigravity 2)'
+
+    Assert-MirrorTree -Source $context7Source -Installed $context7Dest -Label 'context7-mcp skill (agents)'
+    Assert-MirrorTree -Source $context7Source -Installed $agContext7_1 -Label 'context7-mcp skill (antigravity 1)'
+    Assert-MirrorTree -Source $context7Source -Installed $agContext7_2 -Label 'context7-mcp skill (antigravity 2)'
 }
 
 if (-not $SkipGateTests) {

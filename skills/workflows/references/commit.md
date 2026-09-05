@@ -22,9 +22,7 @@ mode, never run automatically.
   `APPROVED` verdict with zero blockers (`zero blockers`) on the matching
   frozen target before the first commit.
 - Commit gate: verify exact `target_id` before staging; after staging and immediately before commit, recompute the staging-invariant identity (`target_id`) and require equality, verify the staged path set is exactly the approved owned set, and verify every staged blob equals the Git-normalized approved content.
-- Blocked reviews use a consolidated repair cycle (maximum 2 rounds, then fail
-  closed). Follow-up fixes are new commits — no amend, reset, rebase, or
-  rewrite; never push.
+- Blocked reviews use a consolidated repair cycle under the evidence-based repair policy (reparo orientado a evidência; anti-loop ledger recording hypothesis, expected observation, observed delta, next decision; lack of delta requires different diagnostic direction, no duplicate retries or worker swarm duplication; stop only on genuine authority/access/user-decision or no safe actionable path, never a numerical counter; subsequent useful repairs allowed with new hypothesis and delta). Follow-up fixes are new commits — no amend, reset, rebase, or rewrite; never push.
 - `COMMIT` covers pre-existing or exceptional dirty worktrees and remains
   git-only; `REWORK` stays no-write.
 

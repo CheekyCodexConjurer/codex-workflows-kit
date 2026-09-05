@@ -1,6 +1,10 @@
 #Requires AutoHotkey v2.0
 #SingleInstance Force
 
+; Codex Workflows PromptPad
+; Contract: Transports canonical mode, policy, and backend commands directly.
+; Strict boundaries: No hardcoded agent counts, no resetting of swarm/continuation flags, and no hidden hooks.
+
 SendMode "Input"
 SetWorkingDir A_ScriptDir
 SetScrollLockState "Off"

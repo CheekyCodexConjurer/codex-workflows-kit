@@ -439,6 +439,21 @@ foreach ($path in $coreFiles) {
     Write-Check -Name 'Core artifact' -Passed (Test-Path -LiteralPath $path -PathType Leaf) -Detail $path
 }
 
+$freeMcpSkills = @(
+    (Join-Path $AgentsHome 'skills\codebase-memory-mcp\SKILL.md'),
+    (Join-Path $AgentsHome 'skills\context7-mcp\SKILL.md')
+)
+foreach ($fPath in $freeMcpSkills) {
+    $exists = Test-Path -LiteralPath $fPath -PathType Leaf
+    $label = Split-Path -Leaf (Split-Path -Parent $fPath)
+    if ($exists) {
+        Write-Check -Name "Optional free skill ($label)" -Passed $true -Detail $fPath -Optional
+    }
+    else {
+        Write-Check -Name "Optional free skill ($label)" -Passed $false -Detail "Optional skill not installed (not runtime validated): $fPath" -Optional
+    }
+}
+
 if ($installedProfile -eq 'safe') {
     Write-Check -Name 'No managed agents defaults' -Passed (Test-NoManagedAgentsBlock -Path $configPath) -Detail $configPath
 
@@ -568,7 +583,7 @@ foreach ($surface in $surfaceFiles) {
         $content = Get-ManagedBlock -Text $content
     }
     foreach ($pattern in $contractPatterns) {
-        if ($pattern -eq 'read-only' -and $surface -like '*mcp-foundation*') {
+        if ($pattern -eq 'read-only' -and ($surface -like '*mcp-foundation*' -or $surface -like '*codebase-memory*' -or $surface -like '*context7*')) {
             continue
         }
         if ([regex]::IsMatch($content, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)) {
@@ -748,6 +763,42 @@ else {
     else {
         Write-Check -Name 'SubAgents MCP' -Passed $false -Detail ("Configured but entry script is missing: {0}" -f ($mcStatus.Missing -join '; '))
     }
+}
+
+$context7Server = $mcpServers | Where-Object { $_.Name.Trim('"') -eq 'context7' }
+if ($null -ne $context7Server) {
+    $urlMatch = [regex]::Match($context7Server.Body, '(?m)^\s*url\s*=\s*["'']([^"'']+)["'']')
+    if ($urlMatch.Success) {
+        $rawEndpoint = $urlMatch.Groups[1].Value.Trim()
+        $canonicalEndpoint = 'https://mcp.context7.com/mcp'
+        if ($rawEndpoint -eq $canonicalEndpoint) {
+            Write-Check -Name 'Context7 MCP' -Passed $true -Detail "Configured ($canonicalEndpoint)" -Optional
+        }
+        else {
+            Write-Check -Name 'Context7 MCP' -Passed $true -Detail 'Configured (redacted unrecognized endpoint)' -Optional
+        }
+    }
+    else {
+        Write-Check -Name 'Context7 MCP' -Passed $true -Detail 'Configured' -Optional
+    }
+}
+else {
+    Write-Check -Name 'Context7 MCP' -Passed $true -Detail 'Not configured (optional free rollout)' -Optional
+}
+
+$cbmServer = $mcpServers | Where-Object { $_.Name.Trim('"') -in @('codebase-memory-mcp', 'codebase_memory_mcp', 'codebase-memory') }
+if ($null -ne $cbmServer) {
+    $cbmStatus = Get-McpEntryStatus -Body $cbmServer.Body
+    if ($cbmStatus.Present) {
+        $detail = if ([string]::IsNullOrWhiteSpace($cbmStatus.Entry)) { 'Configured' } else { "Configured; binary present: $($cbmStatus.Entry)" }
+        Write-Check -Name 'Codebase Memory MCP' -Passed $true -Detail $detail -Optional
+    }
+    else {
+        Write-Check -Name 'Codebase Memory MCP' -Passed $false -Detail ("Configured but binary missing: {0}" -f ($cbmStatus.Missing -join '; ')) -Optional
+    }
+}
+else {
+    Write-Check -Name 'Codebase Memory MCP' -Passed $true -Detail 'Not configured (optional free rollout)' -Optional
 }
 
 $taskFilter = "(?i)(codex|prompt|deepseek|$tOc|$tRly|workflow)"

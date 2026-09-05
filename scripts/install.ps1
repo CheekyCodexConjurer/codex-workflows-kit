@@ -129,6 +129,8 @@ $skillsSource = Join-Path $repo 'skills'
 $workflowSource = Join-Path $skillsSource 'workflows'
 $evidenceSource = Join-Path $skillsSource 'evidence-first'
 $mcpSource = Join-Path $skillsSource 'mcp-foundation'
+$codebaseMemorySource = Join-Path $skillsSource 'codebase-memory-mcp'
+$context7Source = Join-Path $skillsSource 'context7-mcp'
 $agentsMdSource = Join-Path $repo 'codex\AGENTS.md'
 $geminiMdSource = Join-Path $repo 'antigravity\GEMINI.md'
 $ahkSource = Join-Path $repo 'ahk\codex_prompt_pad.ahk'
@@ -142,6 +144,8 @@ $configPath = Join-Path $CodexHome 'config.toml'
 $statePath = Join-Path $CodexHome 'codex-workflows-kit\install-state.json'
 
 $script:BackupRoot = Join-Path $CodexHome ('backups\codex-workflows-kit\{0}' -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+$script:QuarantineRoot = Join-Path $script:BackupRoot 'quarantine'
+$script:BackupManifest = New-Object System.Collections.Generic.List[object]
 $script:BackedUp = @{}
 $script:ManagedFiles = @{}
 $script:PriorHashes = @{}
@@ -386,8 +390,23 @@ function Add-PendingFile {
     }
 }
 
+function Save-BackupManifest {
+    if ($WhatIfPreference) {
+        return
+    }
+
+    Ensure-Directory -Path $script:BackupRoot
+    $manifestPath = Join-Path $script:BackupRoot 'backup-manifest.json'
+    $arr = $script:BackupManifest.ToArray()
+    $json = ConvertTo-Json -InputObject $arr -Depth 5
+    Write-Utf8NoBom -Path $manifestPath -Content ($json + $nl)
+}
+
 function Backup-ExistingFile {
-    param([Parameter(Mandatory)][string]$Destination)
+    param(
+        [Parameter(Mandatory)][string]$Destination,
+        [string]$Category = 'existing_file_backup'
+    )
 
     if (-not (Test-Path -LiteralPath $Destination -PathType Leaf)) {
         return
@@ -403,7 +422,59 @@ function Backup-ExistingFile {
     if (Confirm-InstallAction -Target $Destination -Action "back up existing file to $backupPath") {
         Ensure-Directory -Path $script:BackupRoot
         Copy-Item -LiteralPath $Destination -Destination $backupPath -Force
+        $sha = Get-RequiredFileHash -Path $backupPath
         $script:BackedUp[$fullDestination] = $backupPath
+        $script:BackupManifest.Add([ordered]@{
+            source = $fullDestination
+            backup = $backupPath
+            sha256 = $sha
+            category = $Category
+            timestampUtc = [datetime]::UtcNow.ToString('o')
+        })
+        Save-BackupManifest
+    }
+}
+
+function Quarantine-ExtraFile {
+    param(
+        [Parameter(Mandatory)][string]$SourcePath,
+        [Parameter(Mandatory)][string]$BaseDir
+    )
+
+    $fullSource = [IO.Path]::GetFullPath($SourcePath)
+    if (-not (Test-Path -LiteralPath $fullSource -PathType Leaf)) {
+        return
+    }
+
+    Assert-ChildPath -Path $fullSource -Parent $BaseDir | Out-Null
+
+    $fileItem = Get-Item -LiteralPath $fullSource -Force
+    if ($fileItem.Attributes.HasFlag([System.IO.FileAttributes]::ReparsePoint)) {
+        throw "Reparse point detected at file: $fullSource. Refusing to quarantine; fail closed."
+    }
+
+    $rel = $fullSource.Substring($BaseDir.Length).TrimStart('\')
+    $quarantineDest = Join-Path $script:QuarantineRoot $rel
+    Ensure-Directory -Path (Split-Path -Parent $quarantineDest)
+
+    if (Confirm-InstallAction -Target $fullSource -Action "quarantine extra custom file to $quarantineDest") {
+        Copy-Item -LiteralPath $fullSource -Destination $quarantineDest -Force
+        $originalHash = Get-RequiredFileHash -Path $fullSource
+        $quarantineHash = Get-RequiredFileHash -Path $quarantineDest
+        if ($originalHash -ne $quarantineHash) {
+            throw "Quarantine integrity check failed for ${fullSource}: SHA256 mismatch."
+        }
+
+        $script:BackupManifest.Add([ordered]@{
+            source = $fullSource
+            backup = $quarantineDest
+            sha256 = $originalHash
+            category = 'quarantined_custom_content'
+            timestampUtc = [datetime]::UtcNow.ToString('o')
+        })
+        Save-BackupManifest
+
+        Remove-Item -LiteralPath $fullSource -Force
     }
 }
 
@@ -446,6 +517,147 @@ function Copy-ManagedTree {
         $target = Join-Path $Destination $relative
         $content = Get-Content -LiteralPath $_.FullName -Raw -Encoding UTF8
         Install-ManagedContent -Destination $target -Content $content
+    }
+}
+
+function Migrate-UnmanagedContext7Skill {
+    param([Parameter(Mandatory)][string]$TargetDirectory)
+
+    $targetFullPath = Assert-SafeDestination -Path ([IO.Path]::GetFullPath($TargetDirectory))
+
+    $candidates = @(
+        (Join-Path $targetFullPath 'context7-mcp'),
+        (Join-Path $targetFullPath 'context7')
+    )
+
+    # Check for ambiguous custom conflict between context7 and context7-mcp
+    $ctx1 = Join-Path $targetFullPath 'context7'
+    $ctx2 = Join-Path $targetFullPath 'context7-mcp'
+    $ctx1Skill = Join-Path $ctx1 'SKILL.md'
+    $ctx2Skill = Join-Path $ctx2 'SKILL.md'
+    if ((Test-Path -LiteralPath $ctx1Skill -PathType Leaf) -and (Test-Path -LiteralPath $ctx2Skill -PathType Leaf)) {
+        $h1 = Get-RequiredFileHash -Path $ctx1Skill
+        $h2 = Get-RequiredFileHash -Path $ctx2Skill
+        if ($h1 -ne $h2) {
+            $isManaged1 = $script:PriorHashes.ContainsKey([IO.Path]::GetFullPath($ctx1Skill))
+            $isManaged2 = $script:PriorHashes.ContainsKey([IO.Path]::GetFullPath($ctx2Skill))
+            if (-not $isManaged1 -or -not $isManaged2) {
+                throw "Ambiguous custom conflict: both context7 and context7-mcp contain conflicting unmanaged SKILL.md. Fail closed."
+            }
+        }
+    }
+
+    foreach ($candidate in $candidates) {
+        if (-not (Test-Path -LiteralPath $candidate)) {
+            continue
+        }
+
+        # Canonical target bounds check
+        $fullCandidate = Assert-ChildPath -Path $candidate -Parent $targetFullPath
+
+        # Reparse point check on candidate
+        $candItem = Get-Item -LiteralPath $fullCandidate -Force
+        if ($candItem.Attributes.HasFlag([System.IO.FileAttributes]::ReparsePoint)) {
+            throw "Reparse point detected at candidate directory: $fullCandidate. Refusing recursive operations; fail closed."
+        }
+        if (-not $candItem.PSIsContainer) {
+            throw "Candidate skill path is not a directory: $fullCandidate"
+        }
+
+        # Reparse and bounds check on all items
+        $allChildren = @(Get-ChildItem -LiteralPath $fullCandidate -Recurse -Force -ErrorAction Stop)
+        foreach ($child in $allChildren) {
+            Assert-ChildPath -Path $child.FullName -Parent $fullCandidate | Out-Null
+            if ($child.Attributes.HasFlag([System.IO.FileAttributes]::ReparsePoint)) {
+                throw "Reparse point detected inside candidate at '$($child.FullName)'. Refusing unmanaged migration; fail closed."
+            }
+        }
+
+        $existingFiles = @($allChildren | Where-Object { -not $_.PSIsContainer })
+        if ($existingFiles.Count -eq 0) {
+            if ((Split-Path -Leaf $fullCandidate) -eq 'context7') {
+                Remove-Item -LiteralPath $fullCandidate -Force
+            }
+            continue
+        }
+
+        $isUnmanaged = $false
+        foreach ($file in $existingFiles) {
+            $normalized = [IO.Path]::GetFullPath($file.FullName)
+            if (-not $script:PriorHashes.ContainsKey($normalized)) {
+                $isUnmanaged = $true
+                break
+            }
+        }
+
+        if (-not $isUnmanaged) {
+            continue
+        }
+
+        Write-Host ("Migrating unmanaged pre-existing Context7 skill at '{0}' (backing up to '{1}')." -f $fullCandidate, $script:BackupRoot)
+
+        $candidateLeaf = Split-Path -Leaf $fullCandidate
+
+        # For actual existing skill just SKILL.md allowed backup migration
+        $unmanagedSkillMd = Join-Path $fullCandidate 'SKILL.md'
+        if (Test-Path -LiteralPath $unmanagedSkillMd -PathType Leaf) {
+            Backup-ExistingFile -Destination $unmanagedSkillMd -Category 'superseded_skill_backup'
+        }
+
+        # Canonical source map
+        $canonicalRelatives = @{}
+        if (Test-Path -LiteralPath $context7Source -PathType Container) {
+            Get-ChildItem -LiteralPath $context7Source -Recurse -File | ForEach-Object {
+                $rel = $_.FullName.Substring($context7Source.Length).TrimStart('\')
+                $canonicalRelatives[$rel] = $_.FullName
+            }
+        }
+
+        foreach ($file in $existingFiles) {
+            $rel = $file.FullName.Substring($fullCandidate.Length).TrimStart('\')
+
+            if ($rel -eq 'SKILL.md') {
+                if ($candidateLeaf -eq 'context7') {
+                    Remove-Item -LiteralPath $file.FullName -Force
+                }
+                continue
+            }
+
+            if ($canonicalRelatives.ContainsKey($rel)) {
+                $canonicalFilePath = $canonicalRelatives[$rel]
+                $canonicalHash = Get-RequiredFileHash -Path $canonicalFilePath
+                $fileHash = Get-RequiredFileHash -Path $file.FullName
+                if ($fileHash -ne $canonicalHash) {
+                    throw "Ambiguous custom conflict detected at '$($file.FullName)': file differs from canonical '$rel'. Fail closed."
+                }
+                if ($candidateLeaf -eq 'context7') {
+                    Remove-Item -LiteralPath $file.FullName -Force
+                }
+            }
+            else {
+                # Preserve extra custom files via recoverable quarantined directory outside skill discovery
+                Quarantine-ExtraFile -SourcePath $file.FullName -BaseDir $fullCandidate
+            }
+        }
+
+        # Clean up empty subdirectories bottom-up (no recursive removal)
+        $subDirs = @(Get-ChildItem -LiteralPath $fullCandidate -Recurse -Directory -Force -ErrorAction SilentlyContinue | Sort-Object FullName -Descending)
+        foreach ($d in $subDirs) {
+            $remaining = @(Get-ChildItem -LiteralPath $d.FullName -Force -ErrorAction SilentlyContinue)
+            if ($remaining.Count -eq 0) {
+                Remove-Item -LiteralPath $d.FullName -Force
+            }
+        }
+
+        if ($candidateLeaf -eq 'context7') {
+            $remainingInCand = @(Get-ChildItem -LiteralPath $fullCandidate -Force -ErrorAction SilentlyContinue)
+            if ($remainingInCand.Count -eq 0) {
+                Remove-Item -LiteralPath $fullCandidate -Force
+            }
+            else {
+                throw "Cannot remove unmanaged context7 directory '$fullCandidate': unresolved items remain. Fail closed."
+            }
+        }
     }
 }
 
@@ -1005,6 +1217,21 @@ function Assert-InstallPreflight {
     if (-not (Test-Path -LiteralPath $mcpSource -PathType Container)) {
         throw "Canonical mcp-foundation skill is missing: $mcpSource"
     }
+    if (-not (Test-Path -LiteralPath $codebaseMemorySource -PathType Container)) {
+        throw "Canonical codebase-memory-mcp skill is missing: $codebaseMemorySource"
+    }
+    $cbmSkill = Join-Path $codebaseMemorySource 'SKILL.md'
+    if (-not (Test-Path -LiteralPath $cbmSkill -PathType Leaf)) {
+        throw "Canonical codebase-memory-mcp SKILL.md is missing: $cbmSkill"
+    }
+
+    if (-not (Test-Path -LiteralPath $context7Source -PathType Container)) {
+        throw "Canonical context7-mcp skill is missing: $context7Source"
+    }
+    $ctxSkill = Join-Path $context7Source 'SKILL.md'
+    if (-not (Test-Path -LiteralPath $ctxSkill -PathType Leaf)) {
+        throw "Canonical context7-mcp SKILL.md is missing: $ctxSkill"
+    }
     if ($InstallAhk -and -not (Test-Path -LiteralPath $ahkSource -PathType Leaf)) {
         throw "Prompt pad source is missing: $ahkSource"
     }
@@ -1051,6 +1278,10 @@ try {
         Copy-ManagedTree -Source $workflowSource -Destination (Join-Path $target 'workflows')
         Copy-ManagedTree -Source $evidenceSource -Destination (Join-Path $target 'evidence-first')
         Copy-ManagedTree -Source $mcpSource -Destination (Join-Path $target 'mcp-foundation')
+
+        Copy-ManagedTree -Source $codebaseMemorySource -Destination (Join-Path $target 'codebase-memory-mcp')
+        Migrate-UnmanagedContext7Skill -TargetDirectory $target
+        Copy-ManagedTree -Source $context7Source -Destination (Join-Path $target 'context7-mcp')
     }
 
     if ($Profile -eq 'safe') {
@@ -1116,4 +1347,4 @@ if ($Profile -eq 'safe' -and -not $WhatIfPreference) {
     Write-Host "Backend matrix: $backendLabel active in $configPath"
 }
 if ($InstallAhk) { Write-Host "AHK: $AhkDestination" }
-if ($script:BackedUp.Count -gt 0) { Write-Host "Backups: $script:BackupRoot" }
+if ($script:BackedUp.Count -gt 0 -or $script:BackupManifest.Count -gt 0) { Write-Host "Backups: $script:BackupRoot" }
