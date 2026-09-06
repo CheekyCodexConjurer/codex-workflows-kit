@@ -1,0 +1,293 @@
+# scripts/tests/workflow-optimization-policy.Tests.ps1
+# Deterministic contract and invariant tests for workflow optimization policy:
+# - Circular gate resolution (independent approval allows idle open writers with consumed jobs; commit/final requires closure)
+# - Final unique integrated reviewer does not prohibit useful intermediate independent sharding
+# - Compact global instructions via explicit mandatory canonical anchors and progressive disclosure
+# - Invariant preservation: ALINHAMENTO safety, backend matrix, swarm nofixedcount, critical GPT synthesis, real park/wake, no fallback/auth/process protections
+# - Elimination of arbitrary 40-line pressure in favor of explicit structure and measured bytes
+
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory=$false)][string]$RepoRootOverride = '',
+    [Parameter(Mandatory=$false)][switch]$SkipNegativeSubprocess
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+$scriptDir = Split-Path -Parent $PSCommandPath
+$repoRoot = if ($RepoRootOverride) { [IO.Path]::GetFullPath($RepoRootOverride) } else { [IO.Path]::GetFullPath((Join-Path $scriptDir '..\..')) }
+
+$script:TestCount = 0
+$script:PassedCount = 0
+$script:FailedCount = 0
+$script:Failures = New-Object System.Collections.Generic.List[string]
+
+function Assert-Test {
+    param(
+        [Parameter(Mandatory=$true)][string]$Name,
+        [Parameter(Mandatory=$true)][bool]$Condition,
+        [Parameter(Mandatory=$false)][string]$Details = ''
+    )
+    $script:TestCount++
+    if ($Condition) {
+        $script:PassedCount++
+        Write-Host "  [PASS] $Name" -ForegroundColor Green
+    } else {
+        $script:FailedCount++
+        $msg = if ($Details) { "$Name -> $Details" } else { $Name }
+        $script:Failures.Add($msg)
+        Write-Host "  [FAIL] $msg" -ForegroundColor Red
+    }
+}
+
+Write-Host "Running Workflow Optimization Policy Tests..." -ForegroundColor Cyan
+
+# Load owned files
+$agentsFile = Join-Path $repoRoot 'codex\AGENTS.md'
+$geminiFile = Join-Path $repoRoot 'antigravity\GEMINI.md'
+$skillFile = Join-Path $repoRoot 'skills\workflows\SKILL.md'
+$deliveryReviewFile = Join-Path $repoRoot 'skills\workflows\references\delivery-review.md'
+$delegationFile = Join-Path $repoRoot 'skills\workflows\references\delegation.md'
+$commitFile = Join-Path $repoRoot 'skills\workflows\references\commit.md'
+$validationFile = Join-Path $repoRoot 'skills\workflows\references\validation.md'
+$validateScript = Join-Path $repoRoot 'scripts\validate.ps1'
+
+$agentsText = Get-Content -LiteralPath $agentsFile -Raw -Encoding UTF8
+$geminiText = Get-Content -LiteralPath $geminiFile -Raw -Encoding UTF8
+$skillText = Get-Content -LiteralPath $skillFile -Raw -Encoding UTF8
+$deliveryReviewText = Get-Content -LiteralPath $deliveryReviewFile -Raw -Encoding UTF8
+$delegationText = Get-Content -LiteralPath $delegationFile -Raw -Encoding UTF8
+$commitText = Get-Content -LiteralPath $commitFile -Raw -Encoding UTF8
+$validationText = Get-Content -LiteralPath $validationFile -Raw -Encoding UTF8
+$validateText = Get-Content -LiteralPath $validateScript -Raw -Encoding UTF8
+
+$agentsNorm = [regex]::Replace($agentsText, '\s+', ' ').Trim()
+$geminiNorm = [regex]::Replace($geminiText, '\s+', ' ').Trim()
+$skillNorm = [regex]::Replace($skillText, '\s+', ' ').Trim()
+$deliveryReviewNorm = [regex]::Replace($deliveryReviewText, '\s+', ' ').Trim()
+$delegationNorm = [regex]::Replace($delegationText, '\s+', ' ').Trim()
+
+# ==============================================================================
+# SECTION 1: Circular Gate Resolution
+# ==============================================================================
+Write-Host "`n-- 1. Circular Gate Resolution & Sharding --" -ForegroundColor Yellow
+
+Assert-Test "1.1 delivery-review.md resolves circular gate: approval allows idle open writers with consumed jobs" (
+    [regex]::IsMatch($deliveryReviewNorm, '(?i)(?:aprova[c\u00e7][a\u00e3]o|independent approval).*(?:idle open writers|writers? (?:abertos?|aberto\b).*(?:ocios[oa]s?|idle)|consumed jobs|jobs consumidos)')
+)
+
+Assert-Test "1.2 delivery-review.md enforces commit/final requires closure" (
+    [regex]::IsMatch($deliveryReviewNorm, '(?i)(?:commit/final requires closure|commit.*(?:fechamento|closure|encerrad[oa]s?).*(?:todos os agentes|all.*agents)|final.*(?:DONE|conclus[a\u00e3]o).*(?:closure|fechamento|encerrad[oa]s?))')
+)
+
+Assert-Test "1.3 delivery-review.md specifies final unique reviewer does not prohibit useful intermediate sharding" (
+    [regex]::IsMatch($deliveryReviewNorm, '(?i)(?:final unique integrated reviewer does not prohibit useful intermediate independent sharding|revisor [u\u00fa]nico e integrado final n[a\u00e3]o pro[i\u00ed]be.*(?:estilha[c\u00e7]amento|sharding).*intermedi[a\u00e1]ri[ao])')
+)
+
+Assert-Test "1.4 SKILL.md mirrors circular gate resolution (approval allows idle writers; commit/final requires closure)" (
+    [regex]::IsMatch($skillNorm, '(?i)(?:independent approval allows idle open writers|aprova[c\u00e7][a\u00e3]o.*idle open writers|approval allows idle open writers).*commit/final requires closure|aprova[c\u00e7][a\u00e3]o.*writers?.*ocios[oa]s?.*commit.*fechamento')
+)
+
+Assert-Test "1.5 SKILL.md specifies unique final reviewer does not prohibit intermediate sharding" (
+    [regex]::IsMatch($skillNorm, '(?i)(?:final unique integrated reviewer does not prohibit useful intermediate independent sharding|revisor [u\u00fa]nico e integrado final n[a\u00e3]o pro[i\u00ed]be.*(?:sharding|estilha[c\u00e7]amento))')
+)
+
+Assert-Test "1.6 codex/AGENTS.md reflects circular gate resolution" (
+    [regex]::IsMatch($agentsNorm, '(?i)(?:independent approval allows idle open writers|aprova[c\u00e7][a\u00e3]o.*writers?.*ocios[oa]s?|idle open writers).*commit/final requires closure|aprova[c\u00e7][a\u00e3]o.*writers?.*ocios[oa]s?.*commit.*fechamento')
+)
+
+Assert-Test "1.7 antigravity/GEMINI.md reflects circular gate resolution" (
+    [regex]::IsMatch($geminiNorm, '(?i)(?:independent approval allows idle open writers|aprova[c\u00e7][a\u00e3]o.*writers?.*ocios[oa]s?|idle open writers).*commit/final requires closure|aprova[c\u00e7][a\u00e3]o.*writers?.*ocios[oa]s?.*commit.*fechamento')
+)
+
+# ==============================================================================
+# SECTION 2: Mandatory Canonical Anchors & Progressive Disclosure
+# ==============================================================================
+Write-Host "`n-- 2. Mandatory Canonical Anchors & Progressive Disclosure --" -ForegroundColor Yellow
+
+Assert-Test "2.1 AGENTS.md anchors to skills/workflows/SKILL.md" (
+    $agentsNorm -match 'skills/workflows/SKILL\.md'
+)
+
+Assert-Test "2.2 AGENTS.md anchors to skills/mcp-foundation/SKILL.md" (
+    $agentsNorm -match 'skills/mcp-foundation/SKILL\.md'
+)
+
+Assert-Test "2.3 GEMINI.md anchors to skills/workflows/SKILL.md" (
+    $geminiNorm -match 'skills/workflows/SKILL\.md'
+)
+
+Assert-Test "2.4 GEMINI.md anchors to skills/mcp-foundation/SKILL.md" (
+    $geminiNorm -match 'skills/mcp-foundation/SKILL\.md'
+)
+
+# ==============================================================================
+# SECTION 3: Invariant Preservation Across Global Instructions
+# ==============================================================================
+Write-Host "`n-- 3. Core Invariant Preservation --" -ForegroundColor Yellow
+
+Assert-Test "3.1 AGENTS.md preserves ALINHAMENTO safety invariants" (
+    ($agentsNorm -match '(?i)\bALINHAMENTO\b') -and
+    ($agentsNorm -match '(?i)somente leitura') -and
+    ($agentsNorm -match '(?i)verbos imperativos (?:nunca|n[a\u00e3]o) inferem modo') -and
+    ($agentsNorm -match '(?i)(?:proibid[oa]|n[a\u00e3]o acionar|sem).*(?:metadados|metadata|estado local|local state).*(?:workspace|falha fechad|fail closed)')
+)
+
+Assert-Test "3.2 GEMINI.md preserves ALINHAMENTO safety invariants" (
+    ($geminiNorm -match '(?i)\bALINHAMENTO\b') -and
+    ($geminiNorm -match '(?i)somente leitura') -and
+    ($geminiNorm -match '(?i)verbos imperativos (?:nunca|n[a\u00e3]o) inferem modo') -and
+    ($geminiNorm -match '(?i)(?:proibid[oa]|n[a\u00e3]o acionar|sem).*(?:metadados|metadata|estado local|local state).*(?:workspace|falha fechad|fail closed)')
+)
+
+Assert-Test "3.3 AGENTS.md preserves backend matrix and route pinning" (
+    ($agentsNorm -match '(?i)subagent_backend') -and
+    ($agentsNorm -match '(?i)native') -and
+    ($agentsNorm -match '(?i)deepseek') -and
+    ($agentsNorm -match '(?i)gpt-5\.6-luna') -and
+    ($agentsNorm -match '(?i)fallback silencioso')
+)
+
+Assert-Test "3.4 AGENTS.md preserves swarm no fixed count invariant" (
+    ($agentsNorm -match '(?i)swarm') -and
+    ($agentsNorm -match '(?i)ondas do DAG|DAG waves') -and
+    ($agentsNorm -match '(?i)sem n[u\u00fa]mero fixo|no fixed number') -and
+    ($agentsNorm -match '(?i)agentes (?:s[a\u00e3]o )?tratados como efetivamente gratuitos|agents are treated as effectively free') -and
+    ($agentsNorm -match '(?i)n[a\u00e3]o conserva(?:r)? contagem de agentes|do not conserve agent count') -and
+    ($agentsNorm -match '(?i)fan-out l[o\u00f3]gico el[a\u00e1]stico|elastic logical fan-out')
+)
+
+Assert-Test "3.5 GEMINI.md preserves swarm no fixed count invariant" (
+    ($geminiNorm -match '(?i)swarm') -and
+    ($geminiNorm -match '(?i)ondas do DAG') -and
+    ($geminiNorm -match '(?i)sem n[u\u00fa]mero fixo') -and
+    ($geminiNorm -match '(?i)efetivamente gratuitos sem conservar contagem|agents are treated as effectively free')
+)
+
+Assert-Test "3.6 AGENTS.md preserves critical strategy GPT synthesis invariant" (
+    ($agentsNorm -match '(?i)subagent_strategy') -and
+    ($agentsNorm -match '(?i)critical') -and
+    ($agentsNorm -match '(?i)an[a\u00e1]lise independente') -and
+    ($agentsNorm -match '(?i)s[i\u00ed]ntese GPT') -and
+    ($agentsNorm -match '(?i)sem edi[c\u00e7][a\u00e3]o concorrente')
+)
+
+Assert-Test "3.7 GEMINI.md preserves critical strategy GPT synthesis invariant" (
+    ($geminiNorm -match '(?i)critical') -and
+    ($geminiNorm -match '(?i)an[a\u00e1]lise independente') -and
+    ($geminiNorm -match '(?i)s[i\u00ed]ntese GPT') -and
+    ($geminiNorm -match '(?i)sem edi[c\u00e7][a\u00e3]o concorrente')
+)
+
+Assert-Test "3.8 AGENTS.md preserves park_and_wake autonomy invariants" (
+    ($agentsNorm -match '(?i)subagent_continuation') -and
+    ($agentsNorm -match '(?i)active_follow') -and
+    ($agentsNorm -match '(?i)park_and_wake') -and
+    ($agentsNorm -match '(?i)ParkReceipt') -and
+    ($agentsNorm -match '(?i)SUSPENDED') -and
+    ($agentsNorm -match '(?i)active writer|deferred_active_writer') -and
+    ($agentsNorm -match '(?i)DONE.*(?:proibid[oa]|estritamente proibida)')
+)
+
+Assert-Test "3.9 GEMINI.md preserves park_and_wake autonomy invariants" (
+    ($geminiNorm -match '(?i)subagent_continuation') -and
+    ($geminiNorm -match '(?i)active_follow') -and
+    ($geminiNorm -match '(?i)park_and_wake') -and
+    ($geminiNorm -match '(?i)ParkReceipt') -and
+    ($geminiNorm -match '(?i)SUSPENDED') -and
+    ($geminiNorm -match '(?i)active writer|deferred_active_writer')
+)
+
+Assert-Test "3.10 AGENTS.md preserves no-fallback, auth, and process protections" (
+    ($agentsNorm -match '(?i)proibido reiniciar.*Antigravity|n[a\u00e3]o tocar auth|auth, profile, cookies') -and
+    ($agentsNorm -match '(?i)dist/cli\.js restart --config') -and
+    ($agentsNorm -match '(?i)sem fallback silencioso|sem fallback')
+)
+
+Assert-Test "3.11 GEMINI.md preserves no-fallback, auth, and process protections" (
+    ($geminiNorm -match '(?i)proibido reiniciar.*Antigravity|n[a\u00e3]o tocar auth|auth, profile, cookies') -and
+    ($geminiNorm -match '(?i)dist/cli\.js restart --config')
+)
+
+# ==============================================================================
+# SECTION 4: Measured Bytes & Structure (No Arbitrary Line Pressure)
+# ==============================================================================
+Write-Host "`n-- 4. Measured Bytes & Structural Cleanliness --" -ForegroundColor Yellow
+
+$agentsBytes = (Get-Item $agentsFile).Length
+$geminiBytes = (Get-Item $geminiFile).Length
+$agentsLines = (Get-Content $agentsFile).Count
+$geminiLines = (Get-Content $geminiFile).Count
+
+Write-Host "  Current codex/AGENTS.md: $agentsLines lines, $agentsBytes bytes" -ForegroundColor Gray
+Write-Host "  Current antigravity/GEMINI.md: $geminiLines lines, $geminiBytes bytes" -ForegroundColor Gray
+
+Assert-Test "4.1 codex/AGENTS.md byte size is reduced and bounded (< 18000 bytes, currently $agentsBytes)" (
+    $agentsBytes -lt 18000
+)
+
+Assert-Test "4.2 antigravity/GEMINI.md byte size is reduced and bounded (< 12000 bytes, currently $geminiBytes)" (
+    $geminiBytes -lt 12000
+)
+
+Assert-Test "4.3 scripts/validate.ps1 permits role surface in docs/free-mcps- docs" (
+    $validateText -match "docs/free-mcps-" -or $validateText -match "docs/free-mcps-runtime\.md"
+)
+
+# ==============================================================================
+# SECTION 5: Fail-Closed Subprocess Enforcement (Negative Test)
+# ==============================================================================
+if (-not $SkipNegativeSubprocess) {
+    Write-Host "`n-- 5. Fail-Closed Exit & Negative Subprocess Proof --" -ForegroundColor Yellow
+
+    $tempFixture = Join-Path ([System.IO.Path]::GetTempPath()) ("wop-negative-" + [Guid]::NewGuid().ToString('n'))
+    try {
+        $null = New-Item -ItemType Directory -Path (Join-Path $tempFixture 'codex') -Force
+        $null = New-Item -ItemType Directory -Path (Join-Path $tempFixture 'antigravity') -Force
+        $null = New-Item -ItemType Directory -Path (Join-Path $tempFixture 'skills\workflows\references') -Force
+        $null = New-Item -ItemType Directory -Path (Join-Path $tempFixture 'scripts') -Force
+
+        Copy-Item -LiteralPath $agentsFile -Destination (Join-Path $tempFixture 'codex\AGENTS.md')
+        Copy-Item -LiteralPath $geminiFile -Destination (Join-Path $tempFixture 'antigravity\GEMINI.md')
+        Copy-Item -LiteralPath $skillFile -Destination (Join-Path $tempFixture 'skills\workflows\SKILL.md')
+        Copy-Item -LiteralPath $deliveryReviewFile -Destination (Join-Path $tempFixture 'skills\workflows\references\delivery-review.md')
+        Copy-Item -LiteralPath $delegationFile -Destination (Join-Path $tempFixture 'skills\workflows\references\delegation.md')
+        Copy-Item -LiteralPath $commitFile -Destination (Join-Path $tempFixture 'skills\workflows\references\commit.md')
+        Copy-Item -LiteralPath $validationFile -Destination (Join-Path $tempFixture 'skills\workflows\references\validation.md')
+        Copy-Item -LiteralPath $validateScript -Destination (Join-Path $tempFixture 'scripts\validate.ps1')
+
+        # Remove an invariant in isolated fixture (fixture copy only, no product tampering)
+        $fixtureAgents = Join-Path $tempFixture 'codex\AGENTS.md'
+        $tamperedAgentsText = (Get-Content -LiteralPath $fixtureAgents -Raw -Encoding UTF8).Replace('ALINHAMENTO', 'TAMPERED_INVARIANT')
+        [System.IO.File]::WriteAllText($fixtureAgents, $tamperedAgentsText, [System.Text.Encoding]::UTF8)
+
+        # Invoke test script in subprocess targeting isolated fixture
+        $powershellExe = (Get-Process -Id $PID).Path
+        $subOut = & $powershellExe -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath -RepoRootOverride $tempFixture -SkipNegativeSubprocess 2>&1
+        $subExit = $LASTEXITCODE
+
+        Assert-Test "5.1 Subprocess exits nonzero (fail-closed exit 1) when invariant removed in isolated fixture" ($subExit -ne 0) "Expected nonzero exit code from subprocess but got $subExit"
+    }
+    finally {
+        if (Test-Path -LiteralPath $tempFixture) {
+            Remove-Item -LiteralPath $tempFixture -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+# ==============================================================================
+# Summary
+# ==============================================================================
+Write-Host "`n==========================================" -ForegroundColor Cyan
+Write-Host "Total: $script:TestCount | Passed: $script:PassedCount | Failed: $script:FailedCount" -ForegroundColor Cyan
+if ($script:FailedCount -eq 0) {
+    Write-Host "All workflow optimization policy tests passed deterministically." -ForegroundColor Green
+    exit 0
+} else {
+    Write-Host "Failures occurred in workflow optimization policy tests." -ForegroundColor Red
+    foreach ($f in $script:Failures) {
+        Write-Host "  - $f" -ForegroundColor Yellow
+    }
+    exit 1
+}

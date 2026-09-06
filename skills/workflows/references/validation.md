@@ -31,7 +31,7 @@ requested mode, never run automatically.
 - Run `git diff --check` plus targeted and integrated deterministic validation.
 - An independent review must yield an `APPROVED` verdict with zero blockers
   (`zero blockers`) against the matching frozen target before committing.
-- Commit gate: verify exact `target_id` before staging; after staging and immediately before commit, recompute the staging-invariant identity (`target_id`) and require equality, verify the staged path set is exactly the approved owned set, and verify every staged blob equals the Git-normalized approved content.
+- Commit gate: verify exact `target_id` before staging; after staging and immediately before commit, recompute the staging-invariant identity (`target_id`) and require equality, verify the staged path set is exactly the approved owned set, and verify every staged blob equals the Git-normalized approved content; independent approval allows idle open writers with consumed jobs, while commit/final requires closure of all obligations and agents (`commit/final requires closure`).
 - Blocked reviews use a consolidated repair cycle under the evidence-based repair policy (reparo orientado a evidência; anti-loop ledger recording hypothesis, expected observation, observed delta, next decision; lack of delta requires different diagnostic direction, no duplicate retries or worker swarm duplication; stop only on genuine authority/access/user-decision or no safe actionable path, never a numerical counter; subsequent useful repairs allowed with new hypothesis and delta). Follow-up fixes are new commits — no amend or rewrite.
 
 ## Repository and installed mirrors
@@ -41,6 +41,7 @@ requested mode, never run automatically.
   before validating the installed mirrors.
 - `scripts/doctor.ps1` verifies managed files and their hashes without making
   changes.
+- Safe PowerShell routing: automated non-trivial scripts must run through `scripts/invoke-safe-powershell.ps1` (resolved from repo root `scripts/invoke-safe-powershell.ps1` in repository context, or from the skill mirror's own `scripts/invoke-safe-powershell.ps1` in installed workflows mirrors) using `-File`, `-NoProfile`, and `-NonInteractive`. Never use string-interpolated `-Command` or `Invoke-Expression`. In no-write modes and ALINHAMENTO, creating temporary or new scripts is forbidden; existing non-mutating commands (somente leitura) remain direct with non-interactive flags. Native command failures require an explicit exit code check (`$LASTEXITCODE`). Real-time stdout/stderr streaming must remain visible. If the safe helper is unavailable, fail closed without falling back to unsafe command strings or package installations (`safehelper unavailable failclosed for unsafe route not packageinstall`). The helper does not intercept arbitrary third-party tools outside its explicit execution path.
 - A fresh delegated handoff may be used as a smoke check only when the host
   exposes that capability. Its result proves the assigned evidence task, not
   a file change.

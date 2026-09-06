@@ -134,6 +134,7 @@ $context7Source = Join-Path $skillsSource 'context7-mcp'
 $agentsMdSource = Join-Path $repo 'codex\AGENTS.md'
 $geminiMdSource = Join-Path $repo 'antigravity\GEMINI.md'
 $ahkSource = Join-Path $repo 'ahk\codex_prompt_pad.ahk'
+$safePowerShellSource = Join-Path $repo 'scripts\invoke-safe-powershell.ps1'
 
 $skillsDest = Join-Path $AgentsHome 'skills'
 $antigravitySkillsDest1 = Join-Path $AntigravityHome 'antigravity\skills'
@@ -1236,6 +1237,14 @@ function Assert-InstallPreflight {
         throw "Prompt pad source is missing: $ahkSource"
     }
 
+    if (-not (Test-Path -LiteralPath $safePowerShellSource -PathType Leaf)) {
+        throw "Canonical safe PowerShell helper is missing: $safePowerShellSource"
+    }
+    $safeHelperRaw = Get-Content -LiteralPath $safePowerShellSource -Raw -Encoding UTF8
+    if ([string]::IsNullOrWhiteSpace($safeHelperRaw)) {
+        throw "Canonical safe PowerShell helper is empty: $safePowerShellSource"
+    }
+
     if ($Profile -ne 'safe') {
         return
     }
@@ -1267,6 +1276,8 @@ try {
     Assert-InstallPreflight
     Initialize-PriorState
 
+    $safeHelperContent = Get-Content -LiteralPath $safePowerShellSource -Raw -Encoding UTF8
+
     $skillTargets = @(
         $skillsDest,
         $antigravitySkillsDest1,
@@ -1282,6 +1293,10 @@ try {
         Copy-ManagedTree -Source $codebaseMemorySource -Destination (Join-Path $target 'codebase-memory-mcp')
         Migrate-UnmanagedContext7Skill -TargetDirectory $target
         Copy-ManagedTree -Source $context7Source -Destination (Join-Path $target 'context7-mcp')
+
+        $workflowMirrorDir = Join-Path $target 'workflows'
+        $workflowMirrorHelper = Join-Path $workflowMirrorDir 'scripts\invoke-safe-powershell.ps1'
+        Install-ManagedContent -Destination $workflowMirrorHelper -Content $safeHelperContent
     }
 
     if ($Profile -eq 'safe') {

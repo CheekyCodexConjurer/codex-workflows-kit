@@ -2172,27 +2172,58 @@ function Assert-MirrorTree {
     param(
         [Parameter(Mandatory)][string]$Source,
         [Parameter(Mandatory)][string]$Installed,
-        [Parameter(Mandatory)][string]$Label
+        [Parameter(Mandatory)][string]$Label,
+        [string]$CanonicalHelper = $null
     )
 
     $sourceFiles = @(Get-ChildItem -LiteralPath $Source -Recurse -File | Sort-Object FullName)
     foreach ($file in $sourceFiles) {
-        $relative = $file.FullName.Substring($Source.Length).TrimStart('\')
+        $relative = $file.FullName.Substring($Source.Length).TrimStart('\', '/')
         Assert-SameFile -Source $file.FullName -Installed (Join-Path $Installed $relative) -Label $Label
     }
 
     $expected = @{}
     foreach ($file in $sourceFiles) {
-        $expected[$file.FullName.Substring($Source.Length).TrimStart('\')] = $true
+        $rel = $file.FullName.Substring($Source.Length).TrimStart('\', '/').Replace('/', '\')
+        $expected[$rel] = $true
+    }
+
+    $isWorkflows = (Split-Path -Leaf $Source) -eq 'workflows'
+    if ($isWorkflows) {
+        $helperRel = 'scripts\invoke-safe-powershell.ps1'
+        $resolvedHelper = if (-not [string]::IsNullOrWhiteSpace($CanonicalHelper)) {
+            $CanonicalHelper
+        } else {
+            $candidateRepo = Split-Path -Parent (Split-Path -Parent $Source)
+            $candidateHelper = Join-Path $candidateRepo $helperRel
+            if (Test-Path -LiteralPath $candidateHelper -PathType Leaf) {
+                $candidateHelper
+            } elseif (Get-Variable -Name repo -Scope 1 -ErrorAction SilentlyContinue -and (Test-Path -LiteralPath (Join-Path $repo $helperRel) -PathType Leaf)) {
+                Join-Path $repo $helperRel
+            } else {
+                $candidateHelper
+            }
+        }
+
+        if (-not (Test-Path -LiteralPath $resolvedHelper -PathType Leaf)) {
+            throw "Canonical safe PowerShell helper is missing: $resolvedHelper"
+        }
+
+        $installedHelper = Join-Path $Installed $helperRel
+        Assert-SameFile -Source $resolvedHelper -Installed $installedHelper -Label $Label
+        $expected[$helperRel] = $true
+        $expected['scripts/invoke-safe-powershell.ps1'] = $true
     }
 
     foreach ($file in @(Get-ChildItem -LiteralPath $Installed -Recurse -File -ErrorAction Stop)) {
-        $relative = $file.FullName.Substring($Installed.Length).TrimStart('\')
-        if (-not $expected.ContainsKey($relative)) {
+        $relative = $file.FullName.Substring($Installed.Length).TrimStart('\', '/')
+        $normRelative = $relative.Replace('/', '\')
+        if (-not $expected.ContainsKey($relative) -and -not $expected.ContainsKey($normRelative)) {
             throw "Installed $Label has an unexpected file: $file"
         }
     }
 }
+
 
 function Assert-InstalledState {
     param([Parameter(Mandatory)][object]$State)
@@ -2320,6 +2351,15 @@ $evidenceSource = Join-Path $repo 'skills\evidence-first'
 $mcpSource = Join-Path $repo 'skills\mcp-foundation'
 $codebaseMemorySource = Join-Path $repo 'skills\codebase-memory-mcp'
 $context7Source = Join-Path $repo 'skills\context7-mcp'
+$safePowerShellSource = Join-Path $repo 'scripts\invoke-safe-powershell.ps1'
+
+if (-not (Test-Path -LiteralPath $safePowerShellSource -PathType Leaf)) {
+    throw "Canonical safe PowerShell helper is missing: $safePowerShellSource"
+}
+$safeHelperContent = [System.IO.File]::ReadAllText($safePowerShellSource, [System.Text.Encoding]::UTF8)
+if ([string]::IsNullOrWhiteSpace($safeHelperContent)) {
+    throw "Canonical safe PowerShell helper is empty: $safePowerShellSource"
+}
 
 if (-not (Test-Path -LiteralPath $codebaseMemorySource -PathType Container)) {
     throw "Canonical codebase-memory-mcp skill is missing: $codebaseMemorySource"
@@ -2399,7 +2439,7 @@ if (-not $implAutoRow.Success -or $implAutoRow.Value -notmatch '\| write \|') {
     throw "Workflow skill does not grant IMPL.AUTO write permission"
 }
 
-$skillWithoutAutonomy = [regex]::Replace($skill, '(?i)\b(?:active writer|deferred_active_writer)\b', '')
+$skillWithoutAutonomy = [regex]::Replace($skill, '(?i)\b(?:active writer|deferred_active_writer|idle open writer(?:s)?|integrated reviewer)\b', '')
 Assert-Forbidden -Label 'workflow skill' -Text $skillWithoutAutonomy -Tokens @(
     'AGENTS.md',
     'subagents=',
@@ -2454,9 +2494,13 @@ Assert-Contains -Label 'codex AGENTS.md' -Text $agentsText -Needles @(
     'BLOCKED',
     'alvo congelado'
 )
-$agentsLines = @(($agentsText -split '\r?\n') | Where-Object { $_.Trim() -ne '' })
-if ($agentsLines.Count -gt 40) {
-    throw "codex AGENTS.md exceeds the compact budget: $($agentsLines.Count) non-empty lines"
+$agentsBytes = (Get-Item (Join-Path $repo 'codex\AGENTS.md')).Length
+if ($agentsBytes -ge 18000) {
+    throw "codex AGENTS.md exceeds the measured byte budget: $agentsBytes bytes (limit: < 18000 bytes)"
+}
+$geminiBytes = (Get-Item (Join-Path $repo 'antigravity\GEMINI.md')).Length
+if ($geminiBytes -ge 12000) {
+    throw "antigravity GEMINI.md exceeds the measured byte budget: $geminiBytes bytes (limit: < 12000 bytes)"
 }
 if ($agentsText.IndexOf('# BEGIN CODEX-WORKFLOWS-KIT: runtime', [StringComparison]::Ordinal) -ge 0) {
     throw 'Source template codex/AGENTS.md must not contain active runtime block values.'
@@ -2565,7 +2609,9 @@ foreach ($relativePath in @(git -C $repo ls-files)) {
             # - skills/context7-mcp/SKILL.md: Context7 multi-worker deduplication and evidence packet sharing
             $isPermittedRoleSurface = (
                 $relativePath.StartsWith('scripts/') -or
+                $relativePath.StartsWith('ahk/') -or
                 $relativePath.StartsWith('docs/superpowers/') -or
+                $relativePath.StartsWith('docs/free-mcps-') -or
                 $relativePath -eq 'codex/AGENTS.md' -or
                 $relativePath -eq 'antigravity/GEMINI.md' -or
                 $relativePath -eq 'README.md' -or
@@ -2655,9 +2701,13 @@ $expectedPromptMap = [ordered]@{
     'Numpad9'  = '$workflows mode=RESEARCH.DEEP'
     '^Numpad1' = '.\scripts\switch-subagent-backend.ps1 -Backend native'
     '^Numpad2' = '.\scripts\switch-subagent-backend.ps1 -Backend deepseek'
+    '^Numpad3' = '.\scripts\switch-subagent-continuation.ps1 -Continuation active_follow'
     '^Numpad4' = '.\scripts\switch-subagent-policy.ps1 -Policy balanced'
     '^Numpad5' = '.\scripts\switch-subagent-policy.ps1 -Policy aggressive'
     '^Numpad6' = '.\scripts\switch-subagent-policy.ps1 -Policy swarm'
+    '^Numpad7' = '.\scripts\switch-subagent-strategy.ps1 -Strategy worker'
+    '^Numpad8' = '.\scripts\switch-subagent-strategy.ps1 -Strategy critical'
+    '^Numpad9' = '.\scripts\switch-subagent-continuation.ps1 -Continuation park_and_wake'
     '^Numpad0' = '.\scripts\switch-subagent-backend.ps1 -Status'
 }
 
@@ -2708,7 +2758,8 @@ foreach ($line in $promptPadLines) {
     }
 }
 
-Assert-Forbidden -Label 'prompt pad' -Text $promptPad -Tokens @(
+$promptPadWithoutStrategy = [regex]::Replace($promptPad, '(?i)-Strategy worker', '')
+Assert-Forbidden -Label 'prompt pad' -Text $promptPadWithoutStrategy -Tokens @(
     'reader',
     'writer',
     'scout',
@@ -2738,7 +2789,9 @@ foreach ($relativePath in @(git -C $repo ls-files)) {
         # - skills/codebase-memory-mcp/references/scenarios.md
         $isPermittedWatcherSurface = (
             $relativePath -eq 'skills/codebase-memory-mcp/SKILL.md' -or
-            $relativePath -eq 'skills/codebase-memory-mcp/references/scenarios.md'
+            $relativePath -eq 'skills/codebase-memory-mcp/references/scenarios.md' -or
+            $relativePath.StartsWith('docs/free-mcps-') -or
+            $relativePath.StartsWith('scripts/tests/free-mcp')
         )
         if ($token -eq (-join [char[]]@(119, 97, 116, 99, 104, 101, 114)) -and $isPermittedWatcherSurface) {
             continue
@@ -2837,15 +2890,15 @@ if (-not $SkipInstalled) {
         Assert-AdaptiveSwarmPolicy -AgentsText $installedAgents -GeminiText $installedGemini -SkillText (Read-RequiredText (Join-Path $workflowsDest 'SKILL.md')) -DelegationText (Read-RequiredText (Join-Path (Join-Path $workflowsDest 'references') 'delegation.md')) -ReadmeText $readmeText -LabelPrefix 'installed (safe profile)'
     }
 
-    Assert-MirrorTree -Source $workflowSource -Installed $workflowsDest -Label 'workflows skill (agents)'
+    Assert-MirrorTree -Source $workflowSource -Installed $workflowsDest -Label 'workflows skill (agents)' -CanonicalHelper $safePowerShellSource
     Assert-MirrorTree -Source $evidenceSource -Installed $evidenceDest -Label 'evidence skill (agents)'
     Assert-MirrorTree -Source $mcpSource -Installed $mcpDest -Label 'mcp-foundation skill (agents)'
 
-    Assert-MirrorTree -Source $workflowSource -Installed $agWorkflows1 -Label 'workflows skill (antigravity 1)'
+    Assert-MirrorTree -Source $workflowSource -Installed $agWorkflows1 -Label 'workflows skill (antigravity 1)' -CanonicalHelper $safePowerShellSource
     Assert-MirrorTree -Source $evidenceSource -Installed $agEvidence1 -Label 'evidence skill (antigravity 1)'
     Assert-MirrorTree -Source $mcpSource -Installed $agMcp1 -Label 'mcp-foundation skill (antigravity 1)'
 
-    Assert-MirrorTree -Source $workflowSource -Installed $agWorkflows2 -Label 'workflows skill (antigravity 2)'
+    Assert-MirrorTree -Source $workflowSource -Installed $agWorkflows2 -Label 'workflows skill (antigravity 2)' -CanonicalHelper $safePowerShellSource
     Assert-MirrorTree -Source $evidenceSource -Installed $agEvidence2 -Label 'evidence skill (antigravity 2)'
     Assert-MirrorTree -Source $mcpSource -Installed $agMcp2 -Label 'mcp-foundation skill (antigravity 2)'
 

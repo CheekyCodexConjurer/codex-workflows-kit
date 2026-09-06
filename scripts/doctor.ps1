@@ -356,6 +356,181 @@ function Get-ShortcutInfo {
     }
 }
 
+function Test-AutoHotkeyV2Executable {
+    param([Parameter(Mandatory=$false)][string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return [pscustomobject]@{
+            IsValid = $false
+            Path = $null
+            Version = $null
+            Reason = 'Path is null or empty'
+        }
+    }
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return [pscustomobject]@{
+            IsValid = $false
+            Path = $Path
+            Version = $null
+            Reason = 'File does not exist'
+        }
+    }
+
+    try {
+        $vi = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($Path)
+        $isAhkProduct = ($vi.ProductName -match 'AutoHotkey' -or $vi.FileDescription -match 'AutoHotkey' -or $vi.CompanyName -match 'AutoHotkey')
+        $isV2 = ($vi.FileMajorPart -eq 2 -or $vi.ProductMajorPart -eq 2 -or $vi.ProductVersion -match '^2\.' -or $vi.FileVersion -match '^2\.')
+
+        if ($isAhkProduct -and $isV2) {
+            $ver = if (-not [string]::IsNullOrWhiteSpace($vi.ProductVersion)) { $vi.ProductVersion.Trim() } else { $vi.FileVersion.Trim() }
+            return [pscustomobject]@{
+                IsValid = $true
+                Path = [IO.Path]::GetFullPath($Path)
+                Version = $ver
+                Reason = 'Verified AutoHotkey v2'
+            }
+        }
+        else {
+            return [pscustomobject]@{
+                IsValid = $false
+                Path = $Path
+                Version = if (-not [string]::IsNullOrWhiteSpace($vi.ProductVersion)) { $vi.ProductVersion.Trim() } else { $vi.FileVersion }
+                Reason = if (-not $isAhkProduct) { 'Not an AutoHotkey binary' } else { 'AutoHotkey version is not v2' }
+            }
+        }
+    }
+    catch {
+        return [pscustomobject]@{
+            IsValid = $false
+            Path = $Path
+            Version = $null
+            Reason = "Failed to inspect executable metadata: $($_.Exception.Message)"
+        }
+    }
+}
+
+function Resolve-AutoHotkeyV2Executable {
+    param(
+        [string]$ShortcutPath,
+        [string[]]$CandidatePaths
+    )
+
+    # 1. Attempt detection via startup shortcut target
+    $resolvedShortcut = if (-not [string]::IsNullOrWhiteSpace($ShortcutPath)) {
+        $ShortcutPath
+    }
+    else {
+        Join-Path ([Environment]::GetFolderPath('Startup')) 'Codex Prompt Pad.lnk'
+    }
+
+    if (Test-Path -LiteralPath $resolvedShortcut -PathType Leaf) {
+        $scInfo = Get-ShortcutInfo -Path $resolvedShortcut
+        if ($null -ne $scInfo -and -not [string]::IsNullOrWhiteSpace($scInfo.TargetPath)) {
+            $testRes = Test-AutoHotkeyV2Executable -Path $scInfo.TargetPath
+            if ($testRes.IsValid) {
+                return [pscustomobject]@{
+                    IsValid = $true
+                    Path = $testRes.Path
+                    Version = $testRes.Version
+                    Source = 'ShortcutTarget'
+                }
+            }
+        }
+    }
+
+    # 2. Canonical existing knownpaths
+    $defaultKnownPaths = @(
+        'E:\Programs\AHK\v2\AutoHotkey64.exe',
+        'E:\Programs\AHK\v2\AutoHotkey32.exe',
+        'E:\Programs\AutoHotkey\v2\AutoHotkey64.exe',
+        'C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe',
+        'C:\Program Files\AutoHotkey\v2\AutoHotkey32.exe',
+        'C:\Program Files\AutoHotkey\AutoHotkey64.exe',
+        'C:\Program Files\AutoHotkey\AutoHotkey32.exe',
+        'C:\Program Files\AutoHotkey\AutoHotkey.exe',
+        'C:\Program Files (x86)\AutoHotkey\v2\AutoHotkey64.exe',
+        'C:\Program Files (x86)\AutoHotkey\v2\AutoHotkey32.exe',
+        'C:\Program Files (x86)\AutoHotkey\AutoHotkey.exe',
+        (Join-Path $env:LOCALAPPDATA 'Programs\AutoHotkey\v2\AutoHotkey64.exe'),
+        (Join-Path $env:LOCALAPPDATA 'Programs\AutoHotkey\v2\AutoHotkey32.exe')
+    )
+
+    if ($env:ProgramFiles) {
+        $defaultKnownPaths += Join-Path $env:ProgramFiles 'AutoHotkey\v2\AutoHotkey64.exe'
+    }
+    if (${env:ProgramFiles(x86)}) {
+        $defaultKnownPaths += Join-Path ${env:ProgramFiles(x86)} 'AutoHotkey\v2\AutoHotkey32.exe'
+    }
+
+    $pathsToCheck = if ($null -ne $CandidatePaths) { $CandidatePaths } else { $defaultKnownPaths }
+
+    foreach ($candidate in $pathsToCheck) {
+        if ([string]::IsNullOrWhiteSpace($candidate)) { continue }
+        $testRes = Test-AutoHotkeyV2Executable -Path $candidate
+        if ($testRes.IsValid) {
+            return [pscustomobject]@{
+                IsValid = $true
+                Path = $testRes.Path
+                Version = $testRes.Version
+                Source = 'KnownPath'
+            }
+        }
+    }
+
+    # 3. Check PATH without executing
+    if ($null -eq $CandidatePaths) {
+        $pathCommands = @('AutoHotkey64.exe', 'AutoHotkey.exe')
+        foreach ($cmdName in $pathCommands) {
+            $cmdInfo = Get-Command $cmdName -ErrorAction SilentlyContinue
+            if ($null -ne $cmdInfo -and -not [string]::IsNullOrWhiteSpace($cmdInfo.Source)) {
+                $testRes = Test-AutoHotkeyV2Executable -Path $cmdInfo.Source
+                if ($testRes.IsValid) {
+                    return [pscustomobject]@{
+                        IsValid = $true
+                        Path = $testRes.Path
+                        Version = $testRes.Version
+                        Source = 'PATH'
+                    }
+                }
+            }
+        }
+    }
+
+    return [pscustomobject]@{
+        IsValid = $false
+        Path = $null
+        Version = $null
+        Source = $null
+    }
+}
+
+function Test-PromptPadContract {
+    param([Parameter(Mandatory)][string]$Text)
+
+    $tWr = Get-RuntimeToken @(119, 114, 105, 116, 101, 114)
+    $tSct = Get-RuntimeToken @(115, 99, 111, 117, 116)
+    $tRsr = Get-RuntimeToken @(114, 101, 115, 101, 97, 114, 99, 104, 101, 114)
+    $tRvw = Get-RuntimeToken @(114, 101, 118, 105, 101, 119, 101, 114)
+    $tWk = Get-RuntimeToken @(119, 111, 114, 107, 101, 114)
+
+    # Narrowly allow exact canonical passive switch-subagent-strategy -Strategy worker command
+    $canonicalPassiveRegex = '(?i)PastePrompt\s*\(\s*["''](?:\.[\\/])?(?:scripts[\\/])?switch-subagent-strategy(?:\.ps1)?\s+-Strategy\s+' + $tWk + '\s*["'']\s*\)'
+    $sanitized = [regex]::Replace($Text, $canonicalPassiveRegex, '')
+
+    $promptPadPatterns = @('\breader\b', ('\b' + $tWr + '\b'), ('\b' + $tSct + '\b'), ('\b' + $tRsr + '\b'), ('\b' + $tRvw + '\b'), ('\b' + $tWk + '\b'), 'PromptPadNative', 'BackendOverrideText', 'WorkflowPrompt')
+    foreach ($pattern in $promptPadPatterns) {
+        if ([regex]::IsMatch($sanitized, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)) {
+            return $false
+        }
+    }
+    return $true
+}
+
+if ($MyInvocation.InvocationName -eq '.') {
+    return
+}
+
 $defaultCodexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE '.codex' }
 $defaultAgentsHome = if ($env:AGENTS_HOME) { $env:AGENTS_HOME } else { Join-Path $env:USERPROFILE '.agents' }
 $defaultAntigravityHome = if ($env:ANTIGRAVITY_HOME) { $env:ANTIGRAVITY_HOME } else { Join-Path $env:USERPROFILE '.gemini' }
@@ -507,7 +682,9 @@ if ($installedProfile -eq 'safe') {
     $templateMatches = $false
     if (-not [string]::IsNullOrWhiteSpace($agentsMdContent) -and (Test-Path -LiteralPath $templatePath -PathType Leaf)) {
         $template = (Get-Content -LiteralPath $templatePath -Raw -Encoding UTF8).Trim()
-        $templateMatches = $agentsMdContent.IndexOf($template, [StringComparison]::Ordinal) -ge 0
+        $normalizedAgents = $agentsMdContent -replace '\r\n', "`n"
+        $normalizedTemplate = $template -replace '\r\n', "`n"
+        $templateMatches = $normalizedAgents.IndexOf($normalizedTemplate, [StringComparison]::Ordinal) -ge 0
     }
     Write-Check -Name 'Managed AGENTS template' -Passed $templateMatches -Detail $agentsMdPath -Optional
 
@@ -519,7 +696,9 @@ if ($installedProfile -eq 'safe') {
     $geminiTemplateMatches = $false
     if (-not [string]::IsNullOrWhiteSpace($geminiMdContent) -and (Test-Path -LiteralPath $geminiTemplatePath -PathType Leaf)) {
         $geminiTemplate = (Get-Content -LiteralPath $geminiTemplatePath -Raw -Encoding UTF8).Trim()
-        $geminiTemplateMatches = $geminiMdContent.IndexOf($geminiTemplate, [StringComparison]::Ordinal) -ge 0
+        $normalizedGemini = $geminiMdContent -replace '\r\n', "`n"
+        $normalizedGeminiTemplate = $geminiTemplate -replace '\r\n', "`n"
+        $geminiTemplateMatches = $normalizedGemini.IndexOf($normalizedGeminiTemplate, [StringComparison]::Ordinal) -ge 0
     }
     Write-Check -Name 'Managed GEMINI template' -Passed $geminiTemplateMatches -Detail $geminiMdPath -Optional
 }
@@ -680,15 +859,8 @@ if ($null -ne $state) {
 
 if (-not [string]::IsNullOrWhiteSpace($ahkPath) -and (Test-Path -LiteralPath $ahkPath -PathType Leaf)) {
     $ahkText = Get-Content -LiteralPath $ahkPath -Raw -Encoding UTF8
-    $promptPadPatterns = @('\breader\b', ('\b' + $tWr + '\b'), ('\b' + $tSct + '\b'), ('\b' + $tRsr + '\b'), ('\b' + $tRvw + '\b'), ('\b' + $tWk + '\b'), 'PromptPadNative', 'BackendOverrideText', 'WorkflowPrompt')
-    $promptPadDirty = $false
-    foreach ($pattern in $promptPadPatterns) {
-        if ([regex]::IsMatch($ahkText, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)) {
-            $promptPadDirty = $true
-            break
-        }
-    }
-    Write-Check -Name 'Prompt Pad contract' -Passed (-not $promptPadDirty) -Detail $ahkPath
+    $promptPadValid = Test-PromptPadContract -Text $ahkText
+    Write-Check -Name 'Prompt Pad contract' -Passed $promptPadValid -Detail $ahkPath
 
     $startupShortcut = Join-Path ([Environment]::GetFolderPath('Startup')) 'Codex Prompt Pad.lnk'
     if (Test-Path -LiteralPath $startupShortcut -PathType Leaf) {
@@ -708,6 +880,15 @@ if (-not [string]::IsNullOrWhiteSpace($ahkPath) -and (Test-Path -LiteralPath $ah
             }
             if (-not [string]::IsNullOrWhiteSpace($shortcut.TargetPath) -and -not (Test-Path -LiteralPath $shortcut.TargetPath -PathType Leaf)) {
                 Write-Check -Name 'Prompt Pad executable' -Passed $false -Optional -Detail "Shortcut target is missing: $($shortcut.TargetPath)"
+            }
+            elseif (-not [string]::IsNullOrWhiteSpace($shortcut.TargetPath)) {
+                $targetAhk = Test-AutoHotkeyV2Executable -Path $shortcut.TargetPath
+                if ($targetAhk.IsValid) {
+                    Write-Check -Name 'Prompt Pad executable' -Passed $true -Detail "$($shortcut.TargetPath) (v$($targetAhk.Version))"
+                }
+                else {
+                    Write-Check -Name 'Prompt Pad executable' -Passed $false -Optional -Detail "Shortcut target is not verified AutoHotkey v2: $($shortcut.TargetPath)"
+                }
             }
         }
     }
@@ -827,7 +1008,13 @@ catch {
 
 Write-Check -Name 'Git' -Passed (Test-Command -Name 'git') -Detail 'Required for repository operations'
 Write-Check -Name 'PowerShell' -Passed ($PSVersionTable.PSVersion.Major -ge 5) -Detail $PSVersionTable.PSVersion
-Write-Check -Name 'AutoHotkey v2' -Passed (Test-Command -Name 'AutoHotkey64.exe') -Detail 'Required only for the prompt pad' -Optional
+$resolvedAhk = Resolve-AutoHotkeyV2Executable
+if ($resolvedAhk.IsValid) {
+    Write-Check -Name 'AutoHotkey v2' -Passed $true -Detail "$($resolvedAhk.Path) (v$($resolvedAhk.Version))"
+}
+else {
+    Write-Check -Name 'AutoHotkey v2' -Passed $false -Detail 'Required only for the prompt pad' -Optional
+}
 
 if ($Detailed) {
     Write-Host ''
