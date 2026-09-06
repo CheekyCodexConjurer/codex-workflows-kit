@@ -755,6 +755,89 @@ function Set-CodexAgentsManagedBlockText {
     }
 }
 
+function Get-GeminiManagedBlockInfo {
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Content)
+
+    $beginMarker = '# BEGIN CODEX-WORKFLOWS-KIT'
+    $endMarker = '# END CODEX-WORKFLOWS-KIT'
+
+    $beginIdx = $Content.IndexOf($beginMarker, [StringComparison]::Ordinal)
+    $endIdx = if ($beginIdx -ge 0) { $Content.IndexOf($endMarker, $beginIdx, [StringComparison]::Ordinal) } else { -1 }
+
+    $hasValidMarkers = ($beginIdx -ge 0 -and $endIdx -ge 0 -and $endIdx -ge ($beginIdx + $beginMarker.Length))
+
+    $head = ''
+    $managed = ''
+    $tail = ''
+
+    if ($hasValidMarkers) {
+        $head = $Content.Substring(0, $beginIdx)
+        $managed = $Content.Substring($beginIdx, ($endIdx + $endMarker.Length) - $beginIdx)
+        $tail = $Content.Substring($endIdx + $endMarker.Length)
+    }
+
+    return [pscustomobject]@{
+        HasValidMarkers = $hasValidMarkers
+        BeginIndex      = $beginIdx
+        EndIndex        = $endIdx
+        Head            = $head
+        Managed         = $managed
+        Tail            = $tail
+    }
+}
+
+function Get-GeminiLegacyConflicts {
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
+
+    $conflicts = New-Object System.Collections.Generic.List[string]
+
+    if ($Text -match '(?m)^\s*-\s*Read-only subagents default to 5\.6 Sol Medium' -or
+        $Text -match '(?m)^\s*-\s*Every read-only spawn must select the exact custom role' -or
+        $Text -match '(?m)^\s*-\s*Custom-role spawns must omit' -or
+        $Text -match '(?m)^\s*-\s*On a transient launch, stream, or account-availability error, continue useful local work and make one fresh retry with the same explicit role') {
+        $conflicts.Add('native subagent models/roles (5.6 Sol Medium, custom role restrictions)')
+    }
+
+    if ($Text -match '(?m)^\s*-\s*In delivery, scouts and implementation workers may start early, but independent reviewers start only after all approved phases are integrated and frozen' -or
+        $Text -match '(?m)^\s*-\s*Deduplicate findings into one fix batch.*do not spawn reviewers per phase') {
+        $conflicts.Add('delivery review veto (prohibits intermediate phase reviews)')
+    }
+
+    if ($Text -match '(?m)^\s*-\s*Allowlisted baseline:.*openaiDeveloperDocs' -or
+        $Text -match '(?m)^\s*-\s*If an allowlisted MCP is missing,\s*run.*?maintain-mcps\.ps1\s+-Mode\s+Repair') {
+        $conflicts.Add('maintain-mcps repair / divergent allowlist (openaiDeveloperDocs, maintain-mcps.ps1 -Mode Repair)')
+    }
+
+    return @($conflicts)
+}
+
+function Remove-GeminiLegacyConflicts {
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
+
+    $patterns = @(
+        # Conflict 1: Native models / custom roles
+        '(?m)^\s*-\s*Read-only subagents default to 5\.6 Sol Medium.*?(?:\r?\n|$)',
+        '(?m)^\s*-\s*Every read-only spawn must select the exact custom role.*?(?:\r?\n|$)',
+        '(?m)^\s*-\s*Custom-role spawns must omit.*?(?:\r?\n|$)',
+        '(?m)^\s*-\s*On a transient launch, stream, or account-availability error, continue useful local work and make one fresh retry with the same explicit role.*?(?:\r?\n|$)',
+
+        # Conflict 2: Intermediate review veto
+        '(?m)^\s*-\s*In delivery, scouts and implementation workers may start early, but independent reviewers start only after all approved phases are integrated and frozen.*?(?:\r?\n|$)',
+        '(?m)^\s*-\s*Deduplicate findings into one fix batch, then revalidate and run one delta-focused closure review; do not spawn reviewers per phase.*?(?:\r?\n|$)',
+
+        # Conflict 3: maintain-mcps repair & divergent allowlist
+        '(?m)^\s*-\s*Allowlisted baseline:\s*`?codegraph`?,\s*`?context7`?,\s*and\s*`?openaiDeveloperDocs`?.*?(?:\r?\n|$)',
+        '(?m)^\s*-\s*If an allowlisted MCP is missing,\s*run.*?maintain-mcps\.ps1\s+-Mode\s+Repair.*?(?:\r?\n|$)'
+    )
+
+    $cleaned = $Text
+    foreach ($pat in $patterns) {
+        $cleaned = [regex]::Replace($cleaned, $pat, '')
+    }
+
+    return $cleaned
+}
+
 function Assert-CodexAgentsRuntimeBlock {
     param(
         [Parameter(Mandatory)][AllowEmptyString()][string]$Text,
@@ -1511,5 +1594,8 @@ Export-ModuleMember -Function @(
     'Get-CodexCommitCandidates',
     'Get-CodexCodeGraphMaintenanceDecision',
     'Test-CodexBatchCapabilityGate',
-    'Assert-CodexBatchCapabilityGate'
+    'Assert-CodexBatchCapabilityGate',
+    'Get-GeminiManagedBlockInfo',
+    'Get-GeminiLegacyConflicts',
+    'Remove-GeminiLegacyConflicts'
 )

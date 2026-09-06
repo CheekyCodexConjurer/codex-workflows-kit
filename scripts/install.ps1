@@ -9,7 +9,8 @@ param(
     [string]$AhkDestination,
 
     [switch]$InstallAhk,
-    [switch]$Force
+    [switch]$Force,
+    [switch]$MigrateLegacyGemini
 )
 
 Set-StrictMode -Version Latest
@@ -772,10 +773,16 @@ function Install-GlobalGeminiFile {
         }
         $head = $existing.Substring(0, $start)
         $tail = $existing.Substring($endStart + $end.Length).TrimStart([char[]]@([char]13, [char]10))
+        if ($MigrateLegacyGemini -and -not [string]::IsNullOrWhiteSpace($tail)) {
+            $tail = Remove-GeminiLegacyConflicts -Text $tail
+        }
         $content = $head + $managed + $tail
     }
     elseif (-not [string]::IsNullOrWhiteSpace($existing)) {
         $tail = $existing.TrimStart([char[]]@([char]13, [char]10))
+        if ($MigrateLegacyGemini -and -not [string]::IsNullOrWhiteSpace($tail)) {
+            $tail = Remove-GeminiLegacyConflicts -Text $tail
+        }
         $content = $managed + $tail
     }
     else {

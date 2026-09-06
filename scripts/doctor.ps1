@@ -701,6 +701,22 @@ if ($installedProfile -eq 'safe') {
         $geminiTemplateMatches = $normalizedGemini.IndexOf($normalizedGeminiTemplate, [StringComparison]::Ordinal) -ge 0
     }
     Write-Check -Name 'Managed GEMINI template' -Passed $geminiTemplateMatches -Detail $geminiMdPath -Optional
+
+    $geminiConflicts = @()
+    if (-not [string]::IsNullOrWhiteSpace($geminiMdContent)) {
+        $blockInfo = Get-GeminiManagedBlockInfo -Content $geminiMdContent
+        if ($blockInfo.HasValidMarkers) {
+            $geminiConflicts = @(Get-GeminiLegacyConflicts -Text $blockInfo.Tail)
+        }
+    }
+
+    $geminiConflictsPassed = ($geminiConflicts.Count -eq 0)
+    $geminiConflictsDetail = if ($geminiConflictsPassed) {
+        "No conflicting unmanaged rules detected in $geminiMdPath"
+    } else {
+        "Detected $($geminiConflicts.Count) legacy conflict(s): " + ($geminiConflicts -join '; ') + ". Run scripts/migrate-legacy-gemini.ps1 to resolve."
+    }
+    Write-Check -Name 'GEMINI unmanaged conflicts' -Passed $geminiConflictsPassed -Detail $geminiConflictsDetail -Optional
 }
 
 if ($null -ne $state) {
