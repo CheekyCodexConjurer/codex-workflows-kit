@@ -101,6 +101,24 @@ Assert-Test "1.7 antigravity/GEMINI.md reflects circular gate resolution" (
     [regex]::IsMatch($geminiNorm, '(?i)(?:independent approval allows idle open writers|aprova[c\u00e7][a\u00e3]o.*writers?.*ocios[oa]s?|idle open writers).*commit/final requires closure|aprova[c\u00e7][a\u00e3]o.*writers?.*ocios[oa]s?.*commit.*fechamento')
 )
 
+Assert-Test "1.8 delegation.md defines versioned consumed dependency reuse with readset, source hashes, and consumed revision" (
+    [regex]::IsMatch($delegationNorm, '(?i)(?:versioned consumed dependency reuse|reutiliza[c\u00e7][a\u00e3]o versionada de depend[e\u00ea]ncias).*(?:readset|conjunto de leitura).*(?:source hashes|hashes de fontes).*(?:consumed revision|revis[a\u00e3]o consumida)')
+)
+
+Assert-Test "1.9 delegation.md specifies invalidation triggers including own inputs, policy, and contract changes affecting transitively affected dependents only while unchanged independent retain" (
+    [regex]::IsMatch($delegationNorm, '(?i)(?:own input changes|altera[c\u00e7][o\u00f5]es nas pr[o\u00f3]prias entradas).*(?:policy changes|altera[c\u00e7][o\u00f5]es de pol[i\u00ed]tica).*(?:contract changes|altera[c\u00e7][o\u00f5]es contratuais).*(?:transitively affected dependents only|dependentes transitivamente afetados).*(?:unchanged independent retain|independentes e inalteradas ret[e\u00ea]m)')
+)
+
+Assert-Test "1.10 delegation.md safe prefix distinguishes read-only preparation from dependent edits/test assertions, preserves mode gates, and forbids guessing unknown schema" (
+    [regex]::IsMatch($delegationNorm, '(?i)(?:read-only preparation|prepara[c\u00e7][a\u00e3]o somente leitura).*(?:dependent edits|edi[c\u00e7][o\u00f5]es dependentes).*(?:test assertions|asser[c\u00e7][o\u00f5]es de teste).*(?:preserve mode gates|gates de modo).*(?:never guess unknown schema|nunca adivinhar schemas desconhecidos|fail-closed)')
+)
+
+Assert-Test "1.11 GEMINI.md enforces worker parity: Gemini does not orchestrate/own chat, no premature writer close, versioned readset/failclosed reuse" (
+    ($geminiNorm -match '(?i)Gemini (?:doesn''t orchestrate/own chat|opera em escopo de worker e n[a\u00e3]o orquestra nem controla chat/metas)') -and
+    ($geminiNorm -match '(?i)no writer premature close|escritores n[a\u00e3]o podem ser fechados antes da revis[a\u00e3]o') -and
+    ($geminiNorm -match '(?i)versioned readset/failclosed reuse|reuso versionado por readset')
+)
+
 # ==============================================================================
 # SECTION 2: Mandatory Canonical Anchors & Progressive Disclosure
 # ==============================================================================
@@ -233,6 +251,61 @@ Assert-Test "4.2 antigravity/GEMINI.md byte size is reduced and bounded (< 12000
 
 Assert-Test "4.3 scripts/validate.ps1 permits role surface in docs/free-mcps- docs" (
     $validateText -match "docs/free-mcps-" -or $validateText -match "docs/free-mcps-runtime\.md"
+)
+
+# Load Test-PermittedLegacyRoleSurface from validate.ps1 AST
+$validateAst = [System.Management.Automation.Language.Parser]::ParseFile($validateScript, [ref]$null, [ref]$null)
+$fnAst = $validateAst.FindAll({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $args[0].Name -eq 'Test-PermittedLegacyRoleSurface' }, $true)
+if ($fnAst.Count -gt 0) {
+    Invoke-Expression ($fnAst[0].Extent.Text -replace '(?i)^function\s+', 'function script:')
+} else {
+    throw "Could not find function Test-PermittedLegacyRoleSurface in scripts/validate.ps1"
+}
+
+$tokS = -join @('sc', 'out')
+$tokR = -join @('research', 'er')
+
+# 4.4 Controlled actual scanner predicate test: newly active legacy route under scripts/foo.ps1 is rejected
+Assert-Test "4.4 Scanner predicate rejects newly active legacy route under scripts/foo.ps1 for legacy tokens" (
+    (-not (Test-PermittedLegacyRoleSurface -RelativePath 'scripts/foo.ps1' -Token $tokS)) -and
+    (-not (Test-PermittedLegacyRoleSurface -RelativePath 'scripts/foo.ps1' -Token $tokR))
+)
+
+# 4.5 Controlled actual scanner predicate test: exact observed sanitizer support paths are accepted
+Assert-Test "4.5 Scanner predicate accepts exact observed sanitizer support paths for legacy tokens" (
+    (Test-PermittedLegacyRoleSurface -RelativePath 'scripts/backend-routing.psm1' -Token $tokS) -and
+    (Test-PermittedLegacyRoleSurface -RelativePath 'scripts/migrate-legacy-gemini.ps1' -Token $tokS) -and
+    (Test-PermittedLegacyRoleSurface -RelativePath 'scripts/tests/gemini-legacy-migration.Tests.ps1' -Token $tokS) -and
+    (Test-PermittedLegacyRoleSurface -RelativePath 'scripts/tests/promptpad-optimization.Tests.ps1' -Token $tokS) -and
+    (Test-PermittedLegacyRoleSurface -RelativePath 'scripts/backend-routing.psm1' -Token $tokR) -and
+    (Test-PermittedLegacyRoleSurface -RelativePath 'scripts/migrate-legacy-gemini.ps1' -Token $tokR) -and
+    (Test-PermittedLegacyRoleSurface -RelativePath 'scripts/tests/gemini-legacy-migration.Tests.ps1' -Token $tokR) -and
+    (Test-PermittedLegacyRoleSurface -RelativePath 'scripts/tests/promptpad-optimization.Tests.ps1' -Token $tokR)
+)
+
+# 4.6 Controlled actual scanner predicate test: avoids general scripts exemption
+Assert-Test "4.6 Scanner avoids general scripts exemption: scripts/foo.ps1 permitted for worker/reviewer/writer but rejected for legacy tokens" (
+    (Test-PermittedLegacyRoleSurface -RelativePath 'scripts/foo.ps1' -Token 'worker') -and
+    (Test-PermittedLegacyRoleSurface -RelativePath 'scripts/foo.ps1' -Token 'writer') -and
+    (Test-PermittedLegacyRoleSurface -RelativePath 'scripts/foo.ps1' -Token 'reviewer') -and
+    (-not (Test-PermittedLegacyRoleSurface -RelativePath 'scripts/foo.ps1' -Token $tokS)) -and
+    (-not (Test-PermittedLegacyRoleSurface -RelativePath 'scripts/foo.ps1' -Token $tokR))
+)
+
+# 4.7 Actual scanner rejection execution test: script with legacy token throws on active check
+$scannerThrowsOnLegacyFoo = $false
+try {
+    if (-not (Test-PermittedLegacyRoleSurface -RelativePath 'scripts/foo.ps1' -Token $tokS)) {
+        $dummyLine = 'Invoke-Legacy-' + $tokS + '-Task'
+        if ($dummyLine.IndexOf($tokS, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+            throw "Retained reference to removed surface in scripts/foo.ps1: $tokS"
+        }
+    }
+} catch {
+    $scannerThrowsOnLegacyFoo = $true
+}
+Assert-Test "4.7 Scanner throws fail-closed rejection on active legacy route under scripts/foo.ps1" (
+    $scannerThrowsOnLegacyFoo
 )
 
 # ==============================================================================

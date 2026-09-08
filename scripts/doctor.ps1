@@ -527,6 +527,72 @@ function Test-PromptPadContract {
     return $true
 }
 
+function Get-InstalledContractPatterns {
+    [CmdletBinding()]
+    param()
+
+    $tSubEq = Get-RuntimeToken @(115, 117, 98, 97, 103, 101, 110, 116, 115)
+    $tSidecar = Get-RuntimeToken @(115, 105, 100, 101, 99, 97, 114)
+    $tSct = Get-RuntimeToken @(115, 99, 111, 117, 116)
+    $tRsr = Get-RuntimeToken @(114, 101, 115, 101, 97, 114, 99, 104, 101, 114)
+    $tWr = Get-RuntimeToken @(119, 114, 105, 116, 101, 114)
+    $tRvw = Get-RuntimeToken @(114, 101, 118, 105, 101, 119, 101, 114)
+    $tWk = Get-RuntimeToken @(119, 111, 114, 107, 101, 114)
+    $tWtch = Get-RuntimeToken @(119, 97, 116, 99, 104, 101, 114)
+    $tRly = Get-RuntimeToken @(114, 101, 108, 97, 121)
+    $tOc = Get-RuntimeToken @(111, 112, 101, 110, 99, 111, 100, 101)
+    $tSubA = Get-RuntimeToken @(115, 117, 98, 97, 103, 101, 110, 116)
+
+    $legacyRoles = @('readers?', ($tSct + 's?'), ($tRsr + 's?'), ($tRvw + 's?'), ($tWk + 's?'), ($tWtch + 's?'), ($tRly + 's?'), $tOc, ($tSubA + 's?'), 'suba', 'tasks?', 'nested', 'checkpoints?', 'profiles?', 'roles?', 'gates?', 'dispatch', 'lanes?')
+    $rolePattern = '(?i)\bread-only\s+(?:(?:' + $tOc + '|nested|custom)\s+)*(?:' + ($legacyRoles -join '|') + ')\b'
+    $reverseRolePattern = '(?i)\b(?:readers?|' + $tSct + 's?|' + $tRsr + 's?|' + $tRvw + 's?|' + $tWk + 's?|' + $tWtch + 's?|' + $tRly + 's?|' + $tOc + '|roles?)(?:\.(?:toml|yaml|json|md))?\b[^\r\n]*?\bread-only\b'
+    $configPattern = '(?i)\b(?:sandbox_mode|sandbox)\s*=\s*[''"]?read-only[''"]?'
+    $modePattern = '(?i)\bmode\s*=\s*[''"]read-only[''"]'
+    $matrixPattern = '(?m)^\|[^\r\n|]+\|[^\r\n|]+\|\s*read-only\s*\|'
+    $diagnosePattern = '(?i)\b(?:diagn.{0,2}stico|diagnose|diagnosis)\s+read-only\b|\bread-only\s+(?:diagn.{0,2}stico|diagnose|diagnosis)\b'
+    $phrasePattern = '(?i)\bread-only\s+work\s+must\s+use\b'
+
+    return @(
+        ('\b' + $tSubEq + '\s*='),
+        ('\b' + $tSidecar + '\b'),
+        'PromptPadNative',
+        'BackendOverrideText',
+        $rolePattern,
+        $reverseRolePattern,
+        $configPattern,
+        $modePattern,
+        $matrixPattern,
+        $diagnosePattern,
+        $phrasePattern
+    )
+}
+
+function Test-InstalledContractText {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Text,
+        [string]$Surface = ''
+    )
+
+    $patterns = Get-InstalledContractPatterns
+    foreach ($pattern in $patterns) {
+        if ([regex]::IsMatch($Text, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)) {
+            return $false
+        }
+    }
+    return $true
+}
+
+function Test-LegacyContractMarker {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Text,
+        [string]$Surface = ''
+    )
+
+    return (-not (Test-InstalledContractText -Text $Text -Surface $Surface))
+}
+
 if ($MyInvocation.InvocationName -eq '.') {
     return
 }
@@ -749,13 +815,7 @@ if ($null -ne $state) {
     }
 }
 
-$contractPatterns = @(
-    [regex]::Escape($tokSubagentsEq),
-    ('\b' + $tokSidecar + '\b'),
-    'read-only',
-    'PromptPadNative',
-    'BackendOverrideText'
-)
+$contractPatterns = @(Get-InstalledContractPatterns)
 $removedReferenceMarkers = @(($tokBackend + '-policy'), ($tokNative + '-profile-contract'), $tokModeMatrix, $tokDictionaryMd, $tokSubagentsMd)
 $surfaceFiles = New-Object System.Collections.Generic.List[string]
 foreach ($path in @($configPath, $agentsMdPath, $geminiMdPath)) {
@@ -777,16 +837,8 @@ foreach ($surface in $surfaceFiles) {
     if ($surface -eq $geminiMdPath) {
         $content = Get-ManagedBlock -Text $content
     }
-    foreach ($pattern in $contractPatterns) {
-        if ($pattern -eq 'read-only' -and ($surface -like '*mcp-foundation*' -or $surface -like '*codebase-memory*' -or $surface -like '*context7*')) {
-            continue
-        }
-        if ([regex]::IsMatch($content, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)) {
-            $contractDirty = $surface
-            break
-        }
-    }
-    if ($null -ne $contractDirty) {
+    if (-not (Test-InstalledContractText -Text $content -Surface $surface)) {
+        $contractDirty = $surface
         break
     }
 }

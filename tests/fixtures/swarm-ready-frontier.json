@@ -1,0 +1,144 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "scenario_id": "swarm-ready-frontier-v1",
+  "thread_id": "thread-swarm-001",
+  "initial_batch": [
+    "A",
+    "Bprep",
+    "C"
+  ],
+  "nodes": [
+    {
+      "node_id": "A",
+      "operation": "analyze_repo",
+      "dependencies": [],
+      "revisions": [
+        {
+          "revision": 1,
+          "dependency_revisions": {},
+          "attempts": [
+            {
+              "attempt": 1,
+              "request_id": "req-A-rev1-att1",
+              "agent_id": "agent-A-1",
+              "job_id": "job-A-1"
+            }
+          ]
+        },
+        {
+          "revision": 2,
+          "dependency_revisions": {},
+          "invalidation_stimulus": {
+            "tool": "CommandExecution",
+            "command": "git status --porcelain",
+            "field": "stdout",
+            "marker": "marker:schema_change_detected"
+          },
+          "attempts": [
+            {
+              "attempt": 1,
+              "request_id": "req-A-rev2-att1",
+              "agent_id": "agent-A-2",
+              "job_id": "job-A-2"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "node_id": "Bprep",
+      "operation": "prepare_fixtures",
+      "dependencies": [],
+      "revisions": [
+        {
+          "revision": 1,
+          "dependency_revisions": {},
+          "attempts": [
+            {
+              "attempt": 1,
+              "request_id": "req-Bprep-rev1-att1",
+              "agent_id": "agent-Bprep-1",
+              "job_id": "job-Bprep-1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "node_id": "C",
+      "operation": "audit_diagnostics",
+      "dependencies": [],
+      "revisions": [
+        {
+          "revision": 1,
+          "dependency_revisions": {},
+          "attempts": [
+            {
+              "attempt": 1,
+              "request_id": "req-C-rev1-att1",
+              "agent_id": "agent-C-1",
+              "job_id": "job-C-1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "node_id": "Btail",
+      "operation": "build_tail",
+      "dependencies": [
+        "A",
+        "Bprep"
+      ],
+      "revisions": [
+        {
+          "revision": 1,
+          "dependency_revisions": {
+            "A": 1,
+            "Bprep": 1
+          },
+          "attempts": [
+            {
+              "attempt": 1,
+              "request_id": "req-Btail-rev1-att1",
+              "agent_id": "agent-Btail-1",
+              "job_id": "job-Btail-1"
+            }
+          ]
+        },
+        {
+          "revision": 2,
+          "dependency_revisions": {
+            "A": 2,
+            "Bprep": 1
+          },
+          "attempts": [
+            {
+              "attempt": 1,
+              "request_id": "req-Btail-rev2-att1",
+              "agent_id": "agent-Btail-2",
+              "job_id": "job-Btail-2"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "canary_allowlist": {
+    "tools": [
+      "subagents_spawn",
+      "subagents_spawn_batch",
+      "subagents_continue",
+      "subagents_follow",
+      "subagents_close",
+      "subagents_park",
+      "run_command",
+      "CommandExecution"
+    ],
+    "commands": [
+      "git status --porcelain",
+      "git diff HEAD --check",
+      "pwsh -NoProfile -NonInteractive -File scripts/invoke-safe-powershell.ps1 -File scripts/tests/swarm-agent-trace.Tests.ps1"
+    ]
+  }
+}

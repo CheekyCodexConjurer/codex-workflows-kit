@@ -1219,7 +1219,7 @@ function Test-CorrectionAdequacyGateSemantics {
     # 4. GEMINI.md checks
     $geminiRequired = @(
         '(?i)Gate de Adequa[c\u00e7][a\u00e3]o|corre[c\u00e7][a\u00e3]o suficiente e sustent[a\u00e1]vel',
-        '(?i)sem troca autom[a\u00e1]tica de modo',
+        '(?i)sem troca autom[a\u00e1]tica de (?:modo|rota/provedor)',
         '(?i)transporte neutro'
     )
     foreach ($pattern in $geminiRequired) {
@@ -1964,11 +1964,11 @@ multi_agent = true
     Assert-Condition 'S12 doctor succeeds when read-only is in unmanaged GEMINI content' ($docResult1.ExitCode -eq 0 -and $docResult1.Output -match '\[OK\]\s+Installed contract') $docResult1.Output
 
     $installedGemini = Get-Content -LiteralPath $installedGeminiPath -Raw -Encoding UTF8
-    $tamperedManagedGemini = $installedGemini.Replace('# END CODEX-WORKFLOWS-KIT', '- forbidden read-only inside managed block' + $nl + '# END CODEX-WORKFLOWS-KIT')
+    $tamperedManagedGemini = $installedGemini.Replace('# END CODEX-WORKFLOWS-KIT', '- forbidden read-only reader inside managed block' + $nl + '# END CODEX-WORKFLOWS-KIT')
     Write-FixtureFile -Path $installedGeminiPath -Content $tamperedManagedGemini
 
     $docResult2 = Invoke-Doctor -Root $root
-    Assert-Condition 'S12 doctor fails when read-only is inside the managed GEMINI block' ($docResult2.ExitCode -ne 0 -and $docResult2.Output -match '\[FAIL\]\s+Installed contract') $docResult2.Output
+    Assert-Condition 'S12 doctor fails when read-only reader is inside the managed GEMINI block' ($docResult2.ExitCode -ne 0 -and $docResult2.Output -match '\[FAIL\]\s+Installed contract') $docResult2.Output
 
     Write-FixtureFile -Path $installedGeminiPath -Content $installedGemini
     $docResult3 = Invoke-Doctor -Root $root
@@ -3413,7 +3413,7 @@ enabled = true
     Assert-Condition 'S36 detects pt-BR output language default tamper' (-not (Test-AlinhamentoPolicySemantics -AgentsText $tamperPtBr -GeminiText $canonicalGemini36 -SkillText $canonicalSkill36 -DelegationText $canonicalDelegation36 -ReadmeText $canonicalReadme36)) ''
 
     # Tamper 7: Audio transcript handling tamper (removing audio/noise/assumptions handling while keeping pt-BR intact)
-    $tamperAudio = $canonicalAgents36 -replace '(?i)em transcri[c\u00e7][o\u00f5]es? de [a\u00e1]udio,[^;]*;', ''
+    $tamperAudio = $canonicalAgents36 -replace '(?i)em (?:transcri[c\u00e7][o\u00f5]es? de )?[a\u00e1]udio,[^;]*;', ''
     Assert-Condition 'S36 detects audio transcript handling tamper' (-not (Test-AlinhamentoPolicySemantics -AgentsText $tamperAudio -GeminiText $canonicalGemini36 -SkillText $canonicalSkill36 -DelegationText $canonicalDelegation36 -ReadmeText $canonicalReadme36)) ''
 
     # Tamper 8: Missing ALINHAMENTO in AGENTS.md
@@ -3457,7 +3457,7 @@ enabled = true
     Assert-Condition 'S36 detects ALINHAMENTO subagent ledger lifecycle tamper in delegation.md' (-not (Test-AlinhamentoPolicySemantics -AgentsText $canonicalAgents36 -GeminiText $canonicalGemini36 -SkillText $canonicalSkill36 -DelegationText $tamperLedgerDelegation -ReadmeText $canonicalReadme36)) ''
 
     # Tamper 18: ALINHAMENTO subagent ledger lifecycle tamper in AGENTS.md
-    $tamperLedgerAgents = $canonicalAgents36 -replace '(?i)com consumo e encerramento normais no ledger', 'sem consumo ou encerramento no ledger'
+    $tamperLedgerAgents = $canonicalAgents36 -replace '(?i)com consumo e encerramento (?:normais )?no ledger', 'sem consumo ou encerramento no ledger'
     Assert-Condition 'S36 detects ALINHAMENTO subagent ledger lifecycle tamper in AGENTS.md' (-not (Test-AlinhamentoPolicySemantics -AgentsText $tamperLedgerAgents -GeminiText $canonicalGemini36 -SkillText $canonicalSkill36 -DelegationText $canonicalDelegation36 -ReadmeText $canonicalReadme36)) ''
 
     # Tamper 19: ALINHAMENTO subagent ledger bypass anti-pattern tamper

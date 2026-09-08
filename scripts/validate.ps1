@@ -99,14 +99,15 @@ function Assert-CompletionPolicy {
     }
 
     $requiredPatterns = @(
-        '(?i)for every required job,? the parent must wait for a `?final response`? before `?synthesis or advancement`?',
+        '(?i)(?:completion is dependency-scoped|dependency-scoped completion|for each dependency|for each dependency or wave).{0,120}(?:parent must wait for a `?final response`? before `?(?:dependent )?synthesis or advancement`?|wait for a `?final response`? before `?dependent synthesis or advancement`?)',
         '(?i)while a job is `?running`?,? do not send an `?interruptive follow-up`? or `?replace`? it',
         '(?i)`?interrupted`?,? `?errored`?,? `?timed out`?,? or `?missing final response`? means unavailable: keep `?the gate`? `?open/BLOCKED`?; do not use a `?silent fallback`?',
         '(?i)(?:ap[o\u00f3]s timeout|aus[e\u00ea]ncia de fechamento|missing closure|timed? out).{0,120}(?:mesma trilha|same track)',
         '(?i)invent[a\u00e1]rio m[i\u00ed]nimo|minimal inventory',
         '(?i)closure slices pequenos|fatias pequenas de fechamento|small closure slices',
         '(?i)(?:proibid[oa]|nunca|never).{0,60}(?:repetir integralmente|repeat integrally|reabrir do zero)',
-        '(?i)(?:proibid[oa]|nunca|never).{0,60}(?:abrir novo agente|open new agent|novo sub-agente)'
+        '(?i)(?:proibid[oa]|nunca|never).{0,60}(?:abrir novo agente|open new agent|novo sub-agente)',
+        '(?i)(?:final `?DONE`? remains strictly (?:forbidden|impossible) until all required jobs are terminally consumed and all agents closed|commit/final requires closure)'
     )
 
     foreach ($pattern in $requiredPatterns) {
@@ -116,10 +117,14 @@ function Assert-CompletionPolicy {
     }
 
     $forbiddenPatterns = @(
+        '(?i)for every required job,? the parent must wait for a `?final response`? before `?synthesis or advancement`?',
+        '(?i)(?<!(?:no|sem|without|prohibits?|pro[ií]be|rejects?)\s+)\bglobal barrier\b(?!\s+(?:across[^\r\n.;]*\s+)?(?:is\s+)?(?:forbidden|prohibited|proibid[oa]))',
+        '(?i)\b(?:may|can|should|must|authorized to|authorised to|pode|deve|permite|autoriza)\b[^.;\r\n]*\b(?:DONE|final response|commit)\b[^.;\r\n]*(?:without consuming all required jobs|with unconsumed jobs|while [^.;\r\n]*\bunconsumed\b|before closing all agents|with unclosed agents|incomplete final closure|obriga[c\u00e7][o\u00f5]es pendentes no DONE)\b',
+        '(?i)\bincomplete final closure\b(?!\s+(?:is\s+)?(?:forbidden|prohibited|proibid[oa]))',
         '(?i)\b(?:may|can|should|must|authorized to|authorised to|has permission to|is permitted to|is allowed to|is free to)\b\s+(?!not\b|never\b)[^.;]*\b(?:interrupt|cancel|terminate|stop)\w*\b',
         '(?i)\b(?:may|can|should|must|authorized to|authorised to|has permission to|is permitted to|is allowed to|is free to)\b\s+(?!not\b|never\b)[^.;]*\b(?:replace|substitute|switch|delegate|assign)\b',
         '(?i)\b(?:may|can|should|must|authorized to|authorised to|has permission to|is permitted to|is allowed to|is free to)\b\s+(?!not\b|never\b)[^.;]*\b(?:use|allow|permit|select|choose|switch to|fall back|fallback|backup|alternate worker|backup worker|another worker|another agent)\b',
-        '(?i)(?:synthesis|advancement|synthesize|advance|proceed|continue)[^.;]*(?:before|prior to|without|in the absence of)[^.;]*(?:final response|response|reply|answer|return)',
+        '(?i)(?:dependent synthesis|advancement of dependent work|synthesize dependent results)[^.;]*(?:before|prior to|without|in the absence of)[^.;]*(?:final response|response|reply|answer|return)',
         '(?i)\b(?:may|can|should|must|authorized to|authorised to|pode|deve)\b[^.;]*\b(?:repetir integralmente|repeat integrally|abrir novo agente ap[o\u00f3]s timeout|open new agent on timeout)\b'
     )
     foreach ($pattern in $forbiddenPatterns) {
@@ -2592,6 +2597,55 @@ $contractTokens = @(
     'subagents=',
     '\bsidecar\b'
 )
+
+function Test-PermittedLegacyRoleSurface {
+    param(
+        [Parameter(Mandatory=$true)][string]$RelativePath,
+        [Parameter(Mandatory=$true)][string]$Token
+    )
+
+    # Permitted role surface exceptions for 'writer', 'reviewer', 'worker':
+    # - scripts/, docs/superpowers/, README.md, docs/security.md: tooling, design, and security docs
+    # - codex/AGENTS.md, antigravity/GEMINI.md: host routing rules and delegation contract
+    # - skills/workflows/SKILL.md, skills/workflows/references/delegation.md, skills/workflows/references/delivery-review.md: delivery review, swarm, active writer, and delegation policies
+    # - skills/codebase-memory-mcp/SKILL.md, skills/codebase-memory-mcp/references/scenarios.md: CBM peer worker lock and graph reuse protocol
+    # - skills/context7-mcp/SKILL.md: Context7 multi-worker deduplication and evidence packet sharing
+    $isPermittedRoleSurface = (
+        $RelativePath.StartsWith('scripts/') -or
+        $RelativePath.StartsWith('ahk/') -or
+        $RelativePath.StartsWith('docs/superpowers/') -or
+        $RelativePath.StartsWith('docs/free-mcps-') -or
+        $RelativePath -eq 'codex/AGENTS.md' -or
+        $RelativePath -eq 'antigravity/GEMINI.md' -or
+        $RelativePath -eq 'README.md' -or
+        $RelativePath -eq 'docs/security.md' -or
+        $RelativePath -eq 'skills/workflows/SKILL.md' -or
+        $RelativePath -eq 'skills/workflows/references/delegation.md' -or
+        $RelativePath -eq 'skills/workflows/references/delivery-review.md' -or
+        $RelativePath -eq 'skills/workflows/references/commit.md' -or
+        $RelativePath -eq 'skills/workflows/references/validation.md' -or
+        $RelativePath -eq 'skills/codebase-memory-mcp/SKILL.md' -or
+        $RelativePath -eq 'skills/codebase-memory-mcp/references/scenarios.md' -or
+        $RelativePath -eq 'skills/context7-mcp/SKILL.md'
+    )
+    if ($isPermittedRoleSurface -and $Token -in @('writer', 'reviewer', 'worker')) {
+        return $true
+    }
+    # Permitted script surface exceptions for legacy migration sanitizers and negative tests ('scout', 'researcher'):
+    # - scripts/backend-routing.psm1, scripts/migrate-legacy-gemini.ps1: detect/remove legacy conflicting rules
+    # - scripts/tests/gemini-legacy-migration.Tests.ps1, scripts/tests/promptpad-optimization.Tests.ps1: unit tests exercising legacy migration sanitizers and negative rejection tests
+    $permittedLegacyScoutResearcherPaths = @(
+        'scripts/backend-routing.psm1',
+        'scripts/migrate-legacy-gemini.ps1',
+        'scripts/tests/gemini-legacy-migration.Tests.ps1',
+        'scripts/tests/promptpad-optimization.Tests.ps1'
+    )
+    if ($Token -in @('scout', 'researcher') -and $permittedLegacyScoutResearcherPaths -contains $RelativePath) {
+        return $true
+    }
+    return $false
+}
+
 foreach ($relativePath in @(git -C $repo ls-files)) {
     $path = Join-Path $repo $relativePath
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
@@ -2601,31 +2655,7 @@ foreach ($relativePath in @(git -C $repo ls-files)) {
 
     if ($relativePath -ne 'CHANGELOG.md' -and $relativePath -ne 'scripts/validate.ps1') {
         foreach ($token in $legacyTokens) {
-            # Permitted role surface exceptions for 'writer', 'reviewer', 'worker':
-            # - scripts/, docs/superpowers/, README.md, docs/security.md: tooling, design, and security docs
-            # - codex/AGENTS.md, antigravity/GEMINI.md: host routing rules and delegation contract
-            # - skills/workflows/SKILL.md, skills/workflows/references/delegation.md, skills/workflows/references/delivery-review.md: delivery review, swarm, active writer, and delegation policies
-            # - skills/codebase-memory-mcp/SKILL.md, skills/codebase-memory-mcp/references/scenarios.md: CBM peer worker lock and graph reuse protocol
-            # - skills/context7-mcp/SKILL.md: Context7 multi-worker deduplication and evidence packet sharing
-            $isPermittedRoleSurface = (
-                $relativePath.StartsWith('scripts/') -or
-                $relativePath.StartsWith('ahk/') -or
-                $relativePath.StartsWith('docs/superpowers/') -or
-                $relativePath.StartsWith('docs/free-mcps-') -or
-                $relativePath -eq 'codex/AGENTS.md' -or
-                $relativePath -eq 'antigravity/GEMINI.md' -or
-                $relativePath -eq 'README.md' -or
-                $relativePath -eq 'docs/security.md' -or
-                $relativePath -eq 'skills/workflows/SKILL.md' -or
-                $relativePath -eq 'skills/workflows/references/delegation.md' -or
-                $relativePath -eq 'skills/workflows/references/delivery-review.md' -or
-                $relativePath -eq 'skills/workflows/references/commit.md' -or
-                $relativePath -eq 'skills/workflows/references/validation.md' -or
-                $relativePath -eq 'skills/codebase-memory-mcp/SKILL.md' -or
-                $relativePath -eq 'skills/codebase-memory-mcp/references/scenarios.md' -or
-                $relativePath -eq 'skills/context7-mcp/SKILL.md'
-            )
-            if ($isPermittedRoleSurface -and $token -in @('writer', 'reviewer', 'worker')) {
+            if (Test-PermittedLegacyRoleSurface -RelativePath $relativePath -Token $token) {
                 continue
             }
             if ($text.IndexOf($token, [StringComparison]::OrdinalIgnoreCase) -ge 0) {

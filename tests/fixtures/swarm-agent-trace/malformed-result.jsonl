@@ -1,0 +1,1 @@
+{"event_id":"evt-001","thread_id":"thread-swarm-001","type":"event_msg","payload":{"type":"item_completed","item":{"type":"McpToolCall","name":"subagents_spawn_batch","arguments":{"requests":[{"request_id":"req-A-rev1-att1","role":"analyzer"}]},"result":"malformed-not-json-or-receipts"}}}
