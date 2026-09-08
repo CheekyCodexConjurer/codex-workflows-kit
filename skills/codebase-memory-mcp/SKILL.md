@@ -22,7 +22,18 @@ Canonical routing, operational constraints, and lifecycle safety for `codebase-m
 | `.codegraph` exists in repository root | CodeGraph (`codegraph_explore`) | Serena / CBM / `rg` | Prioritize CodeGraph when index exists; no auto-init if absent |
 | Symbol definition, LSP references, diagnostics | Serena | CBM / `rg` | Serena handles LSP semantic symbols, definitions, implementations, and diagnostics; read-only in ALINHAMENTO |
 | Multi-file call chains, architecture overview, Cypher graph query | codebase-memory-mcp | CodeGraph / `rg` with warning | Check existing index; verify graph against source |
-| Index absent, stale, or unknown | `rg` (ripgrep) | Targeted file reads | Graph queries do not guarantee completeness; rg fallback |
+| Index absent, stale, or unknown | `rg` (ripgrep) in no-write modes; authorized repository preparation in write modes | Targeted file reads | Graph queries do not guarantee completeness; write-mode preparation must verify exclusions, canonical root, owner lock, and freshness |
+
+## Automatic Preflight and Preparation
+
+The parent and every sub-agent must select CBM automatically when structural
+graph analysis is useful. Before the first graph call, inspect `index_status`
+and apply `Get-CodexMcpMaintenanceDecision`. In authorized write modes, a
+missing or stale repository may be initialized or refreshed once after
+exclusion and single-owner lock checks, followed by a mandatory status and
+source-freshness recheck. In no-write modes, report the missing/stale state and
+fall back to `rg` or original source; an `rg` fallback is mandatory for stale or
+unknown graph state. Never create an index, cache, watcher, or SQLite store.
 
 ## Verified Upstream Tools and Mutation Caveats
 

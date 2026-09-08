@@ -16,7 +16,18 @@ Canonical routing, usage constraints, and operational maintenance for allowliste
 | Serena | Symbol navigation, LSP features, references, diagnostics | Active codebase navigation | --project-from-cwd; one instance per project; read-only config check; safe concurrent reads; strictly no generic taskkill/auto-restart |
 | Codebase Memory | Structural code graph, AST/call chains, and codebase architecture (free tier) | Active exploration in write modes where structural knowledge graph aids delivery | Global install separate from repo prep; auto-prep only in write modes under verified exclusions and single-owner lock; strictly no prep/cache/monitors in PLAN/RESEARCH/ALINHAMENTO/COMMIT; index is not authority (source validation + freshness); CodeGraph priority when .codegraph exists; Serena for LSP; route to `codebase-memory-mcp` |
 
-mcp-foundation is mandatory for baseline routing, preflight, and maintenance; specialist skills (`context7-mcp` and `codebase-memory-mcp`) are loaded on-demand when triggering the relevant tool.
+mcp-foundation is mandatory for baseline routing, preflight, and maintenance; specialist skills (`context7-mcp` and `codebase-memory-mcp`) are loaded by the preflight when their MCP is relevant, before the first dependent read or edit.
+
+## Automatic Use and Repository Maintenance Contract
+
+Every workflow run, including work delegated to sub-agents, follows this loop before repository work:
+
+1. Discover the allowlisted MCP capabilities and select the relevant tool by purpose: CodeGraph for an existing structural index, Serena for project-scoped LSP symbols and diagnostics, CBM for structural graph queries and architecture when its repository index is useful, and Context7 for current external documentation.
+2. Check availability, repository scope, configuration, and freshness. Apply `Get-CodexMcpMaintenanceDecision` to the observed status; do not guess that an absent or unknown state is ready.
+3. In authorized write modes, prepare only the repository state that the selected MCP supports: synchronize an existing CodeGraph index, activate Serena with `--project-from-cwd`, or initialize/refresh CBM after verifying exclusions and the single-owner canonical-root lock. Recheck the state before using it.
+4. In no-write modes, inspect and report only. A missing or unknown route fails closed for that MCP and uses its documented safe alternative (Serena/rg for structural work or official docs for Context7), without creating local state.
+
+This contract makes use automatic without making unsafe server lifecycle changes. Global installation, authentication, upgrade, restart, and CodeGraph full initialization remain explicit operator actions. Context7 has no repository index: availability is checked automatically, then its resolve -> query flow runs only when the task has a concrete current-documentation trigger.
 
 ## Context7
 

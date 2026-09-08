@@ -1259,6 +1259,153 @@ function Get-CodexCodeGraphMaintenanceDecision {
     }
 }
 
+function Get-CodexMcpMaintenanceDecision {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][ValidateSet('Context7', 'CodeGraph', 'Serena', 'CBM')][string]$Mcp,
+        [AllowNull()][object]$Status,
+        [Parameter(Mandatory)][ValidateSet('ALINHAMENTO', 'PLAN.AUTO', 'PLAN', 'P.DEEP', 'RESEARCH.DEEP', 'IMPL.AUTO', 'IMPL', 'IMPL.PHASE', 'DELIVER.AUTO', 'REVIEW', 'COMMIT', 'BUG.INV', 'BUG.FIX', 'DEBUG', 'REWORK', 'R.A.F.V', 'TN.SKILL')][string]$Mode
+    )
+
+    $writeModes = @('IMPL.AUTO', 'IMPL', 'IMPL.PHASE', 'DELIVER.AUTO', 'BUG.FIX', 'DEBUG', 'R.A.F.V')
+    $writeMode = $writeModes -contains $Mode
+    $state = ''
+    if ($null -ne $Status) {
+        foreach ($propertyName in @('state', 'status', 'indexState', 'index_status')) {
+            $propertyValue = $null
+            if ($Status -is [System.Collections.IDictionary]) {
+                if ($Status.Contains($propertyName)) {
+                    $propertyValue = $Status[$propertyName]
+                }
+            }
+            else {
+                $property = $Status.PSObject.Properties[$propertyName]
+                if ($null -ne $property) {
+                    $propertyValue = $property.Value
+                }
+            }
+            if ($null -ne $propertyValue -and -not [string]::IsNullOrWhiteSpace([string]$propertyValue)) {
+                $state = ([string]$propertyValue).Trim().ToLowerInvariant()
+                break
+            }
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace($state)) {
+        $state = 'unknown'
+    }
+
+    $result = [ordered]@{
+        Mcp = $Mcp
+        Mode = $Mode
+        State = $state
+        Action = 'inspect'
+        Mutates = $false
+        RequiresRecheck = $false
+        Reason = ''
+    }
+
+    switch ($Mcp) {
+        'CodeGraph' {
+            switch -Regex ($state) {
+                '^(fresh|ready|current|up-to-date|available|configured)$' {
+                    $result.Action = 'none'
+                    $result.Reason = 'CodeGraph is ready; use codegraph_explore directly without background maintenance.'
+                }
+                '^(stale|outdated|pending|dirty)$' {
+                    if ($writeMode) {
+                        $result.Action = 'sync'
+                        $result.Mutates = $true
+                        $result.RequiresRecheck = $true
+                        $result.Reason = 'CodeGraph is stale or pending; run one bounded sync and recheck before structural use.'
+                    }
+                    else {
+                        $result.Reason = 'Read-only mode may inspect a stale CodeGraph but never synchronizes it.'
+                    }
+                }
+                '^(missing|absent|not.?initialized|uninitialized)$' {
+                    $result.Action = 'manual_init'
+                    $result.Reason = 'CodeGraph initialization remains an explicit operator action; use Serena or rg until an index exists.'
+                }
+                default {
+                    $result.Action = 'fallback'
+                    $result.Reason = 'CodeGraph status is failed or unknown; fall back to Serena or rg with an explicit warning.'
+                }
+            }
+        }
+        'Serena' {
+            switch -Regex ($state) {
+                '^(fresh|ready|current|up-to-date|available|configured|active)$' {
+                    $result.Action = 'none'
+                    $result.Reason = 'Serena project and configuration are ready for --project-from-cwd use.'
+                }
+                '^(missing|absent|not.?initialized|uninitialized)$' {
+                    if ($writeMode) {
+                        $result.Action = 'activate'
+                        $result.Mutates = $true
+                        $result.RequiresRecheck = $true
+                        $result.Reason = 'Serena is not active for this repository; activate the project from the current working directory and recheck.'
+                    }
+                    else {
+                        $result.Reason = 'Read-only mode verifies Serena configuration but does not onboard or activate a missing project.'
+                    }
+                }
+                default {
+                    $result.Action = 'fallback'
+                    $result.Reason = 'Serena status is failed or unknown; use targeted rg and report the unavailable semantic route.'
+                }
+            }
+        }
+        'CBM' {
+            switch -Regex ($state) {
+                '^(fresh|ready|current|up-to-date|available|configured|active)$' {
+                    $result.Action = 'none'
+                    $result.Reason = 'CBM index is ready; verify load-bearing findings against original source and freshness.'
+                }
+                '^(stale|outdated|pending|dirty)$' {
+                    if ($writeMode) {
+                        $result.Action = 'refresh'
+                        $result.Mutates = $true
+                        $result.RequiresRecheck = $true
+                        $result.Reason = 'CBM is stale or pending; acquire the canonical-root owner lock, refresh once, and recheck.'
+                    }
+                    else {
+                        $result.Reason = 'Read-only mode may inspect CBM status but never refreshes or creates an index.'
+                    }
+                }
+                '^(missing|absent|not.?initialized|uninitialized)$' {
+                    if ($writeMode) {
+                        $result.Action = 'initialize'
+                        $result.Mutates = $true
+                        $result.RequiresRecheck = $true
+                        $result.Reason = 'CBM is absent; verify exclusions and the canonical-root owner lock, initialize once, and recheck.'
+                    }
+                    else {
+                        $result.Reason = 'Read-only mode reports the missing CBM index and falls back to source or rg.'
+                    }
+                }
+                default {
+                    $result.Action = 'fallback'
+                    $result.Reason = 'CBM status is failed or unknown; do not start an unprepared store and use source or rg.'
+                }
+            }
+        }
+        'Context7' {
+            switch -Regex ($state) {
+                '^(fresh|ready|current|up-to-date|available|configured|active)$' {
+                    $result.Action = 'use'
+                    $result.Reason = 'Context7 is available; resolve then query only for a triggered, current documentation need.'
+                }
+                default {
+                    $result.Action = 'blocked'
+                    $result.Reason = 'Context7 is unavailable; do not install or authenticate automatically; use approved official documentation and disclose the limitation.'
+                }
+            }
+        }
+    }
+
+    return [pscustomobject]$result
+}
+
 function Test-CodexCommitGate {
     [CmdletBinding()]
     param(
@@ -1593,6 +1740,7 @@ Export-ModuleMember -Function @(
     'Get-CodexCommitCandidateClassification',
     'Get-CodexCommitCandidates',
     'Get-CodexCodeGraphMaintenanceDecision',
+    'Get-CodexMcpMaintenanceDecision',
     'Test-CodexBatchCapabilityGate',
     'Assert-CodexBatchCapabilityGate',
     'Get-GeminiManagedBlockInfo',

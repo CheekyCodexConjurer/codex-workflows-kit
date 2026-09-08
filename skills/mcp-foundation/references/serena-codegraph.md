@@ -2,6 +2,12 @@
 
 Centralized management, lifecycle, and usage constraints for Serena and CodeGraph MCP servers across all workflow modes.
 
+The same preflight is inherited by Context7 and Codebase Memory: the parent and
+every sub-agent select the relevant MCP automatically, verify its repository
+state, perform only the maintenance allowed by the active mode, and recheck
+before use. The deterministic cross-MCP decision is exposed by
+`Get-CodexMcpMaintenanceDecision` in `scripts/backend-routing.psm1`.
+
 ## Maintenance Preflight by Mode
 
 All workflow modes perform an MCP maintenance preflight before operational actions. Maintenance authority strictly aligns with mode capabilities and write permissions:
@@ -21,7 +27,7 @@ All workflow modes perform an MCP maintenance preflight before operational actio
      3. After synchronization, verify status again (`verificar novamente / recheck`).
      4. If synchronization fails, errors, or returns unknown status (`falha/unknown`), terminate the attempt immediately, log a warning, and fall back to Serena symbol exploration and `rg` (`Serena/rg com aviso`).
 4. **Prohibitions Across All Modes**:
-   - **No Auto-Init / No Auto-Reindex**: Never initialize or reindex automatically when `.codegraph` is missing (`sem auto-init / não reindexar automaticamente`). Full indexing (`codegraph index`) and project initialization (`codegraph init`) require explicit human operator requests.
+   - **CodeGraph Init Boundary**: Never initialize or reindex automatically when `.codegraph` is missing (`sem auto-init / não reindexar automaticamente`). Full indexing (`codegraph index`) and project initialization (`codegraph init`) require explicit human operator requests. This does not prohibit the explicitly authorized write-mode preparation of a Serena project or CBM repository index; those routes require their own exclusions, owner lock, and post-maintenance recheck.
    - **No Auto-Upgrade**: Never perform automatic package, binary, or tool upgrades (`sem auto-upgrade / não fazer upgrade de pacote`).
    - **No Auto-Restart**: Never restart MCP servers automatically (`sem auto-restart / não reiniciar MCPs`), except for the strictly authorized DeepSeek daemon exception defined in `references/lifecycle.md`.
 

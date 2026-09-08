@@ -7,6 +7,15 @@ description: Fetch current documentation and code examples from Context7 for ext
 
 Canonical guidance for fetching current documentation and code examples from Context7 via its global credential-free endpoint (`https://mcp.context7.com/mcp`).
 
+## Automatic Preflight and Use
+
+The parent and every sub-agent must check Context7 availability during the
+canonical MCP preflight and select it automatically when current external
+documentation is relevant. Context7 has no repository index to initialize or
+refresh: once availability is proven, use the mandatory resolve -> query flow
+only for a concrete documentation trigger, and fail closed to official docs
+when the service is unavailable.
+
 ## Operational Baseline & Pricing Contract
 
 - **Official Sources**: [Context7 upstream](https://raw.githubusercontent.com/upstash/context7/master/README.md) and [Context7 Plans](https://context7.com/plans).
