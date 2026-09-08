@@ -59,6 +59,34 @@ function Read-SurfaceText {
     return Get-Content -LiteralPath $Path -Raw -Encoding UTF8
 }
 
+function Test-CodexFeaturesTable {
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
+
+    $normalized = $Text -replace "`r`n?", "`n"
+    $inFeatures = $false
+    foreach ($line in ($normalized -split "`n")) {
+        $trimmed = $line.Trim()
+        if ($trimmed -match '^\[features\]\s*(?:#.*)?$') {
+            $inFeatures = $true
+            continue
+        }
+        if ($trimmed -match '^\[\[?[^\]]+\]\]?\s*(?:#.*)?$') {
+            $inFeatures = $false
+            continue
+        }
+        if (-not $inFeatures -or [string]::IsNullOrWhiteSpace($trimmed) -or $trimmed.StartsWith('#')) {
+            continue
+        }
+
+        $assignment = [regex]::Match($line, '^\s*([A-Za-z0-9_-]+)\s*=\s*(.*?)\s*(?:#.*)?$')
+        if (-not $assignment.Success -or $assignment.Groups[2].Value.Trim() -notmatch '^(?i:true|false)$') {
+            return $false
+        }
+    }
+
+    return $true
+}
+
 function Get-ManagedBlock {
     param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
 
@@ -966,6 +994,16 @@ if (-not [string]::IsNullOrWhiteSpace($ahkPath) -and (Test-Path -LiteralPath $ah
 }
 
 $configText = Read-SurfaceText -Path $configPath
+$codexFeaturesValid = Test-CodexFeaturesTable -Text $configText
+if ([string]::IsNullOrWhiteSpace($configText)) {
+    Write-Check -Name 'Codex features schema' -Passed $true -Detail 'No config.toml present to validate' -Optional
+}
+elseif ($codexFeaturesValid) {
+    Write-Check -Name 'Codex features schema' -Passed $true -Detail 'All [features] values are boolean'
+}
+else {
+    Write-Check -Name 'Codex features schema' -Passed $false -Optional -Detail "Invalid non-boolean value in [features] of $configPath; Codex CLI MCP discovery will fail closed"
+}
 $mcpServers = @(Get-McpServers -Text $configText)
 $legacyServerNames = @(($tOc + '_' + $tWk), $tRly, $tWtch, $tWk, $tSct, $tRsr, $tRvw, $tokNative, 'runtime-adapters')
 $legacyMcpHits = @($mcpServers | Where-Object { $_.Name -in $legacyServerNames })

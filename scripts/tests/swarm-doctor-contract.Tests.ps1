@@ -58,12 +58,21 @@ Assert-Test "AST fixture: Test-InstalledContractText is declared" ($null -ne $fn
 $fnTestMarker = $ast.Find({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $args[0].Name -eq 'Test-LegacyContractMarker' }, $true)
 Assert-Test "AST fixture: Test-LegacyContractMarker is declared" ($null -ne $fnTestMarker)
 
+$fnTestFeatures = $ast.Find({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $args[0].Name -eq 'Test-CodexFeaturesTable' }, $true)
+Assert-Test "AST fixture: Test-CodexFeaturesTable is declared" ($null -ne $fnTestFeatures)
+
 # Dot-source doctor to load functions into scope
 . $doctorPath
 
 Assert-Test "Runtime: Get-InstalledContractPatterns command is available" ($null -ne (Get-Command 'Get-InstalledContractPatterns' -ErrorAction SilentlyContinue))
 Assert-Test "Runtime: Test-InstalledContractText command is available" ($null -ne (Get-Command 'Test-InstalledContractText' -ErrorAction SilentlyContinue))
 Assert-Test "Runtime: Test-LegacyContractMarker command is available" ($null -ne (Get-Command 'Test-LegacyContractMarker' -ErrorAction SilentlyContinue))
+Assert-Test "Runtime: Test-CodexFeaturesTable command is available" ($null -ne (Get-Command 'Test-CodexFeaturesTable' -ErrorAction SilentlyContinue))
+
+$invalidFeatureConfig = "[features]`ncontext_management = { experimental_mode = true }`n"
+$validFeatureConfig = "[features]`ncontext_management = true`nmulti_agent = false`n"
+Assert-Test "Negative: Codex feature map is rejected" (-not (Test-CodexFeaturesTable -Text $invalidFeatureConfig))
+Assert-Test "Positive: Boolean Codex features are accepted" (Test-CodexFeaturesTable -Text $validFeatureConfig)
 
 # ---------------------------------------------------------
 # 2. RED Baseline: Legacy Blanket 'read-only' Rejection

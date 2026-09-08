@@ -441,6 +441,57 @@ function Test-Context7ConfigSafety {
     }
 }
 
+function Test-CodexFeaturesTable {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)][AllowEmptyString()][string]$Text
+    )
+
+    $normalized = $Text -replace "`r`n?", "`n"
+    $inFeatures = $false
+    foreach ($line in ($normalized -split "`n")) {
+        $trimmed = $line.Trim()
+        if ($trimmed -match '^\[features\]\s*(?:#.*)?$') {
+            $inFeatures = $true
+            continue
+        }
+        if ($trimmed -match '^\[\[?[^\]]+\]\]?\s*(?:#.*)?$') {
+            $inFeatures = $false
+            continue
+        }
+        if (-not $inFeatures -or [string]::IsNullOrWhiteSpace($trimmed) -or $trimmed.StartsWith('#')) {
+            continue
+        }
+
+        $assignment = [regex]::Match($line, '^\s*([A-Za-z0-9_-]+)\s*=\s*(.*?)\s*(?:#.*)?$')
+        if (-not $assignment.Success) {
+            return $false
+        }
+        $value = $assignment.Groups[2].Value.Trim()
+        if ($value -notmatch '^(?i:true|false)$') {
+            return $false
+        }
+    }
+
+    return $true
+}
+
+function Assert-CodexFeaturesTable {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)][string]$ConfigPath
+    )
+
+    if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
+        return
+    }
+
+    $text = [System.IO.File]::ReadAllText($ConfigPath)
+    if (-not (Test-CodexFeaturesTable -Text $text)) {
+        throw "Codex config [features] contains a non-boolean value. The Codex CLI requires feature flags to be true or false; repair '$ConfigPath' before installing MCPs."
+    }
+}
+
 function Get-MergedCodexTomlContent {
     [CmdletBinding()]
     param(
@@ -452,6 +503,7 @@ function Get-MergedCodexTomlContent {
     )
 
     Test-Context7ConfigSafety -ConfigPath $ConfigPath -ConfigType 'codex'
+    Assert-CodexFeaturesTable -ConfigPath $ConfigPath
 
     $existingContent = if (Test-Path -LiteralPath $ConfigPath -PathType Leaf) {
         [System.IO.File]::ReadAllText($ConfigPath)
@@ -701,7 +753,23 @@ function Resolve-GeminiMcpConfigPath {
     [CmdletBinding()]
     param([Parameter(Mandatory=$true)][string]$AntigravityHome)
 
-    # Check direct config/mcp_config.json
+    $normalizedHome = $AntigravityHome.TrimEnd('\', '/')
+
+    # Antigravity and Gemini CLI use different configuration roots. Prefer the
+    # active Antigravity surface whenever it exists (including a zero-byte file)
+    # so inspect/install never reports or mutates the inactive Gemini config.
+    if ($normalizedHome.EndsWith('\antigravity', [System.StringComparison]::OrdinalIgnoreCase)) {
+        return (Join-Path $AntigravityHome 'mcp_config.json')
+    }
+
+    $antigravity = Join-Path $AntigravityHome 'antigravity\mcp_config.json'
+    if ($normalizedHome.EndsWith('.gemini', [System.StringComparison]::OrdinalIgnoreCase) -or
+        (Test-Path -LiteralPath $antigravity -PathType Leaf) -or
+        (Test-Path -LiteralPath (Split-Path -Parent $antigravity) -PathType Container)) {
+        return $antigravity
+    }
+
+    # Check direct Gemini CLI config/mcp_config.json for explicit non-.gemini homes.
     $direct = Join-Path $AntigravityHome 'config\mcp_config.json'
     if (Test-Path -LiteralPath $direct) { return $direct }
 
@@ -710,7 +778,7 @@ function Resolve-GeminiMcpConfigPath {
     if (Test-Path -LiteralPath $dotGemini) { return $dotGemini }
 
     # Default location based on whether AntigravityHome already ends in .gemini
-    if ($AntigravityHome.TrimEnd('\', '/').EndsWith('.gemini', [System.StringComparison]::OrdinalIgnoreCase)) {
+    if ($normalizedHome.EndsWith('.gemini', [System.StringComparison]::OrdinalIgnoreCase)) {
         return $direct
     } else {
         return $dotGemini
@@ -793,6 +861,7 @@ function Invoke-FreeMcpsInstallWorkflow {
 
     # PHASE 1: Preflight BOTH configs BEFORE any download, extraction, or disk writes
     Test-Context7ConfigSafety -ConfigPath $codexTomlPath -ConfigType 'codex'
+    Assert-CodexFeaturesTable -ConfigPath $codexTomlPath
     Test-Context7ConfigSafety -ConfigPath $geminiJsonPath -ConfigType 'gemini'
 
     if (Test-Path -LiteralPath $geminiJsonPath -PathType Leaf) {
@@ -1336,6 +1405,8 @@ function Invoke-FreeMcpsInspectWorkflow {
     $codexHasCbm = $false
     $codexHasCtx7 = $false
     $codexSafety = 'unverified'
+    $codexFeaturesValid = $null
+    $codexFeaturesError = $null
     $codexObservedCache = $null
     $codexObservedRuntime = $null
     if ($codexFound) {
@@ -1353,6 +1424,13 @@ function Invoke-FreeMcpsInspectWorkflow {
             $codexSafety = 'verified_no_credentials'
         } catch {
             $codexSafety = 'credentials_detected'
+        }
+        try {
+            Assert-CodexFeaturesTable -ConfigPath $codexToml
+            $codexFeaturesValid = $true
+        } catch {
+            $codexFeaturesValid = $false
+            $codexFeaturesError = $_.Exception.Message
         }
     }
 
@@ -1417,6 +1495,8 @@ function Invoke-FreeMcpsInspectWorkflow {
         CodexTomlHasCbm         = $codexHasCbm
         CodexTomlHasCtx7        = $codexHasCtx7
         CodexSafety             = $codexSafety
+        CodexFeaturesValid      = $codexFeaturesValid
+        CodexFeaturesError      = $codexFeaturesError
         GeminiJsonPath          = $geminiJson
         GeminiJsonPresent       = $geminiFound
         GeminiJsonHasCbm        = $geminiHasCbm
@@ -1444,6 +1524,8 @@ Export-ModuleMember -Function @(
     'Assert-ZipSafe',
     'Expand-CbmArchiveSafe',
     'Test-Context7ConfigSafety',
+    'Test-CodexFeaturesTable',
+    'Assert-CodexFeaturesTable',
     'Get-MergedCodexTomlContent',
     'Get-MergedGeminiJsonContent',
     'Merge-CodexToml',

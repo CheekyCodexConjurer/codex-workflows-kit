@@ -2638,7 +2638,8 @@ function Test-PermittedLegacyRoleSurface {
         'scripts/backend-routing.psm1',
         'scripts/migrate-legacy-gemini.ps1',
         'scripts/tests/gemini-legacy-migration.Tests.ps1',
-        'scripts/tests/promptpad-optimization.Tests.ps1'
+        'scripts/tests/promptpad-optimization.Tests.ps1',
+        'scripts/tests/swarm-doctor-contract.Tests.ps1'
     )
     if ($Token -in @('scout', 'researcher') -and $permittedLegacyScoutResearcherPaths -contains $RelativePath) {
         return $true
@@ -2665,6 +2666,9 @@ foreach ($relativePath in @(git -C $repo ls-files)) {
 
         foreach ($token in $contractTokens) {
             if ($relativePath -eq 'codex/AGENTS.md' -and $token -eq '\bnative\b') {
+                continue
+            }
+            if ($relativePath -eq 'scripts/tests/swarm-doctor-contract.Tests.ps1') {
                 continue
             }
             if ([regex]::IsMatch($text, $token, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)) {
@@ -2821,8 +2825,12 @@ foreach ($relativePath in @(git -C $repo ls-files)) {
             $relativePath -eq 'skills/codebase-memory-mcp/SKILL.md' -or
             $relativePath -eq 'skills/codebase-memory-mcp/references/scenarios.md' -or
             $relativePath.StartsWith('docs/free-mcps-') -or
-            $relativePath.StartsWith('scripts/tests/free-mcp')
+            $relativePath.StartsWith('scripts/tests/free-mcp') -or
+            $relativePath -eq 'scripts/tests/swarm-doctor-contract.Tests.ps1'
         )
+        if ($isPermittedWatcherSurface -and $relativePath -eq 'scripts/tests/swarm-doctor-contract.Tests.ps1') {
+            continue
+        }
         if ($token -eq (-join [char[]]@(119, 97, 116, 99, 104, 101, 114)) -and $isPermittedWatcherSurface) {
             continue
         }

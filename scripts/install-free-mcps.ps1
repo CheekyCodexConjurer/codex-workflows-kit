@@ -68,6 +68,7 @@ try {
                 Write-Host "  CBM Binary Present  : $($result.CbmBinaryPresent)"
                 Write-Host "  Context7 Endpoint   : $($result.Context7Endpoint) (Billing: unproven anonymous intent; OAuth unknown; no caches checked)"
                 Write-Host "  Codex Config TOML   : $($result.CodexTomlPath) (Present: $($result.CodexTomlPresent), Has CBM: $($result.CodexTomlHasCbm), Has Context7: $($result.CodexTomlHasCtx7))"
+                Write-Host "  Codex Features      : $($result.CodexFeaturesValid)$(if ($result.CodexFeaturesError) { ' (' + $result.CodexFeaturesError + ')' } else { '' })"
                 Write-Host "  Gemini Config JSON  : $($result.GeminiJsonPath) (Present: $($result.GeminiJsonPresent), Has CBM: $($result.GeminiJsonHasCbm), Has Context7: $($result.GeminiJsonHasCtx7))"
                 Write-Host "  State Root Config   : $($result.ConfiguredStateRoot)"
                 Write-Host "  Configured Cache Dir: $($result.ConfiguredCacheDir)"

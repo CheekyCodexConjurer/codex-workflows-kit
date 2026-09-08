@@ -1326,6 +1326,85 @@ try {
     Remove-TestFixture $fix
 }
 
+# ---------------------------------------------------------
+# Test 35: Active Antigravity config wins over the Gemini CLI config
+# ---------------------------------------------------------
+$fix = New-TestFixture
+try {
+    $activeDir = Join-Path $fix.GeminiHome 'antigravity'
+    $activePath = Join-Path $activeDir 'mcp_config.json'
+    $geminiConfigDir = Join-Path $fix.GeminiHome 'config'
+    $geminiPath = Join-Path $geminiConfigDir 'mcp_config.json'
+    New-Item -ItemType Directory -Path $activeDir -Force | Out-Null
+    New-Item -ItemType Directory -Path $geminiConfigDir -Force | Out-Null
+    [System.IO.File]::WriteAllText($activePath, '')
+    [System.IO.File]::WriteAllText($geminiPath, '{"mcpServers":{"context7":{"serverUrl":"https://mcp.context7.com/mcp"}}}')
+
+    $resolved = Resolve-GeminiMcpConfigPath -AntigravityHome $fix.GeminiHome
+    Assert-Test -Name "Resolver: Existing Antigravity config takes precedence over Gemini CLI config" `
+        -Condition ([IO.Path]::GetFullPath($resolved) -eq [IO.Path]::GetFullPath($activePath)) `
+        -Details "Resolved '$resolved' instead of active '$activePath'"
+} catch {
+    Assert-Test -Name "Resolver: Existing Antigravity config takes precedence over Gemini CLI config" -Condition $false -Details $_.Exception.Message
+} finally {
+    Remove-TestFixture $fix
+}
+
+# ---------------------------------------------------------
+# Test 36: Codex feature maps are rejected before MCP installation writes
+# ---------------------------------------------------------
+$fix = New-TestFixture
+try {
+    $codexPath = Join-Path $fix.CodexHome 'config.toml'
+    $invalidCodex = "[features]`ncontext_management = { experimental_mode = true }`n"
+    [System.IO.File]::WriteAllText($codexPath, $invalidCodex)
+    $binPath = Join-Path $fix.InstallRoot 'codebase-memory-mcp.exe'
+    $mockSha = New-MockBinary -DestinationPath $binPath
+    $threw = $false
+    $message = ''
+    try {
+        Invoke-FreeMcpsInstallWorkflow `
+            -CodexHome $fix.CodexHome `
+            -AntigravityHome $fix.GeminiHome `
+            -InstallRoot $fix.InstallRoot `
+            -StateRoot $fix.StateRoot `
+            -SkipBinaryDownload $true `
+            -ExpectedBinarySha $mockSha
+    } catch {
+        $threw = $true
+        $message = $_.Exception.Message
+    }
+    $unchanged = [System.IO.File]::ReadAllText($codexPath) -ceq $invalidCodex
+    $blocksInvalidFeatures = $message -match '(?i)(features|context_management).*(boolean|map|invalid)'
+    Assert-Test -Name "Negative: Invalid Codex feature map fails closed before MCP installation writes" `
+        -Condition ($threw -and $blocksInvalidFeatures -and $unchanged) `
+        -Details $message
+} catch {
+    Assert-Test -Name "Negative: Invalid Codex feature map fails closed before MCP installation writes" -Condition $false -Details $_.Exception.Message
+} finally {
+    Remove-TestFixture $fix
+}
+
+# ---------------------------------------------------------
+# Test 37: Inspect exposes an invalid Codex feature schema without mutating it
+# ---------------------------------------------------------
+$fix = New-TestFixture
+try {
+    $codexPath = Join-Path $fix.CodexHome 'config.toml'
+    [System.IO.File]::WriteAllText($codexPath, "[features]`ncontext_management = { experimental_mode = true }`n")
+    $inspect = Invoke-FreeMcpsInspectWorkflow `
+        -CodexHome $fix.CodexHome `
+        -AntigravityHome $fix.GeminiHome `
+        -InstallRoot $fix.InstallRoot `
+        -StateRoot $fix.StateRoot
+    Assert-Test -Name "Inspect: Invalid Codex feature schema is reported without mutation" `
+        -Condition (-not [bool]$inspect.CodexFeaturesValid -and -not [string]::IsNullOrWhiteSpace([string]$inspect.CodexFeaturesError) -and (Test-Path -LiteralPath $codexPath))
+} catch {
+    Assert-Test -Name "Inspect: Invalid Codex feature schema is reported without mutation" -Condition $false -Details $_.Exception.Message
+} finally {
+    Remove-TestFixture $fix
+}
+
 Write-Host ""
 Write-Host "================================"
 Write-Host "Total Tests : $script:TestCount"

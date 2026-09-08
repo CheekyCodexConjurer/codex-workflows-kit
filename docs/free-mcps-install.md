@@ -9,7 +9,7 @@ This guide details the controlled installation, inspection, and rollback helper 
 - **Direct binary deployment**: unpacks binary without executing upstream hooks, instructions, or global agent modifications.
 - **Safe zip extraction**: enforces path traversal protection (Zip Slip) and file allowlists.
 - **Explicit native state root**: configures short native per-user state root (`-StateRoot`, default `~/.cbm-state` outside AppData) to guarantee reliable runtime without path length or virtualization issues.
-- **Identical absolute env persistence**: persists absolute `CBM_CACHE_DIR` and `CBM_RUNTIME_DIR` identically in both Codex TOML (`[mcp_servers.codebase-memory-mcp.env]`) and Gemini JSON (`mcpServers.codebase-memory-mcp.env`).
+- **Identical absolute env persistence**: persists absolute `CBM_CACHE_DIR` and `CBM_RUNTIME_DIR` identically in both Codex TOML (`[mcp_servers.codebase-memory-mcp.env]`) and the selected Gemini-family JSON (`mcpServers.codebase-memory-mcp.env`).
 - **Privacy & project scoping**: does NOT set `CBM_ALLOWED_ROOT` to proof fixture or entire drive; preserves upstream project selection and privacy policy.
 - **Root safety checks**: rejects broad filesystem roots (`C:\`), system directories, user profile home root directly, reparse points (junctions/symlinks), and overlapping roots before any writes.
 - **Preflight & transactional install**: preflights BOTH Codex and Gemini configurations before any download, extraction, or write; prepares in-memory merges and executes transactional rollback on write failure.
@@ -71,7 +71,11 @@ CBM_RUNTIME_DIR = 'C:\Users\<user>\.cbm-state\runtime'
 url = "https://mcp.context7.com/mcp"
 ```
 
-### 2. Antigravity / Gemini CLI (`.gemini\config\mcp_config.json`)
+### 2. Active Antigravity (`.gemini\antigravity\mcp_config.json`)
+
+When `-AntigravityHome` points at the normal `~/.gemini` root, the installer and inspect workflow select `.gemini\antigravity\mcp_config.json` first, even when it is empty. This is the active Antigravity surface; an existing Gemini CLI file must never make inspect/install report a false green.
+
+### 3. Gemini CLI (`.gemini\config\mcp_config.json`)
 
 Merges servers into `mcpServers` object with identical absolute environment paths while preserving `codegraph`, `serena`, and all other configured tools:
 
@@ -92,6 +96,12 @@ Merges servers into `mcpServers` object with identical absolute environment path
   }
 }
 ```
+
+For a custom `-AntigravityHome` that is not a `.gemini` root, the existing `config\mcp_config.json` layout remains the compatibility fallback. The resolver records and mutates exactly one selected JSON path per installation.
+
+### Codex CLI feature-schema guard
+
+The Codex CLI requires every key under `[features]` in `config.toml` to be a boolean. An inline table such as `context_management = { experimental_mode = true }` prevents the CLI from loading the entire file, including all MCP registrations. `Install` fails closed before downloading or writing when this shape is present; `Inspect` and `doctor.ps1` report the invalid schema without modifying the file. Repair the feature entry with the Codex version that owns the configuration, then rerun inspect/install.
 
 ---
 
@@ -136,7 +146,7 @@ pwsh -File scripts/install-free-mcps.ps1 -Mode Rollback
 
 ## Verification & Unit Testing
 
-The test suite is located at `scripts/tests/free-mcps-installer.Tests.ps1` and contains 37 deterministic unit tests:
+The test suite is located at `scripts/tests/free-mcps-installer.Tests.ps1` and contains 40 deterministic assertions across 37 cases:
 1. Module availability and exports.
 2. Metadata pinning (v0.10.8, official digests, no `@latest`).
 3. Negative: archive checksum mismatch handling.
@@ -171,6 +181,9 @@ The test suite is located at `scripts/tests/free-mcps-installer.Tests.ps1` and c
 32. Idempotence and Drift: Second run succeeds; env path drift fails closed.
 33. Rollback: Preserves state root, pre-existing indexes, and data (zero state deletion).
 34. Inspect: Reports observed root configuration and runtime execution non-guarantee.
+35. Resolver: Existing Antigravity config takes precedence over Gemini CLI config.
+36. Negative: Invalid Codex feature map fails closed before MCP installation writes.
+37. Inspect: Invalid Codex feature schema is reported without mutation.
 
 Run tests:
 ```powershell
