@@ -83,6 +83,8 @@ A prova operacional é obrigatória única e exclusivamente quando a entrega con
 5. **Integração Externa (*external integration*)**: contratos de APIs externas, protocolos de rede e subprocessos gerenciados.
 6. **Comportamento Sensível a Escala e Volume (*behavior sensitive to realistic data volume/resource scale*)**: algoritmos, filtros, ordenações, starvation de recursos ou operações síncronas sob volume de dados representativo do ambiente real.
 
+*Escopo de Aplicação dos Gatilhos*: Os gatilhos aplicam-se unicamente a processos em execução, daemons de background, persistência real em disco/banco ou serviços de rede ativos no host; funções estáticas puras, rotinas utilitárias e testes unitários sem servidores ativos não disparam prova operacional.
+
 ### Evidência Observada e Não Configuração (*Observed Evidence, Not Config*):
 A prova operacional deve consistir estritamente em evidência observada em tempo de execução (*observed runtime evidence*), nunca em inspeção estática de configurações ou suposições. Deve capturar:
 - Latência de inicialização e prontidão de processos e rotas (ex.: medição de tempo de resposta de `GET /health` e readiness probes).
@@ -225,7 +227,7 @@ O revisor emite formalmente um pacote de revisão estruturado contendo:
   - **Ausência de Delta Exige Mudança de Direção Diagnóstica**: Constatada ausência de delta ou informação nova (falha idêntica ou estagnação sem novas evidências nem estreitamento de hipótese), é estritamente proibida retentativa idêntica (*duplicate retry*) ou proliferação cega de agentes via worker swarm. Exige-se mudança mandatória para uma direção diagnóstica diferente (*different diagnostic direction*) ou transição para replanejamento (`replan-gate` / decisão `REWORK` ou `RESEARCH`).
   - **Critérios Estritos de Parada (*Stop Conditions*)**: A interrupção e falha fechada (*fail closed* / `BLOCKED`) ocorrem **única e exclusivamente** sob:
     1. Bloqueio genuíno de autoridade, credenciais/acesso externo ou decisão de negócio do usuário que não possa ser resolvida no escopo concedido.
-    2. Constatação de que não há alternativa viável ou sem caminho seguro acionável (*no safe actionable path forward*).
+    2. Constatação de que não há alternativa viável ou sem caminho seguro acionável (*no safe actionable path forward*). A persistência de bloqueios após tentativas sucessivas sem delta observado ou sem estreitamento causal comprova a inexistência de caminho seguro acionável no escopo concedido, impondo parada imediata em `BLOCKED` e consulta ao usuário para evitar repetições especulativas.
     - É estritamente proibido o uso de limite numérico fixo (como o limite arbitrário anterior de 2 rodadas), substitutos configuráveis ocultos ou contadores numéricos disfarçados de portão semântico.
 - **Revalidação Determinística**: Toda a suíte de validação relevante e checagens determinísticas são reexecutadas.
 - **Novo Alvo Congelado**: Um novo alvo congelado com `target_id` determinístico invariante a staging e hashes SHA256 atualizados é gerado.
@@ -241,4 +243,4 @@ O commit local de entrega é autorizado **única e exclusivamente** quando todas
 3. Imediatamente antes do staging, verificar a identidade do alvo (`target_id`) a partir da árvore de trabalho e exigir igualdade exata com o alvo aprovado na revisão.
 4. Realizar o staging exclusivamente dos arquivos pertencentes ao conjunto de caminhos aprovados do escopo.
 5. Imediatamente antes do commit, recomputar a identidade invariante a staging (`target_id`) a partir do estado atual da árvore de trabalho e exigir igualdade exata com o alvo aprovado na revisão; verificar se o conjunto de arquivos no stage (*staged path set*) corresponde exatamente ao conjunto de caminhos aprovados; e verificar que cada *staged blob* coincide com o conteúdo aprovado após a normalização do próprio Git, garantindo que nenhum caminho ou conteúdo não-aprovado esteja no index.
-6. Todas as obrigações e jobs delegados foram integralmente consumidos e todos os agentes escritores e revisores foram formalmente encerrados (`commit/final requires closure`).
+6. Todas as obrigações e jobs delegados foram integralmente consumidos e todos os agentes escritores e revisores foram formalmente encerrados (`commit/final requires closure`). Uma vez emitido o veredito `APPROVED`, o parent encerra os writers e revisores abertos (`subagents_close`), satisfazendo o encerramento formal antes de executar o commit e a resposta final `DONE`.

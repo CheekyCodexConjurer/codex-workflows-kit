@@ -117,8 +117,7 @@ FRAME -> FANOUT -> [PARK -> SUSPENDED -> WAKE ->] COLLECT -> ACT -> VERIFY -> RE
 - VERIFY: prove the affected behavior with deterministic validation; inspect the
   integrated diff.
 - REVIEW: after material write output in write modes, collect bounded operational proof on the frozen target when risk-triggered (live process/daemon/service, persistence/migration, concurrency/exactly-once, routing, external integration, or scale/volume), and run independent review over target and runtime evidence (`references/delivery-review.md`). Independent approval allows idle open writers with consumed jobs (`independent approval allows idle open writers with consumed jobs`), while commit/final requires closure (`commit/final requires closure`). The final unique integrated reviewer does not prohibit useful intermediate independent sharding (`final unique integrated reviewer does not prohibit useful intermediate independent sharding`).
-- DONE: run the final audit and close the local commit series before the
-  final response.
+- DONE: in write modes, run final audit, close open agents/obligations, and close the local commit series before the final response; in no-write modes (PLAN, PLAN.AUTO, RESEARCH.DEEP, BUG.INV, REVIEW), close immediately upon delivering the proven mode deliverable without delivery review or commit series.
 
 ## Backend tool semantics
 
@@ -255,13 +254,12 @@ commit series; never push. `references/delivery-review.md` and
 
 ## Final audit
 
-Before the final response, prove and report: every required job consumed
+Before the final response in write delivery modes (`IMPL.AUTO`, `IMPL`, `IMPL.PHASE`, `DELIVER.AUTO`, `BUG.FIX`, `DEBUG`), prove and report: every required job consumed
 (`completed`, `completed_partial`, `failed`, `timed_out`, `aborted`, or
 `explicitly unavailable-blocked`), deterministic validation run, exact frozen
 target (staging- and host-code-page-invariant identity: baseline, HEAD-relative status, diff, hashes),
 approved delivery review with zero blockers and verified operational proof when triggered, repaired findings revalidated, local
-commit series closed without push, and remaining risks. Never declare success with
-an open required gate.
+commit series closed without push, and remaining risks. In no-write modes (`PLAN.AUTO`, `PLAN`, `P.DEEP`, `RESEARCH.DEEP`, `REVIEW`, `BUG.INV`, `REWORK`, `TN.SKILL`), the done gate is strictly their mode deliverable; delivery review, frozen target, and commit series do not apply. Never declare success with an open required gate.
 
 ## References
 
