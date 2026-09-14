@@ -82,14 +82,16 @@ A prova operacional é obrigatória única e exclusivamente quando a entrega con
 4. **Roteamento de Provedores ou Modelos (*provider/model routing*)**: matriz de backends, handshakes de transporte, timeouts e tratamento de falhas.
 5. **Integração Externa (*external integration*)**: contratos de APIs externas, protocolos de rede e subprocessos gerenciados.
 6. **Comportamento Sensível a Escala e Volume (*behavior sensitive to realistic data volume/resource scale*)**: algoritmos, filtros, ordenações, starvation de recursos ou operações síncronas sob volume de dados representativo do ambiente real.
+7. **Interface Web, Frontend ou Rota de Navegador (*UI/web frontend or browser route*)**: telas, componentes visuais, formulários, interações de usuário ou rotas de renderização web (ex.: repositórios de UI/frontend como AERA). A prova operacional exige verificação automatizada de navegador local conduzida pelo ajudante (*worker*), captura de evidência visual (*screenshot*) salva como artefato visível no projeto (`.scratchpad/ui_proof.png` ou pasta de artefatos) e confirmação de integridade sem erros no console do navegador.
 
-*Escopo de Aplicação dos Gatilhos*: Os gatilhos aplicam-se unicamente a processos em execução, daemons de background, persistência real em disco/banco ou serviços de rede ativos no host; funções estáticas puras, rotinas utilitárias e testes unitários sem servidores ativos não disparam prova operacional.
+*Escopo Universal de Aplicação dos Gatilhos*: Os gatilhos aplicam-se a processos ativos, persistência, serviços de rede, regras funcionais e interfaces visuais web; funções puramente utilitárias estáticas ou de formatação pura sem servidores ativos ou UI não disparam prova operacional externa.
 
 ### Evidência Observada e Não Configuração (*Observed Evidence, Not Config*):
 A prova operacional deve consistir estritamente em evidência observada em tempo de execução (*observed runtime evidence*), nunca em inspeção estática de configurações ou suposições. Deve capturar:
 - Latência de inicialização e prontidão de processos e rotas (ex.: medição de tempo de resposta de `GET /health` e readiness probes).
 - Estado persistente verificado e comportamento sob volume/escala de dados representativo.
 - Identidade exata do artefato/binário em execução comprovando que corresponde ao `target_id` congelado.
+- Para entregas de UI/web: captura de tela (*screenshot*) e verificação determinística de ausência de erros no console do navegador, executadas pelo worker via script local (Playwright/headless) sem poluir a janela de contexto do parent.
 
 ### Regra de Falha Fechada (*Fail Closed on Missing / Unsafe / Unauthorized Proof*):
 Se a prova operacional exigida for indisponível, insegura, não-autorizada pelo usuário ou não-representativa da escala real:
@@ -161,6 +163,26 @@ O revisor independente deve ser obrigatoriamente um não-autor em um contexto li
 5. **Pilar 5: Integração, Invariantes, Retrocompatibilidade e Escopo (*Integration / Invariants / Backcompat / Scope*)**
    - Preservação de padrões locais e contratos de arquitetura do repositório.
    - Ausência de refatorações cosméticas não solicitadas, dependências desnecessárias, arquivos órfãos ou alterações fora de escopo.
+
+---
+
+## 4.1. Taxonomia de Severidade de Defeitos e Critérios de Bloqueio (P0 a P4)
+
+A emissão de vereditos e a classificação de apontamentos de revisão subordinam-se estritamente à taxonomia objetiva de severidade, eliminando bloqueios subjetivos por estética ou opiniões de estilo:
+
+1. **Defeitos Bloqueantes (`blockers` / Veredito `BLOCKED`):**
+   - **`P0 (Crítico / Showstopper)`**: travamento fatal (*crash*), quebra de compilação ou *build*, perda ou corrupção de dados, vulnerabilidade de segurança crítica ou indisponibilidade total do fluxo principal pretendido. Exige correção imediata e teste comprovado.
+   - **`P1 (Alto / Blocker)`**: funcionalidade ou requisito explicitamente acordado no plano que não foi implementado, ou regressão grave em fluxo operacional secundário sem caminho alternativo viável.
+   - **`P2 (Médio / Blocker)`**: defeito lógico mensurável, violação comprovada de contrato de dados ou API, ou caso limite comum com falha determinística sem tratamento adequado. Em interfaces visuais/web (ex.: AERA), inclui quebras estruturais de layout, sobreposição de elementos críticos, botões inalcançáveis ou erros de console no navegador comprovados pelo teste local do worker.
+   - *Regra Estrita de Bloqueio*: O veredito `BLOCKED` é emitido **única e exclusivamente** quando houver pelo menos um defeito comprovado P0, P1 ou P2 com evidência observada, passos de reprodução e teste determinístico falhando. É estritamente proibido classificar imperfeições estilísticas ou preferências teóricas como bloqueios.
+
+2. **Apontamentos Não-Impeditivos (`advisories` / Veredito `APPROVED`):**
+   - **`P3 (Baixo / Não-impeditivo)`**: inconsistência estética secundária, pequenos desvios cosméticos não funcionais, nuances visuais de espaçamento ou margens que não afetam a usabilidade, ou oportunidade de refatoração opcional que não afeta a corretude.
+   - **`P4 (Cosmético / Não-impeditivo)`**: preferências estilísticas de código, nomenclatura alternativa de variáveis ou funções, formatação, micro-alinhamentos puramente cosméticos ou opiniões subjetivas de IA.
+   - *Regra Estrita de Aprovação*: Havendo validação determinística verde e zero bloqueios P0 a P2, o veredito é obrigatoriamente `APPROVED`. Todos os apontamentos P3 e P4 são registrados exclusivamente no array `advisories` do pacote de revisão como notas informativas, **nunca impedindo o commit de entrega nem forçando ciclos de reparo**.
+
+3. **Revisão Estruturada em Rodada Única (*Single-Turn Review*):**
+   - A revisão independente é executada em rodada única por alvo congelado. O revisor avalia o alvo e emite seu parecer consolidado de uma só vez. Sendo aprovado ou corrigidos os bloqueios P0-P2 comprovados com testes determinísticos verdes, a entrega avança diretamente para o commit, proibindo réplicas ou ciclos iterativos adicionais para discutir itens P3 ou P4.
 
 ---
 

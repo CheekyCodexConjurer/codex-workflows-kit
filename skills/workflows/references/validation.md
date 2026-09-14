@@ -29,6 +29,7 @@ requested mode, never run automatically.
   pre-existing, staged, or other-front changes and on generated/cache/local/ignored
   candidates.
 - Run `git diff --check` plus targeted and integrated deterministic validation.
+- Prova operacional em tempo de execução: obrigatória sob gatilhos de risco (processos ativos, persistência, roteamento, serviços e telas/rotas de UI/web como AERA). Em entregas visuais/frontend, a prova inclui teste automatizado em navegador local pelo worker com captura de screenshot nos artefatos e verificação de integridade do console, poupando tokens do parent.
 - An independent review must yield an `APPROVED` verdict with zero blockers
   (`zero blockers`) against the matching frozen target before committing.
 - Commit gate: verify exact `target_id` before staging; after staging and immediately before commit, recompute the staging-invariant identity (`target_id`) and require equality, verify the staged path set is exactly the approved owned set, and verify every staged blob equals the Git-normalized approved content; independent approval allows idle open writers with consumed jobs, while commit/final requires closure of all obligations and agents (`commit/final requires closure`).
