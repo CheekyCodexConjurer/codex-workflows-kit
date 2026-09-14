@@ -38,7 +38,17 @@ selected mode or an open gate requires it.
   editing. No instrumentation without an explicit `obs-gate` contract
   (`observability.md`).
 - Write delivery modes close with a validated, reviewed, scoped local commit
-  series; never push.
+  series; never push. `DELIVER.AUTO` and `IMPL.AUTO` are identical aliases for
+  automated end-to-end delivery: both implement, test, freeze the integrated
+  diff, review, and commit locally without intermediate user approval prompts.
+  Autonomous execution permission in write delivery modes: local tests use
+  disposable fixtures without production access: run them, fix failures caused
+  by the change, and rerun affected tests without stopping to ask for approval
+  at each step. End-to-end delivery persistence: do not stop after a partial draft
+  or first pass; persist until the implementation is running, tested, reviewed,
+  and committed locally. Read supporting documentation in `references/`
+  contextually on demand when an active mode or gate requires it, avoiding
+  blanket full-file reads for simple tasks.
 - Material current, external, or high-impact claims use the `evidence-first`
   skill.
 - All workflow modes perform an MCP maintenance preflight before acting (`skills/mcp-foundation/SKILL.md`; specialist skills `context7-mcp` and `codebase-memory-mcp` load on relevant tool trigger). Modos sem escrita apenas verificam; write modes may sync CodeGraph on stale/pending delay via status -> sync -> recheck, falling back to Serena/rg with a warning on failure/unknown. Serena runs via `--project-from-cwd` with one instance per project, read configuration check, no-onboarding/no-memories in no-write modes, and edits only in write modes. Codebase Memory (CBM gratuito): grafo de código estrutural (não memórias genéricas de projeto); auto preparação apenas quando útil em modos write autorizados (`IMPL`, `IMPL.AUTO`, `IMPL.PHASE`, `DELIVER.AUTO`, `BUG.FIX`, `DEBUG`, `R.A.F.V`) sob exclusions verificadas e owner único por raiz canônica/lock entre swarm, sem .codegraph init; sem instalações/indices/cache/monitores induzidos em PLAN/RESEARCH/ALINHAMENTO/COMMIT; Index não é autoridade: validar fonte original e freshness; preserve CodeGraph prioridade existente quando .codegraph existe e Serena LSP, escolha ferramenta por necessidade sem multiplicar todas. Context7 (gratuito): política credential-free sem plano pago, consulta atômica sanitizada em vez de pergunta completa, ID confiável estritamente retornado na tarefa ou fornecido pelo usuário (nunca inferir de versão), resolver só sem ID confiável, versão explícita, compartilhar pacote docs entre workers, 429 stop e docs oficiais com aviso sem trocar modelo/provider. Never auto-install, auto-upgrade, or auto-restart MCP servers (CodeGraph strictly manual init; authorized CBM repo prep exception in write delivery modes only).
@@ -203,9 +213,9 @@ permissions.
 No-edit rows never change files. `COMMIT` touches only the Git index, never
 pushes, and is reserved for pre-existing or exceptional dirty worktrees.
 Write delivery modes close with a validated, reviewed, scoped local commit
-series and never push; `DELIVER.AUTO` freezes the integrated diff and commits
-it locally. No reset, pull, merge, push, publication, or destructive action
-without an explicit request.
+series and never push; `DELIVER.AUTO` and `IMPL.AUTO` operate as identical aliases,
+freezing the integrated diff and committing it locally. No reset, pull, merge,
+push, publication, or destructive action without an explicit request.
 Subagent execution remains strictly bounded by the mode matrix: in no-write modes and in
 ALINHAMENTO, subagents operate strictly under no-write (somente leitura); strategy never grants
 write permissions. In write modes, strict path ownership and independent review
