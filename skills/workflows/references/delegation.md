@@ -78,6 +78,7 @@ Existem quatro seletores globais ortogonais e independentes:
 - **Ledger Estável de Requisições**: O parent GPT mantém um ledger estruturado registrando `request_id`, frente de trabalho, identificador do agente/job, estado (`running`, `completed`, `failed`), status de consumo e encerramento explícito.
 - **Permissões Estritas por Modo**: O papel e as capacidades do subagente subordinam-se estritamente à matriz de modos do Codex Workflows Kit.
 - **Interpretação de Contexto Visual**: O parent GPT interpreta todo `visual_context` (imagens, capturas de tela, mockups) e sintetiza descrições textuais precisas para o subagente, nunca delegando interpretação visual cega.
+- **Repasse de Contexto Curado aos Subagentes**: Ao despachar frentes delegadas, o parent fornece o recorte relevante da tarefa (arquivos candidatos, símbolos afetados e contexto do erro ou contrato) diretamente no prompt ou parâmetros de contexto (`contextFiles`), evitando que subagentes comecem a vasculhar a raiz do repositório do zero. O subagente valida o código nas fontes originais, mas aproveita a localização já obtida.
 
 ---
 

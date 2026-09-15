@@ -36,7 +36,7 @@ All workflow modes perform an MCP maintenance preflight before operational actio
 - **Status Inspection**: Always check index state using `status --json`.
 - **Incremental Synchronization**: Execute `codegraph sync` exclusively when an index already exists and reports stale or pending status. Never run background sync on healthy up-to-date indexes.
 - **Full Indexing and Initialization**: `codegraph index` and `codegraph init` are exclusively operator-invoked commands; never execute them autonomously.
-- **Structural Exploration**: Direct structural queries must invoke `codegraph_explore` directly.
+- **Structural Exploration**: Direct structural queries must invoke `codegraph_explore` directly. Structural questions (call flows, module coupling, architecture) prioritize the graph. Direct literal searches (exact error messages, literal strings, configuration keys) use `rg` directly as the shortest path without graph indirection. Curated task context is shared with sub-agents to avoid redundant discovery from root.
 - **Project Boundary & Index Existence**:
   - CodeGraph is active ONLY if `.codegraph` exists in the repository root OR an explicit `projectPath` parameter pointing to an existing index is provided.
 - If `.codegraph` is absent and no explicit `projectPath` exists, skip CodeGraph immediately and fall back cleanly to Serena and targeted `rg`.
