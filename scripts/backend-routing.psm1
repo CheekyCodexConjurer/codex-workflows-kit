@@ -1264,7 +1264,7 @@ function Get-CodexMcpMaintenanceDecision {
     param(
         [Parameter(Mandatory)][ValidateSet('Context7', 'CodeGraph', 'Serena', 'CBM')][string]$Mcp,
         [AllowNull()][object]$Status,
-        [Parameter(Mandatory)][ValidateSet('ALINHAMENTO', 'PLAN.AUTO', 'PLAN', 'P.DEEP', 'RESEARCH.DEEP', 'IMPL.AUTO', 'IMPL', 'IMPL.PHASE', 'DELIVER.AUTO', 'REVIEW', 'COMMIT', 'BUG.INV', 'BUG.FIX', 'DEBUG', 'REWORK', 'R.A.F.V', 'TN.SKILL')][string]$Mode
+        [Parameter(Mandatory)][ValidateSet('ALINHAMENTO', 'PLAN.AUTO', 'PLAN', 'P.DEEP', 'RESEARCH.DEEP', 'IMPL.AUTO', 'IMPL', 'IMPL.PHASE', 'DELIVER.AUTO', 'REVIEW', 'COMMIT', 'BUG.INV', 'BUG.FIX', 'DEBUG', 'REWORK', 'R.A.F.V', 'TN.SKILL', 'CONSULT')][string]$Mode
     )
 
     $writeModes = @('IMPL.AUTO', 'IMPL', 'IMPL.PHASE', 'DELIVER.AUTO', 'BUG.FIX', 'DEBUG', 'R.A.F.V')

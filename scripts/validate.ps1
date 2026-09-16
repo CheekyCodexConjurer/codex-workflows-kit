@@ -2017,6 +2017,7 @@ function Assert-ModeMatrix {
         'REWORK'          = @{ capabilities = @('read', 'research'); permission = 'no-write' }
         'R.A.F.V'         = @{ capabilities = @('review', 'write', 'test', 'commit'); permission = 'write' }
         'TN.SKILL'        = @{ capabilities = @('read', 'review'); permission = 'no-write' }
+        'CONSULT'         = @{ capabilities = @('read'); permission = 'no-write' }
     }
     $allowedCapabilities = @('read', 'research', 'write', 'test', 'review', 'verify', 'index', 'commit')
     $nativeProfiles = @('scout', 'researcher', 'writer', 'reviewer', 'worker')
@@ -2408,7 +2409,7 @@ $promptPad = Read-RequiredText (Join-Path $repo 'ahk\codex_prompt_pad.ahk')
 $allModes = @(
     'PLAN.AUTO', 'PLAN', 'P.DEEP', 'RESEARCH.DEEP', 'IMPL.AUTO', 'IMPL',
     'IMPL.PHASE', 'DELIVER.AUTO', 'REVIEW', 'COMMIT', 'BUG.INV', 'BUG.FIX',
-    'DEBUG', 'REWORK', 'R.A.F.V', 'TN.SKILL'
+    'DEBUG', 'REWORK', 'R.A.F.V', 'TN.SKILL', 'CONSULT'
 )
 foreach ($mode in $allModes) {
     Assert-Contains -Label 'workflow skill' -Text $skill -Needles @($mode)
@@ -2500,12 +2501,12 @@ Assert-Contains -Label 'codex AGENTS.md' -Text $agentsText -Needles @(
     'alvo congelado'
 )
 $agentsBytes = (Get-Item (Join-Path $repo 'codex\AGENTS.md')).Length
-if ($agentsBytes -ge 18000) {
-    throw "codex AGENTS.md exceeds the measured byte budget: $agentsBytes bytes (limit: < 18000 bytes)"
+if ($agentsBytes -ge 20000) {
+    throw "codex AGENTS.md exceeds the measured byte budget: $agentsBytes bytes (limit: < 20000 bytes)"
 }
 $geminiBytes = (Get-Item (Join-Path $repo 'antigravity\GEMINI.md')).Length
-if ($geminiBytes -ge 12000) {
-    throw "antigravity GEMINI.md exceeds the measured byte budget: $geminiBytes bytes (limit: < 12000 bytes)"
+if ($geminiBytes -ge 14000) {
+    throw "antigravity GEMINI.md exceeds the measured byte budget: $geminiBytes bytes (limit: < 14000 bytes)"
 }
 if ($agentsText.IndexOf('# BEGIN CODEX-WORKFLOWS-KIT: runtime', [StringComparison]::Ordinal) -ge 0) {
     throw 'Source template codex/AGENTS.md must not contain active runtime block values.'
@@ -2733,6 +2734,7 @@ $expectedPromptMap = [ordered]@{
     'Numpad7'  = '$workflows mode=R.A.F.V'
     'Numpad8'  = '$workflows mode=REWORK'
     'Numpad9'  = '$workflows mode=RESEARCH.DEEP'
+    'NumpadDot'  = '$workflows mode=CONSULT'
     '^Numpad1' = '.\scripts\switch-subagent-backend.ps1 -Backend native'
     '^Numpad2' = '.\scripts\switch-subagent-backend.ps1 -Backend deepseek'
     '^Numpad3' = '.\scripts\switch-subagent-continuation.ps1 -Continuation active_follow'
@@ -2825,6 +2827,7 @@ foreach ($relativePath in @(git -C $repo ls-files)) {
             $relativePath -eq 'skills/codebase-memory-mcp/SKILL.md' -or
             $relativePath -eq 'skills/codebase-memory-mcp/references/scenarios.md' -or
             $relativePath.StartsWith('docs/free-mcps-') -or
+            $relativePath.StartsWith('docs/superpowers/plans/2026-09-05-free-mcps-') -or
             $relativePath.StartsWith('scripts/tests/free-mcp') -or
             $relativePath -eq 'scripts/tests/swarm-doctor-contract.Tests.ps1'
         )

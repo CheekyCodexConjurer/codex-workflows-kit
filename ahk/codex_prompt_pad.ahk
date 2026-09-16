@@ -59,6 +59,8 @@ Numpad8::PastePrompt("$workflows mode=REWORK")
 
 Numpad9::PastePrompt("$workflows mode=RESEARCH.DEEP")
 
+NumpadDot::PastePrompt("$workflows mode=CONSULT")
+
 ; --- Control Commands (Ctrl + Numpad) ---
 ; CWD assumption: Repository root where .\scripts exists (matching existing shortcuts).
 ; Passively pastes command into clipboard and active prompt; no auto-execution.

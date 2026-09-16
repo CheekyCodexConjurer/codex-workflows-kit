@@ -130,7 +130,7 @@ FRAME -> FANOUT -> [PARK -> SUSPENDED -> WAKE ->] COLLECT -> ACT -> VERIFY -> RE
 - VERIFY: prove the affected behavior with deterministic validation; inspect the
   integrated diff. Prioritize fast local CLI linters/formatters (e.g. `ruff` for Python, `biome` for JS/TS) and AST transforms (`ast-grep`) directly via terminal when available to handle mechanical cleanup and multi-file structural edits quickly without MCP overhead; fail open cleanly if unavailable.
 - REVIEW: after material write output in write modes, collect bounded operational proof on the frozen target when risk-triggered (live process/daemon/service, persistence/migration, concurrency/exactly-once, routing, external integration, or scale/volume), and run independent review over target and runtime evidence (`references/delivery-review.md`). Independent approval allows idle open writers with consumed jobs (`independent approval allows idle open writers with consumed jobs`), while commit/final requires closure (`commit/final requires closure`). The final unique integrated reviewer does not prohibit useful intermediate independent sharding (`final unique integrated reviewer does not prohibit useful intermediate independent sharding`).
-- DONE: in write modes, run final audit, close open agents/obligations, and close the local commit series before the final response; in no-write modes (PLAN, PLAN.AUTO, RESEARCH.DEEP, BUG.INV, REVIEW), close immediately upon delivering the proven mode deliverable without delivery review or commit series.
+- DONE: in write modes, run final audit, close open agents/obligations, and close the local commit series before the final response; in no-write modes (PLAN, PLAN.AUTO, RESEARCH.DEEP, BUG.INV, REVIEW, CONSULT), close immediately upon delivering the proven mode deliverable without delivery review or commit series.
 
 ## Backend tool semantics
 
@@ -212,6 +212,7 @@ permissions.
 | `REWORK` | read, research | no-write | rework roadmap backed by evidence |
 | `R.A.F.V` | review, write, test, commit | write | repair batch revalidated; local commit series; no push |
 | `TN.SKILL` | read, review | no-write | quality roadmap backed by evidence |
+| `CONSULT` | read | no-write | external consultation prompt delivered |
 
 No-edit rows never change files. `COMMIT` touches only the Git index, never
 pushes, and is reserved for pre-existing or exceptional dirty worktrees.
@@ -272,7 +273,7 @@ Before the final response in write delivery modes (`IMPL.AUTO`, `IMPL`, `IMPL.PH
 `explicitly unavailable-blocked`), deterministic validation run, exact frozen
 target (staging- and host-code-page-invariant identity: baseline, HEAD-relative status, diff, hashes),
 approved delivery review with zero blockers and verified operational proof when triggered, repaired findings revalidated, local
-commit series closed without push, and remaining risks. In no-write modes (`PLAN.AUTO`, `PLAN`, `P.DEEP`, `RESEARCH.DEEP`, `REVIEW`, `BUG.INV`, `REWORK`, `TN.SKILL`), the done gate is strictly their mode deliverable; delivery review, frozen target, and commit series do not apply. Never declare success with an open required gate.
+commit series closed without push, and remaining risks. In no-write modes (`PLAN.AUTO`, `PLAN`, `P.DEEP`, `RESEARCH.DEEP`, `REVIEW`, `BUG.INV`, `REWORK`, `TN.SKILL`, `CONSULT`), the done gate is strictly their mode deliverable; delivery review, frozen target, and commit series do not apply. Never declare success with an open required gate.
 
 ## References
 
@@ -285,3 +286,4 @@ Open only when the mode or a gate requires it:
 - `references/validation.md` — delivery gate and installed mirrors
 - `references/commit.md` — delivery commit gate and `COMMIT`
 - `references/quality-ratchet.md` — `TN.SKILL` and code quality
+- `references/consult.md` — `CONSULT` external consultation prompt

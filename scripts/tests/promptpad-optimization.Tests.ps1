@@ -57,6 +57,7 @@ $expectedModes = @{
     'Numpad7' = '$workflows mode=R.A.F.V'
     'Numpad8' = '$workflows mode=REWORK'
     'Numpad9' = '$workflows mode=RESEARCH.DEEP'
+    'NumpadDot' = '$workflows mode=CONSULT'
 }
 
 foreach ($key in $expectedModes.Keys) {
