@@ -90,6 +90,7 @@ Existem quatro seletores globais ortogonais e independentes:
   - Executa tarefas sequenciais, coesas, de integração e de caminho crítico diretamente no contexto principal quando o round-trip de delegação não traria ganho de tempo.
   - Não há fan-out obrigatório: frentes lineares simples permanecem coesas no parent.
   - Gerencia o fluxo crítico, o mapa de dependências e a síntese final.
+  - **Fatias Delimitadas e Escopo Cirúrgico**: Proibido despachar tarefas de escopo amplo, abertas ou indefinidas para subagentes (evitando dispersão e execuções longas desnecessárias). O parent deve fatiar o problema previamente, fornecendo arquivos-alvo explícitos, perguntas atômicas ou contratos exatos com critérios claros de parada e saída antecipada (*early-exit*). Para pulverização massiva de frentes independentes em paralelo, utilizar explicitamente `swarm`.
 - **Gatilhos para Delegação**:
   - **Paralelismo Concreto**: Quando duas ou mais frentes independentes podem ser executadas simultaneamente para reduzir o tempo total de resposta.
   - **Especialização Técnica**: Quando a análise de um subsistema isolado ou execução de diagnósticos se beneficia de contexto focado.

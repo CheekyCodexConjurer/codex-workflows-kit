@@ -69,7 +69,7 @@ selected mode or an open gate requires it.
 - Under `balanced` (default; wall-clock optimization): parent directly performs
   cohesive, sequential, critical-path material work when delegation round-trip
   would not help; delegates for concrete independent parallelism, specialization,
-  risk isolation, or large-context compression. No mandatory fan-out.
+  risk isolation, or large-context compression. No mandatory fan-out. Bounded delegation slices: parent is forbidden from dispatching open-ended or unscoped tasks to subagents; must slice tasks into bounded targets with explicit files, atomic questions, and early-exit criteria to prevent long drift; extensive parallel pulverization routes explicitly to `swarm`.
 - Under `aggressive` (parent-token offload): parent acts as architect, decider,
   integrator, and gatekeeper; delegates material bulk without redoing delegated
   work locally; consumes a decision evidence packet (frozen target/diff, critical
@@ -128,7 +128,7 @@ FRAME -> FANOUT -> [PARK -> SUSPENDED -> WAKE ->] COLLECT -> ACT -> VERIFY -> RE
 - ACT: decide from collected evidence; route defects back to the same front
   via `subagents_continue` (or native follow-up), re-plan, or stop.
 - VERIFY: prove the affected behavior with deterministic validation; inspect the
-  integrated diff.
+  integrated diff. Prioritize fast local CLI linters/formatters (e.g. `ruff` for Python, `biome` for JS/TS) and AST transforms (`ast-grep`) directly via terminal when available to handle mechanical cleanup and multi-file structural edits quickly without MCP overhead; fail open cleanly if unavailable.
 - REVIEW: after material write output in write modes, collect bounded operational proof on the frozen target when risk-triggered (live process/daemon/service, persistence/migration, concurrency/exactly-once, routing, external integration, or scale/volume), and run independent review over target and runtime evidence (`references/delivery-review.md`). Independent approval allows idle open writers with consumed jobs (`independent approval allows idle open writers with consumed jobs`), while commit/final requires closure (`commit/final requires closure`). The final unique integrated reviewer does not prohibit useful intermediate independent sharding (`final unique integrated reviewer does not prohibit useful intermediate independent sharding`).
 - DONE: in write modes, run final audit, close open agents/obligations, and close the local commit series before the final response; in no-write modes (PLAN, PLAN.AUTO, RESEARCH.DEEP, BUG.INV, REVIEW), close immediately upon delivering the proven mode deliverable without delivery review or commit series.
 

@@ -13,6 +13,8 @@
 
 - Run targeted deterministic validation first; broaden it to integrated
   regression as required by the blast radius.
+- Limpeza e formatação mecânica preventiva: quando disponíveis no ambiente ou projeto, priorizar utilitários de terminal rápidos (ex.: `ruff check --fix` / `ruff format` para Python, ou `biome check --write` para JS/TS) antes de rodar baterias completas de testes, eliminando erros mecânicos de sintaxe, imports e estilo em milissegundos sem overhead de MCPs ou consumo desnecessário de tokens; seguir sem bloqueio se não instalados.
+- Refatorações estruturais em múltiplos arquivos: priorizar `ast-grep` (`sg`) diretamente no terminal para transformações sintáticas repetitivas baseadas em AST, evitando ciclos manuais lentos de busca e substituição via múltiplas edições de arquivo pelo modelo.
 - Inspect the integrated diff, including unintended paths and generated files.
 - Executar a checagem pré-revisão do Gate de Adequação da Correção assegurando suficiência e sustentabilidade antes do congelamento.
 - Freeze the target with staging- and host-code-page-invariant deterministic identity (`target_id`: baseline, owned HEAD-relative content status, integrated diff against HEAD with Git stdout normalized as UTF-8, per-file SHA256 hashes, excluding index placement; raw porcelain captured as evidence outside digest; validation evidence) and execute an independent review covering the 5 explicit pillars
