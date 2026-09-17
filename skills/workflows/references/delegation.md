@@ -82,20 +82,18 @@ Existem quatro seletores globais ortogonais e independentes:
 
 ---
 
-## 2. Política `balanced` (Padrão)
+## 2. Política `balanced` (Padrão / Política Universal do Orquestrador)
 
-**Foco Principal**: Otimização do tempo de relógio (*wall-clock time*) e eficiência de fluxo.
+**Foco Principal**: Economia máxima de tokens, alta precisão e eficiência de fluxo (*wall-clock time*).
 
-- **Comportamento do Parent GPT**:
-  - Executa tarefas sequenciais, coesas, de integração e de caminho crítico diretamente no contexto principal quando o round-trip de delegação não traria ganho de tempo.
-  - Não há fan-out obrigatório: frentes lineares simples permanecem coesas no parent.
-  - Gerencia o fluxo crítico, o mapa de dependências e a síntese final.
-  - **Fatias Delimitadas e Escopo Cirúrgico**: Proibido despachar tarefas de escopo amplo, abertas ou indefinidas para subagentes (evitando dispersão e execuções longas desnecessárias). O parent deve fatiar o problema previamente, fornecendo arquivos-alvo explícitos, perguntas atômicas ou contratos exatos com critérios claros de parada e saída antecipada (*early-exit*). Para pulverização massiva de frentes independentes em paralelo, utilizar explicitamente `swarm`.
-- **Gatilhos para Delegação**:
-  - **Paralelismo Concreto**: Quando duas ou mais frentes independentes podem ser executadas simultaneamente para reduzir o tempo total de resposta.
-  - **Especialização Técnica**: Quando a análise de um subsistema isolado ou execução de diagnósticos se beneficia de contexto focado.
-  - **Isolamento de Risco e Blast Radius**: Quando a exploração ou teste de caminhos alternativos deve ser contida sem poluir a árvore principal de trabalho.
-  - **Compressão e Eficiência de Contexto**: Quando leituras volumosas de logs, traces ou documentação extensa consumiriam a janela de contexto do parent.
+- **Comportamento do Orquestrador (Parent)**:
+  - **Solo por Padrão**: O Orquestrador executa tarefas sequenciais, coesas, de diagnóstico, criação e edição de código diretamente no contexto principal. Não há delegação automática para tarefas comuns.
+  - **Gatilhos Estritos para Delegação**: O acionamento de subagentes é restrito a dois cenários:
+    1. **Compressão e Blindagem de Contexto**: Leituras massivas de arquivos, logs ou documentação extensa que entupiriam a janela de contexto do Orquestrador.
+    2. **Paralelismo Concreto e Independente**: Duas ou mais frentes de pesquisa/diagnóstico 100% independentes sem dependência sequencial mútua.
+  - **Retorno Filtrado (Thin Handoff - Máx. 5 Linhas)**: Subagentes são estritamente proibidos de retornar código bruto, arquivos completos ou transcrições longas. O retorno deve conter apenas o status, conclusões pontuais e referências exatas.
+  - **Edição Centralizada e Sem Telefone sem Fio**: Apenas o Orquestrador aplica modificações nos arquivos de produção. Subagentes operam estritamente em leitura, exploração e diagnóstico. Proibida delegação sequencial encadeada.
+  - **Fatias Delimitadas e Escopo Cirúrgico**: Proibido despachar tarefas de escopo amplo ou aberto. O Orquestrador fornece arquivos-alvo explícitos, perguntas atômicas e critérios de saída antecipada (*early-exit*). Para pulverização massiva, utilizar explicitamente `swarm`.
 
 ---
 

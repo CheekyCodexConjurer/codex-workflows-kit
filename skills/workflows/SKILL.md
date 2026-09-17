@@ -66,10 +66,7 @@ selected mode or an open gate requires it.
 - Decompose, route, prioritize, synthesize, integrate, validate, and decide.
   Delegation is governed by the orthogonal selectors (`subagent_backend`,
   `delegation_policy`, `subagent_strategy`, and `subagent_continuation`); see `references/delegation.md`.
-- Under `balanced` (default; wall-clock optimization): parent directly performs
-  cohesive, sequential, critical-path material work when delegation round-trip
-  would not help; delegates for concrete independent parallelism, specialization,
-  risk isolation, or large-context compression. No mandatory fan-out. Bounded delegation slices: parent is forbidden from dispatching open-ended or unscoped tasks to subagents; must slice tasks into bounded targets with explicit files, atomic questions, and early-exit criteria to prevent long drift; extensive parallel pulverization routes explicitly to `swarm`.
+- Under `balanced` (default / Universal Orchestrator Policy; token economy & precision): the Orchestrator performs work solo by default for common tasks (diagnostics, local edits, routine features); strict delegation triggers apply (delegates only for massive read volume or strictly independent parallel fronts); subagents must return thin filtered responses (max ~5 lines, never raw code dumps, full files, or long logs); centralized editing: only the Orchestrator applies code modifications, while subagents strictly explore/research without sequential delegation chains. Bounded delegation slices: parent is forbidden from dispatching open-ended or unscoped tasks to subagents; must slice tasks into bounded targets with explicit files, atomic questions, and early-exit criteria to prevent long drift; extensive parallel pulverization routes explicitly to `swarm`.
 - Under `aggressive` (parent-token offload): parent acts as architect, decider,
   integrator, and gatekeeper; delegates material bulk without redoing delegated
   work locally; consumes a decision evidence packet (frozen target/diff, critical
