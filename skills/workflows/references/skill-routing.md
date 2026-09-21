@@ -125,11 +125,15 @@ Configured via parameter `-RoutingPolicy` or environment variable `CODEX_SKILL_R
 | `advisory` *(default)* | Jev scores candidates. Evaluates relevance and provides non-blocking recommendations. | `select`, `review`, `skip`. Forced remain `forced`. | `enforced: false` across all recommendations. Parent GPT retains sovereign authority to load `skip` or ignore `select`. |
 | `enforce` | Jev + thresholds automatically govern implicit candidate selection. | `select`, `skip` applied deterministically; `review` escalated to parent. Forced remain `forced`. | `enforced: true` for `select`, `skip`, and `forced`. `enforced: false` for `review` (escalated). |
 
-### Configurable Thresholds & Limits
-- **`SelectThreshold`** (`>= 0.70`): Skill provides material improvement; recommended/enforced for loading (`decision: "select"`).
-- **`ReviewThreshold`** (`0.45` – `< 0.70`): Borderline relevance; flagged for parent review (`decision: "review"`, `enforced: false`).
-- **Skip** (`< 0.45`): Irrelevant or superficial (`decision: "skip"`). Under `advisory`, `enforced: false`; under `enforce`, `enforced: true`.
-- **`MaxSelectedSkills`** (default `3`): Caps the number of implicit skills loaded to preserve context budget. If more than 3 exceed `0.70`, top-ranked skills are selected and the remainder marked `review` (`note: "capacity_limit_exceeded"`). Forced skills do not count toward this cap.
+### Configurable Thresholds, Limits & Validation Rules
+All parameters are validated fail-fast before any discovery, filesystem scan, or network request:
+- **`SelectThreshold`** (`0.0` – `1.0`, default `0.70`): Skill provides material improvement; recommended/enforced for loading (`decision: "select"`).
+- **`ReviewThreshold`** (`0.0` – `1.0`, default `0.45`): Borderline relevance; flagged for parent review (`decision: "review"`, `enforced: false`). Must satisfy `ReviewThreshold <= SelectThreshold`; configurations where `ReviewThreshold > SelectThreshold` fail immediately with a descriptive error.
+- **Skip** (`< ReviewThreshold`): Irrelevant or superficial (`decision: "skip"`). Under `advisory`, `enforced: false`; under `enforce`, `enforced: true`.
+- **`MaxSelectedSkills`** (`0` – `100`, default `3`): Caps the number of implicit skills loaded to preserve context budget. Setting to `0` disables automatic selection of implicit skills (all candidates meeting threshold are escalated as `review`). Forced skills do not count toward this cap.
+- **`BatchSize`** (`1` – `100`, default `25`): Maximum number of candidate skill questions evaluated in parallel per Jev HTTP request. Non-positive values are rejected.
+- **`TimeoutSeconds`** (`1` – `120`, default `10`): Maximum time in seconds for TypeSafe Jev API requests.
+- **`CODEX_SKILL_ROUTING_POLICY`**: Normalized case-insensitively to `off`, `advisory`, or `enforce`. Invalid values fail fast with a configuration error instead of silently defaulting.
 
 ---
 

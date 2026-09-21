@@ -38,6 +38,24 @@ function Assert-Test {
     }
 }
 
+function Test-ScriptThrows {
+    param(
+        [Parameter(Mandatory = $true)][scriptblock]$Block,
+        [Parameter(Mandatory = $false)][string]$ExpectedMessagePattern = ''
+    )
+
+    try {
+        $null = & $Block
+        return $false
+    }
+    catch {
+        if ($ExpectedMessagePattern) {
+            return ($_.Exception.Message -match $ExpectedMessagePattern)
+        }
+        return $true
+    }
+}
+
 Write-Host 'Running TypeSafe/Jev Skill Routing Tests...' -ForegroundColor Cyan
 
 # 1. Existence and contract assertions
@@ -336,6 +354,66 @@ Fix authentication regression in REST API
     Assert-Test 'API error marks candidate as review with jev_unavailable note and enforced=false' ($errorCand.decision -eq 'review' -and $errorCand.enforced -eq $false -and $errorCand.note -eq 'jev_unavailable')
     $healthyCand = $errorResult.results | Where-Object { $_.id -eq 'kit:custom-kit-tool' }
     Assert-Test 'Other candidates evaluate successfully despite partial failure' ($healthyCand.decision -eq 'select' -and $healthyCand.enforced -eq $true)
+
+    # 14. Configuration Hardening & Parameter Range Validations (Fail Fast)
+
+    # BatchSize validations
+    Assert-Test 'rejects BatchSize = 0' (Test-ScriptThrows { & $routeSkillsScript -BatchSize 0 -Quiet })
+    Assert-Test 'rejects BatchSize < 0 (-1)' (Test-ScriptThrows { & $routeSkillsScript -BatchSize -1 -Quiet })
+    Assert-Test 'rejects BatchSize > 100 (101)' (Test-ScriptThrows { & $routeSkillsScript -BatchSize 101 -Quiet })
+    Assert-Test 'accepts BatchSize = 1' (-not (Test-ScriptThrows { & $routeSkillsScript -BatchSize 1 -RoutingPolicy off -WorkingDir $repoRoot -Quiet }))
+    Assert-Test 'accepts BatchSize = 100' (-not (Test-ScriptThrows { & $routeSkillsScript -BatchSize 100 -RoutingPolicy off -WorkingDir $repoRoot -Quiet }))
+
+    # MaxSelectedSkills validations
+    Assert-Test 'rejects MaxSelectedSkills < 0 (-1)' (Test-ScriptThrows { & $routeSkillsScript -MaxSelectedSkills -1 -Quiet })
+    Assert-Test 'rejects MaxSelectedSkills > 100 (101)' (Test-ScriptThrows { & $routeSkillsScript -MaxSelectedSkills 101 -Quiet })
+    Assert-Test 'accepts MaxSelectedSkills = 100' (-not (Test-ScriptThrows { & $routeSkillsScript -MaxSelectedSkills 100 -RoutingPolicy off -WorkingDir $repoRoot -Quiet }))
+
+    # MaxSelectedSkills = 0 boundary behavior: disables automatic selection of implicit skills
+    $mocksZero = @{ 'repo:packages/api/.agents/skills/api-skill' = 0.95 }
+    $zeroCapResult = & $routeSkillsScript -RoutingPolicy enforce -WorkingDir $apiSrcDir -CodexHome $mockCodexHome -MaxSelectedSkills 0 -MockResponses $mocksZero -Quiet
+    $zeroCapSelects = @($zeroCapResult.results | Where-Object { $_.decision -eq 'select' })
+    $zeroCapForced = @($zeroCapResult.results | Where-Object { $_.decision -eq 'forced' })
+    $zeroCapReviews = @($zeroCapResult.results | Where-Object { $_.id -eq 'repo:packages/api/.agents/skills/api-skill' })
+    Assert-Test 'accepts MaxSelectedSkills = 0 and selects 0 implicit skills' ($zeroCapSelects.Count -eq 0)
+    Assert-Test 'MaxSelectedSkills = 0 downgrades qualifying candidate to review with capacity notice' ($zeroCapReviews.Count -eq 1 -and $zeroCapReviews[0].decision -eq 'review' -and $zeroCapReviews[0].note -eq 'capacity_limit_exceeded')
+    Assert-Test 'MaxSelectedSkills = 0 does not block forced skills' ($zeroCapForced.Count -ge 1)
+
+    # Threshold range validations
+    Assert-Test 'rejects SelectThreshold < 0 (-0.1)' (Test-ScriptThrows { & $routeSkillsScript -SelectThreshold -0.1 -Quiet })
+    Assert-Test 'rejects SelectThreshold > 1 (1.1)' (Test-ScriptThrows { & $routeSkillsScript -SelectThreshold 1.1 -Quiet })
+    Assert-Test 'rejects ReviewThreshold < 0 (-0.1)' (Test-ScriptThrows { & $routeSkillsScript -ReviewThreshold -0.1 -Quiet })
+    Assert-Test 'rejects ReviewThreshold > 1 (1.1)' (Test-ScriptThrows { & $routeSkillsScript -ReviewThreshold 1.1 -Quiet })
+
+    # Threshold relationship: ReviewThreshold must be <= SelectThreshold
+    Assert-Test 'rejects ReviewThreshold > SelectThreshold' (Test-ScriptThrows { & $routeSkillsScript -ReviewThreshold 0.80 -SelectThreshold 0.50 -Quiet } 'ReviewThreshold .* must be less than or equal to SelectThreshold')
+    Assert-Test 'accepts ReviewThreshold = 0.0 and SelectThreshold = 1.0' (-not (Test-ScriptThrows { & $routeSkillsScript -ReviewThreshold 0.0 -SelectThreshold 1.0 -RoutingPolicy off -WorkingDir $repoRoot -Quiet }))
+    Assert-Test 'accepts ReviewThreshold == SelectThreshold' (-not (Test-ScriptThrows { & $routeSkillsScript -ReviewThreshold 0.70 -SelectThreshold 0.70 -RoutingPolicy off -WorkingDir $repoRoot -Quiet }))
+
+    # TimeoutSeconds validations
+    Assert-Test 'rejects TimeoutSeconds = 0' (Test-ScriptThrows { & $routeSkillsScript -TimeoutSeconds 0 -Quiet })
+    Assert-Test 'rejects TimeoutSeconds < 0 (-1)' (Test-ScriptThrows { & $routeSkillsScript -TimeoutSeconds -1 -Quiet })
+    Assert-Test 'rejects TimeoutSeconds > 120 (121)' (Test-ScriptThrows { & $routeSkillsScript -TimeoutSeconds 121 -Quiet })
+    Assert-Test 'accepts TimeoutSeconds = 1' (-not (Test-ScriptThrows { & $routeSkillsScript -TimeoutSeconds 1 -RoutingPolicy off -WorkingDir $repoRoot -Quiet }))
+    Assert-Test 'accepts TimeoutSeconds = 120' (-not (Test-ScriptThrows { & $routeSkillsScript -TimeoutSeconds 120 -RoutingPolicy off -WorkingDir $repoRoot -Quiet }))
+
+    # CODEX_SKILL_ROUTING_POLICY environment variable validation
+    $oldPolicy = $env:CODEX_SKILL_ROUTING_POLICY
+    try {
+        $env:CODEX_SKILL_ROUTING_POLICY = 'banana'
+        Assert-Test 'rejects invalid CODEX_SKILL_ROUTING_POLICY environment variable' (Test-ScriptThrows { & $routeSkillsScript -WorkingDir $repoRoot -Quiet } 'Invalid CODEX_SKILL_ROUTING_POLICY')
+
+        $env:CODEX_SKILL_ROUTING_POLICY = 'ADVISORY'
+        $envNormResult = & $routeSkillsScript -WorkingDir $repoRoot -Quiet
+        Assert-Test 'normalizes uppercase CODEX_SKILL_ROUTING_POLICY' ($envNormResult.policy -eq 'advisory')
+
+        $env:CODEX_SKILL_ROUTING_POLICY = 'Enforce'
+        $envEnforceResult = & $routeSkillsScript -WorkingDir $repoRoot -Quiet
+        Assert-Test 'normalizes mixed-case CODEX_SKILL_ROUTING_POLICY' ($envEnforceResult.policy -eq 'enforce')
+    }
+    finally {
+        $env:CODEX_SKILL_ROUTING_POLICY = $oldPolicy
+    }
 }
 finally {
     # Cleanup disposable fixture

@@ -26,18 +26,23 @@ param(
     [string[]]$ForcedSkills = @(),
 
     [Parameter(Mandatory = $false)]
+    [ValidateRange(0.0, 1.0)]
     [double]$SelectThreshold = 0.70,
 
     [Parameter(Mandatory = $false)]
+    [ValidateRange(0.0, 1.0)]
     [double]$ReviewThreshold = 0.45,
 
     [Parameter(Mandatory = $false)]
+    [ValidateRange(0, 100)]
     [int]$MaxSelectedSkills = 3,
 
     [Parameter(Mandatory = $false)]
+    [ValidateRange(1, 100)]
     [int]$BatchSize = 25,
 
     [Parameter(Mandatory = $false)]
+    [ValidateRange(1, 120)]
     [int]$TimeoutSeconds = 10,
 
     [Parameter(Mandatory = $false)]
@@ -53,19 +58,27 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-# 1. Resolve configuration and paths
+# 1. Structural Configuration Validation (Fail Fast)
+if ($ReviewThreshold -gt $SelectThreshold) {
+    throw "ReviewThreshold ($ReviewThreshold) must be less than or equal to SelectThreshold ($SelectThreshold)."
+}
+
 $policy = if (-not [string]::IsNullOrWhiteSpace($RoutingPolicy)) {
-    $RoutingPolicy
+    $RoutingPolicy.ToLowerInvariant()
 }
 elseif (-not [string]::IsNullOrWhiteSpace($env:CODEX_SKILL_ROUTING_POLICY)) {
-    $env:CODEX_SKILL_ROUTING_POLICY.ToLowerInvariant()
+    $envPolicy = $env:CODEX_SKILL_ROUTING_POLICY.Trim().ToLowerInvariant()
+    if ($envPolicy -notin @('off', 'advisory', 'enforce')) {
+        throw "Invalid CODEX_SKILL_ROUTING_POLICY: '$($env:CODEX_SKILL_ROUTING_POLICY)'. Valid policies are 'off', 'advisory', 'enforce'."
+    }
+    $envPolicy
 }
 else {
     'advisory'
 }
 
 if ($policy -notin @('off', 'advisory', 'enforce')) {
-    $policy = 'advisory'
+    throw "Invalid RoutingPolicy: '$policy'. Valid policies are 'off', 'advisory', 'enforce'."
 }
 
 $resolvedWorkingDir = if ([string]::IsNullOrWhiteSpace($WorkingDir)) {
