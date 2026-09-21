@@ -2626,6 +2626,7 @@ function Test-PermittedLegacyRoleSurface {
         $RelativePath -eq 'skills/workflows/references/commit.md' -or
         $RelativePath -eq 'skills/workflows/references/validation.md' -or
         $RelativePath -eq 'skills/workflows/references/skill-routing.md' -or
+        $RelativePath -eq 'skills/workflows/references/context-reranking.md' -or
         $RelativePath.StartsWith('skills/workflows/scripts/') -or
         $RelativePath -eq 'skills/codebase-memory-mcp/SKILL.md' -or
         $RelativePath -eq 'skills/codebase-memory-mcp/references/scenarios.md' -or
