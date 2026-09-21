@@ -1238,6 +1238,20 @@ function Save-InstallState {
         $drJson = ($devRouterInit | ConvertTo-Json -Depth 4) + $nl
         [IO.File]::WriteAllText($devRouterStatePath, $drJson, [System.Text.Encoding]::UTF8)
     }
+
+    # Deploy Dev Router model catalog and proxy
+    try {
+        Import-Module (Join-Path $repo 'scripts\dev-router.psm1') -DisableNameChecking -Force
+        $proxySrc = Join-Path $repo 'scripts\dev-router-proxy.mjs'
+        $proxyDest = Join-Path $CodexHome 'codex-workflows-kit\dev-router-proxy.mjs'
+        if (Test-Path -LiteralPath $proxySrc -PathType Leaf) {
+            Copy-Item -LiteralPath $proxySrc -Destination $proxyDest -Force
+        }
+        [void](Export-DevRouterModelCatalog -CodexHome $CodexHome)
+    }
+    catch {
+        Write-Warning "Could not prepare Dev Router artifacts: $($_.Exception.Message)"
+    }
 }
 
 function Assert-InstallPreflight {

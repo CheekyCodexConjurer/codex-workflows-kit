@@ -10,13 +10,14 @@ The **Dev Router** optimizes parent orchestrator performance, cost, and responsi
 
 Key principles:
 1. **Universal Operation**: Operates both in explicit workflow modes (`mode=<MODE>`) and during interactive `ALINHAMENTO` conversations, without requiring explicit workflow invocation to be activated.
-2. **Independent Orthogonal Selectors**: Separates `mode` (`off`, `shadow`, `on`) and `target` (`effort_only`, `model_only`, `model_and_effort`). `enabled` is not a separate source of truth.
-3. **Strict Model Allowlist**: Evaluates and routes exclusively among `Luna` (`gpt-5.6-luna`), `Sol` (`gpt-5.6-sol`), and `Astra` (`gpt-6-astra`). `Terra` (`gpt-5.6-terra`) is strictly prohibited from classification, selection, and fallback.
+2. **Independent Orthogonal Selectors**: Separates `mode` (`off`, `shadow`, `on`) and `target` (`effort_only`, `model_only`, `model_and_effort`). `enabled` is not a separate source of truth. Initial installed state is `mode = off`, `target = effort_only`.
+3. **Strict Model Allowlist**: Evaluates and routes exclusively among `Luna` (`gpt-5.6-luna`), `Sol` (`gpt-5.6-sol`), and `Astra` (`gpt-6-astra`). `Terra` (`gpt-5.6-terra`) is strictly prohibited from automatic classification, selection, and fallback targets; manual pass-through of user baseline `Terra` is supported without mutation.
 4. **Target Axis Containment**: Jev is queried only about the axes permitted by the active target. When `target = effort_only`, the user's manual model is strictly preserved. When `target = model_only`, the user's manual effort is strictly preserved.
 5. **Sanitized Context Projection**: Only lightweight structural metadata is submitted for classification. Full prompts, source code blocks, file paths, and secret tokens are stripped. Image presence is projected via a boolean flag (`has_images`) without sending image data.
-6. **Thread-Isolated Scope Locking**: `ALINHAMENTO` conversations lock route decisions per user turn (`scope = 'turn'`). Explicit workflow executions lock route decisions per workflow execution (`scope = 'workflow'`). Locks are keyed by thread/conversation ID to prevent cross-conversation leakage.
-7. **Honest Surface Integration**: Codex Desktop App GUI lacks a public dynamic injection IPC without binary patching (which is prohibited). The GUI adapter honestly reports `integration_status = 'unintegrated'` with `effective_mode = 'bypass'`, while CLI harness execution (`codex exec -m ... -c model_reasoning_effort=...`) applies dynamic routing.
-8. **Fail-Safe Baseline Fallback**: Any error (timeout, HTTP 401/429/5xx, offline state, missing credentials) immediately falls back to the user's manual baseline configuration. There is zero universal fallback to Astra.
+6. **Thread-Isolated Scope Locking**: `ALINHAMENTO` conversations lock route decisions per user turn (`scope = 'turn'`). Explicit workflow executions lock route decisions per workflow execution (`scope = 'workflow'`). Locks are keyed by thread/conversation ID and validated against mode, target, and scope.
+7. **Native Desktop App Integration (`GPT-Adaptive`)**: Codex Desktop App GUI exposes `GPT-Adaptive` directly in the model selector dropdown ("Selecionar modelo") via a composite model catalog and local loopback proxy (`127.0.0.1:4040`). When selected, the proxy dynamically resolves the turn via Dev Router, rewrites model and reasoning effort parameters, and streams responses without binary patching.
+8. **Concurrency & Mutex Synchronization**: All state mutations and lock evaluations are synchronized across processes and threads using a named OS mutex (`Global\DevRouterSyncMutex`).
+9. **Fail-Safe Baseline Fallback**: Any error (timeout, HTTP 401/429/5xx, offline state, missing credentials, proxy unreachable) immediately falls back to the user's manual baseline configuration. There is zero universal fallback to Astra.
 
 ---
 
@@ -48,12 +49,12 @@ The Dev Router configuration is stored globally at `$CODEX_HOME/codex-workflows-
 
 | Friendly Name | Technical Model ID | Description |
 | :--- | :--- | :--- |
-| `Luna` | `gpt-5.6-luna` | Fast, token-efficient, primary worker and routine parent |
+| `Luna` | `gpt-5.6-luna` | Fast, token-efficient, routine parent and lightweight operations |
 | `Sol` | `gpt-5.6-sol` | Balanced performance for general development and orchestration |
 | `Astra` | `gpt-6-astra` | High-capability flagship for architecture, critical reviews, and complex debugging |
 
 > [!CAUTION]
-> **Terra (`gpt-5.6-terra`)** is strictly disallowed from all Dev Router classification options, selections, and fallback targets.
+> **Terra (`gpt-5.6-terra`)** is strictly disallowed from all Dev Router automatic classification options, selections, and fallback targets. Manual pass-through of user baseline `Terra` is supported without mutation or crash.
 
 ### Supported Reasoning Efforts
 
@@ -71,6 +72,15 @@ Reasoning effort strings must match the exact deserializer enum expected by the 
 
 Routing decisions use the TypeSafe/Jev `choice` primitive with a versioned, offline choice policy (`dev-router-v1`).
 
+### TypeSafe Choice Contract & Criteria Map
+
+Questions to Jev are formulated using an ordered criteria map (`criteria = [ordered]@{ ... }`) rather than unstructured lists, per TypeSafe specifications:
+- **`effort_only` criteria**: evaluates task complexity, depth of reasoning needed, risk of regressions, and need for deep planning.
+- **`model_only` criteria**: evaluates architectural scope, context window demand, tool-use complexity, and instruction precision.
+- **`model_and_effort` criteria**: evaluates joint model-effort trade-offs balancing latency, token consumption, and reasoning depth.
+
+Classification parses real `confidence` and `probabilities` scores from the TypeSafe response. If Jev returns low confidence or an invalid enum, Dev Router gracefully falls back to baseline.
+
 ### Target Scoping Rules
 
 1. **`effort_only`**:
@@ -85,10 +95,11 @@ Routing decisions use the TypeSafe/Jev `choice` primitive with a versioned, offl
 2. **`model_only`**:
    - The choice query presents options strictly corresponding to allowlisted models (`Luna`, `Sol`, `Astra`).
    - The reasoning effort is **never** presented as a choice and **never** modified.
+   - **Incompatible Combinations**: If the user's manual baseline effort is not supported by any allowed model, Dev Router returns `status = 'incompatible'` and falls back to baseline without re-opening unauthorized models.
 
 3. **`model_and_effort`**:
    - The choice query presents allowlisted pairs (e.g., `Luna:low`, `Sol:medium`, `Astra:high`).
-   - Pairs with unauthorized models (e.g. `Terra`) are excluded from the options manifest.
+   - Pairs with unauthorized models (e.g. `Terra`) or unsupported effort combinations are strictly excluded from the options manifest.
 
 ---
 
@@ -103,41 +114,101 @@ To prevent prompt bloat and data leakage, `Invoke-DevRouterTurn` applies strict 
 
 ---
 
-## 6. Scope Locking & Thread Isolation
+## 6. Scope Locking, Concurrency & Thread Isolation
 
 Routing must not drift inconsistently mid-workflow or thrash between sub-steps.
 
 - **`ALINHAMENTO`**: Lock scope is `turn`. Each user prompt acquires a route lock that expires upon turn completion, allowing natural adaptation as the user changes topics.
 - **Explicit Workflows (`mode=<MODE>`)**: Lock scope is `workflow`. The route selected during the initial `FRAME` phase is locked for the entire duration of the workflow execution until the done gate, explicit cancellation, or release.
 - **Thread Isolation**: All locks are stored in `dev-router-locks.json` keyed by `thread_id` (or `conversation_id`). State in one conversation cannot alter, read, or overwrite locks belonging to another conversation.
+- **Lock Invalidation**: Route locks are validated against active `mode`, `target`, `scope`, and thread/turn IDs. Changing `mode` or `target` invalidates stale locks immediately.
+- **Concurrency Synchronization**: All state and lock reads/writes are wrapped in `Invoke-DevRouterSynchronized` using a system-wide named Mutex (`Global\DevRouterSyncMutex`) to eliminate race conditions between the proxy server, background CLI executions, and manual shell invocations.
 
 ---
 
-## 7. Surface Integration & Status Reporting
+## 7. Native Desktop App Integration (`GPT-Adaptive`) & Loopback Proxy
 
-`Get-DevRouterStatus` provides an authoritative inspection record:
+The Dev Router integrates into the Codex Desktop App without binary patching through Codex's official custom model provider configuration and model catalog overrides.
+
+```
+Codex Desktop GUI
+  │ (User selects "GPT-Adaptive")
+  ▼
+Codex App Server (JSON-RPC)
+  │ (Reads model_catalog_json pointing to dev-router provider)
+  ▼
+Local Loopback Proxy (127.0.0.1:4040)
+  │ (Intercepts POST /v1/responses)
+  │── mode = 'off'    ──> Rewrites to user baseline model & effort
+  │── mode = 'shadow' ──> Queries Jev, logs recommendation, routes to baseline
+  │── mode = 'on'     ──> Queries Jev choice, rewrites model & effort
+  ▼
+Upstream API (api.openai.com/v1/responses)
+  │ (Streams SSE chunks back to proxy)
+  ▼
+Codex Desktop GUI (Real-time token streaming)
+```
+
+### Composite Model Catalog
+
+`Export-DevRouterModelCatalog` caches official OpenAI models and registers `gpt-adaptive`:
 
 ```json
 {
-  "configured_mode": "on",
-  "effective_mode": "bypass",
-  "target": "effort_only",
-  "integration_status": "unintegrated",
-  "baseline_model": "gpt-5.6-luna",
-  "baseline_effort": "medium",
-  "effective_model": "gpt-5.6-luna",
-  "effective_effort": "medium",
-  "pending_change": false,
-  "route_lock_scope": null,
-  "notes": "Codex Desktop App GUI has no dynamic external model injection IPC; operating in bypass mode."
+  "id": "gpt-adaptive",
+  "name": "GPT-Adaptive",
+  "description": "Dynamic parent model and reasoning effort routing via Dev Router and TypeSafe/Jev.",
+  "model_provider_id": "dev-router",
+  "supports_reasoning_effort": true
 }
 ```
 
-- **Codex Desktop App GUI**: Honestly marked `integration_status = 'unintegrated'` with `effective_mode = 'bypass'` to avoid misrepresenting capabilities or patching proprietary app binaries.
-- **CLI Harness**: `integration_status = 'integrated'`, applying flags:
-  ```powershell
-  codex exec -m $effectiveModel -c "model_reasoning_effort=`"$effectiveEffort`""
-  ```
+This composite catalog is configured in `$CODEX_HOME/config.toml`:
+```toml
+model_catalog_json = "C:\\Users\\<user>\\.codex\\codex-workflows-kit\\dev-router-catalog.json"
+
+[model_providers.dev-router]
+name = "Dev Router (Adaptive)"
+wire_api = "responses"
+base_url = "http://127.0.0.1:4040/v1"
+requires_openai_auth = true
+```
+
+### Loopback Proxy Service (`scripts/dev-router-proxy.mjs`)
+
+The proxy is a dependency-free Node.js service running locally on `127.0.0.1:4040`:
+- **`GET /health`**: Health status check returning `{ "status": "ok", "service": "dev-router-proxy" }`.
+- **`GET /v1/models`**: Returns the active model catalog for Codex App Server.
+- **`POST /v1/responses`**: Receives requests from Codex Desktop with the user's authentic ChatGPT session bearer token:
+  - If `body.model` is `gpt-adaptive`: sanitizes objective, checks Dev Router state, resolves concrete model and reasoning effort via Jev choice or baseline, updates `body.model` and `body.reasoning.effort`.
+  - Upstream request is forwarded transparently with original headers to the upstream provider (`api.openai.com`).
+  - Response chunks are streamed back to Codex Desktop in real time.
+  - Abort handling attaches to `res.on('close')` guarded by `!res.writableEnded` to prevent premature client socket resets.
+
+### Surface Status Inspection
+
+`Get-DevRouterStatus` provides an authoritative inspection record:
+
+```powershell
+pwsh -NoProfile -File scripts/switch-dev-router.ps1 -Status
+```
+
+Output:
+```
+Dev Router Status
+=================
+Configured Mode:    on
+Effective Mode:     on
+Target:             effort_only
+Integration Status: integrated
+Proxy Status:       running (port 4040)
+Baseline Model:     gpt-5.6-luna
+Baseline Effort:    medium
+Effective Model:    gpt-5.6-luna
+Effective Effort:   high
+Route Lock Scope:   turn
+Catalog Override:   configured
+```
 
 ---
 
@@ -156,8 +227,15 @@ AutoHotkey shortcuts in `ahk/codex_prompt_pad.ahk`:
 
 CLI switcher:
 ```powershell
+# Switch mode and target
 pwsh -NoProfile -File scripts/switch-dev-router.ps1 -Mode on -Target effort_only
+
+# Inspect status
 pwsh -NoProfile -File scripts/switch-dev-router.ps1 -Status
+
+# Control loopback proxy lifecycle explicitly
+pwsh -NoProfile -File scripts/switch-dev-router.ps1 -StartProxy
+pwsh -NoProfile -File scripts/switch-dev-router.ps1 -StopProxy
 ```
 
 ---
@@ -169,5 +247,6 @@ Under all failure modes:
 2. HTTP 401 Unauthorized, 429 Rate Limit, or 5xx Server Error
 3. Missing or expired Jev credentials
 4. Unparseable or malformed choice response
+5. Proxy offline or unreachable
 
-The Dev Router immediately falls back to the user's manual baseline configuration (`effective_model = baseline_model`, `effective_effort = baseline_effort`). It **never** falls back to Astra, never throws an unhandled exception, and never blocks user interaction.
+The Dev Router immediately falls back to the user's manual baseline configuration (`effective_model = baseline_model`, `effective_effort = baseline_effort`). It **never** falls back to Astra, never throws an unhandled exception, and never blocks user interaction or streams corrupt data to Codex Desktop.

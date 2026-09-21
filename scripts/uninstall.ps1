@@ -643,6 +643,11 @@ foreach ($parent in ($script:RemovedParents | Sort-Object -Unique)) {
 if (-not $script:Skipped -and (Test-Path -LiteralPath $statePath -PathType Leaf)) {
     if (Confirm-UninstallAction -Target $statePath -Action 'remove install state') {
         Remove-Item -LiteralPath $statePath -Force
+        try {
+            Import-Module (Join-Path $repo 'scripts\dev-router.psm1') -DisableNameChecking -Force
+            [void](Unregister-DevRouterCodexIntegration -CodexHome $CodexHome)
+        }
+        catch {}
         $devRouterStatePath = Join-Path $CodexHome 'codex-workflows-kit\dev-router-state.json'
         if (Test-Path -LiteralPath $devRouterStatePath -PathType Leaf) {
             Remove-Item -LiteralPath $devRouterStatePath -Force

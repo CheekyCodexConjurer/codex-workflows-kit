@@ -185,7 +185,14 @@ O kit oferece comandos transacionais com verificação de drift (divergências n
 .\scripts\switch-dev-router.ps1 -Target model_only
 .\scripts\switch-dev-router.ps1 -Target model_and_effort
 .\scripts\switch-dev-router.ps1 -Status
+
+# Controle explícito do proxy de loopback (GPT-Adaptive)
+.\scripts\switch-dev-router.ps1 -StartProxy
+.\scripts\switch-dev-router.ps1 -StopProxy
 ~~~
+
+> [!TIP]
+> **GPT-Adaptive no Codex Desktop**: O Dev Router registra a opção **GPT-Adaptive** diretamente no dropdown "Selecionar modelo" do aplicativo Codex Desktop através de catálogo composto (`model_catalog_json`) e provedor local em loopback (`127.0.0.1:4040`). Ao selecionar `GPT-Adaptive`, o Dev Router intercepta as requisições em tempo real, consulta o TypeSafe/Jev conforme o `mode` e `target` ativos, reescreve modelo/reasoning effort e faz streaming contínuo das respostas com fallback seguro para o baseline.
 
 ### Prompt Pad (AutoHotkey)
 

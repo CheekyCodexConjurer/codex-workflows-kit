@@ -498,8 +498,386 @@ Check file C:\SecretProjects\Finance\Accounts.txt
     Assert-Test "switch-dev-router -Status returns pscustomobject" ($null -ne $statusObj)
     Assert-Test "Status object has configured_mode" ($statusObj.configured_mode -eq 'off')
     Assert-Test "Status object has integration_status" ($statusObj.integration_status -eq 'unintegrated')
+
+    # ------------------------------------------------------------------------
+    # SECTION 13: Baseline Scoping & Preservation (No Invented Sol/Medium)
+    # ------------------------------------------------------------------------
+    Write-Host "`nSection 13: Baseline Scoping & Preservation" -ForegroundColor Yellow
+
+    $scopedTomlDir = Join-Path $tempTestDir 'scoped_codex'
+    [void][IO.Directory]::CreateDirectory($scopedTomlDir)
+    $scopedTomlPath = Join-Path $scopedTomlDir 'config.toml'
+
+    # 1. Config with top-level model and effort, plus subtable with different keys
+    $sampleToml = @"
+# Top level settings
+model = "gpt-5.6-luna"
+model_reasoning_effort = "high"
+
+[model_providers.probe]
+model = "gpt-6-astra"
+model_reasoning_effort = "xhigh"
+base_url = "http://127.0.0.1:4040/v1"
+"@
+    [IO.File]::WriteAllText($scopedTomlPath, $sampleToml, [System.Text.Encoding]::UTF8)
+
+    $scopedBaseline = Get-CodexBaselineConfig -CodexHome $scopedTomlDir
+    Assert-Test "Baseline extracts top-level model Luna" ($scopedBaseline.Model -eq 'Luna')
+    Assert-Test "Baseline extracts top-level effort high" ($scopedBaseline.Effort -eq 'high')
+
+    # 2. Config with ONLY subtable (no top-level model or effort)
+    $subtableOnlyToml = @"
+[model_providers.probe]
+model = "gpt-6-astra"
+model_reasoning_effort = "xhigh"
+base_url = "http://127.0.0.1:4040/v1"
+"@
+    [IO.File]::WriteAllText($scopedTomlPath, $subtableOnlyToml, [System.Text.Encoding]::UTF8)
+
+    $emptyBaseline = Get-CodexBaselineConfig -CodexHome $scopedTomlDir
+    Assert-Test "Baseline preserves null model when not set at root (no invented Sol)" ($null -eq $emptyBaseline.Model)
+    Assert-Test "Baseline preserves null effort when not set at root (no invented medium)" ($null -eq $emptyBaseline.Effort)
+
+    # ------------------------------------------------------------------------
+    # SECTION 14: Incompatible Combinations in model_only
+    # ------------------------------------------------------------------------
+    Write-Host "`nSection 14: Incompatible Combinations in model_only" -ForegroundColor Yellow
+
+    # When baseline effort is unsupported by any candidate model (e.g. ultra)
+    $incompProj = New-DevRouterContextProjection `
+        -Objective "Task with ultra effort" `
+        -Surface 'alignment' `
+        -CurrentModel 'Sol' `
+        -CurrentEffort 'ultra' `
+        -Target 'model_only'
+
+    $incompJev = Invoke-DevRouterJevChoice `
+        -Projection $incompProj `
+        -Target 'model_only' `
+        -BaselineModel 'Sol' `
+        -BaselineEffort 'ultra' `
+        -ApiKey 'dummy_key'
+
+    Assert-Test "model_only with unsupported effort returns incompatible status" ($incompJev.status -eq 'incompatible')
+    Assert-Test "model_only does NOT re-open all models under incompatible effort" ($incompJev.is_fallback -eq $true)
+    Assert-Test "model_only preserves baseline model on incompatible effort" ($incompJev.model -eq 'Sol')
+
+    # ------------------------------------------------------------------------
+    # SECTION 15: Terra Pass-Through vs Automatic Disallow
+    # ------------------------------------------------------------------------
+    Write-Host "`nSection 15: Terra Pass-Through vs Automatic Disallow" -ForegroundColor Yellow
+
+    # Resolve with IncludeDisallowed works for manual baseline
+    $resTerraAllowed = Resolve-DevRouterModel -ModelNameOrId 'Terra' -IncludeDisallowed
+    Assert-Test "Resolve-DevRouterModel -IncludeDisallowed resolves Terra" ($null -ne $resTerraAllowed -and $resTerraAllowed.Name -eq 'Terra')
+
+    # Automatic routing strictly disallows Terra
+    Assert-Test "Test-DevRouterModelAllowed strictly returns false for Terra" (-not (Test-DevRouterModelAllowed -ModelNameOrId 'Terra'))
+
+    # Manual baseline on Terra in effort_only stays strictly on Terra
+    $null = Set-DevRouterState -Mode 'on' -Target 'effort_only' -CodexHome $testCodexHome
+    $mockTerraEffortTransport = {
+        param($req)
+        return [pscustomobject]@{
+            answers = [pscustomobject]@{
+                q_route = [pscustomobject]@{ choice = 'high' }
+            }
+        }
+    }
+
+    $turnTerraManual = Invoke-DevRouterTurn `
+        -ConversationId 'conv-terra-manual' `
+        -TurnId 'turn-1' `
+        -Objective 'Task on manual Terra' `
+        -Surface 'alignment' `
+        -BaselineModel 'Terra' `
+        -BaselineEffort 'low' `
+        -CodexHome $testCodexHome `
+        -HttpTransportMock $mockTerraEffortTransport `
+        -AdapterSurface 'cli_harness'
+
+    Assert-Test "effort_only preserves manual Terra baseline (pass-through)" ($turnTerraManual.applied_model -eq 'Terra')
+    Assert-Test "effort_only updates effort for manual Terra" ($turnTerraManual.applied_effort -eq 'high')
+
+    # ------------------------------------------------------------------------
+    # SECTION 16: Criteria Mapping & Confidence in TypeSafe Choice
+    # ------------------------------------------------------------------------
+    Write-Host "`nSection 16: Criteria Mapping & Confidence in TypeSafe Choice" -ForegroundColor Yellow
+
+    $script:capturedCriteria = $null
+    $mockCriteriaTransport = {
+        param($req)
+        # Verify criteria map in request body
+        $body = $req.BodyObject
+        $script:capturedCriteria = $body.questions.q_route.criteria
+
+        return [pscustomobject]@{
+            answers = [pscustomobject]@{
+                q_route = [pscustomobject]@{
+                    type          = 'choice'
+                    choice        = 'Sol'
+                    confidence    = 0.92
+                    probabilities = [pscustomobject]@{
+                        Luna  = 0.05
+                        Sol   = 0.92
+                        Astra = 0.03
+                    }
+                }
+            }
+        }
+    }
+
+    $critProj = New-DevRouterContextProjection `
+        -Objective 'Refactor database migration scripts' `
+        -Surface 'alignment' `
+        -CurrentModel 'Luna' `
+        -CurrentEffort 'medium' `
+        -Target 'model_only'
+
+    $choiceWithCriteria = Invoke-DevRouterJevChoice `
+        -Projection $critProj `
+        -Target 'model_only' `
+        -BaselineModel 'Luna' `
+        -BaselineEffort 'medium' `
+        -ApiKey 'test_key' `
+        -HttpTransportMock $mockCriteriaTransport
+
+    Assert-Test "Request body contains criteria map (not array options)" ($null -ne $script:capturedCriteria)
+    Assert-Test "Criteria map includes Sol entry" ($null -ne $script:capturedCriteria.Sol -or $null -ne $script:capturedCriteria['Sol'])
+    Assert-Test "Jev choice parses real confidence (0.92)" ($choiceWithCriteria.confidence -eq 0.92)
+    Assert-Test "Jev choice preserves probabilities object" ($null -ne $choiceWithCriteria.probabilities)
+
+    # ------------------------------------------------------------------------
+    # SECTION 17: Lock Invalidation on State Changes
+    # ------------------------------------------------------------------------
+    Write-Host "`nSection 17: Lock Invalidation on State Changes" -ForegroundColor Yellow
+
+    Clear-AllDevRouterLocks -CodexHome $testCodexHome
+    $null = Set-DevRouterState -Mode 'on' -Target 'effort_only' -CodexHome $testCodexHome
+
+    # Acquire lock with effort_only
+    $lockObj = Acquire-DevRouterLock `
+        -ConversationId 'conv-lock-inval' `
+        -Scope 'turn' `
+        -TurnId 'turn-1' `
+        -Model 'Sol' `
+        -Effort 'high' `
+        -Mode 'on' `
+        -Target 'effort_only' `
+        -CodexHome $testCodexHome
+
+    Assert-Test "Initial lock acquired" ($null -ne (Get-DevRouterLock -ConversationId 'conv-lock-inval' -CodexHome $testCodexHome))
+
+    # Switch target from effort_only to model_only
+    $null = Set-DevRouterState -Mode 'on' -Target 'model_only' -CodexHome $testCodexHome
+
+    # Next turn evaluation should detect target mismatch and invalidate the lock
+    $script:invalCalled = $false
+    $mockInvalTransport = {
+        param($req)
+        $script:invalCalled = $true
+        return [pscustomobject]@{
+            answers = [pscustomobject]@{
+                q_route = [pscustomobject]@{ choice = 'Luna' }
+            }
+        }
+    }
+
+    $turnInval = Invoke-DevRouterTurn `
+        -ConversationId 'conv-lock-inval' `
+        -TurnId 'turn-1' `
+        -Objective 'New work under model_only' `
+        -Surface 'alignment' `
+        -BaselineModel 'Sol' `
+        -BaselineEffort 'medium' `
+        -CodexHome $testCodexHome `
+        -HttpTransportMock $mockInvalTransport `
+        -AdapterSurface 'cli_harness'
+
+    Assert-Test "Lock invalidated when target changed (Jev called fresh)" ($script:invalCalled -eq $true)
+    Assert-Test "Applied model reflects new route Luna" ($turnInval.applied_model -eq 'Luna')
+
+    # ------------------------------------------------------------------------
+    # SECTION 18: Concurrency & Synchronization
+    # ------------------------------------------------------------------------
+    Write-Host "`nSection 18: Concurrency & Synchronization" -ForegroundColor Yellow
+
+    $mutexRun = Invoke-DevRouterSynchronized -LockName 'TestLock' -ScriptBlock {
+        return "synchronized_result"
+    }
+    Assert-Test "Invoke-DevRouterSynchronized returns script block result" ($mutexRun -eq 'synchronized_result')
+
+    # ------------------------------------------------------------------------
+    # SECTION 19: Composite Model Catalog Generation (GPT-Adaptive)
+    # ------------------------------------------------------------------------
+    Write-Host "`nSection 19: Composite Model Catalog Generation" -ForegroundColor Yellow
+
+    $catalogPath = Export-DevRouterModelCatalog -CodexHome $testCodexHome
+    Assert-Test "Model catalog file created" (Test-Path -LiteralPath $catalogPath -PathType Leaf)
+
+    $catJson = Get-Content -LiteralPath $catalogPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $catEntries = if ($catJson -is [System.Collections.IEnumerable]) { $catJson } else { @($catJson) }
+
+    $foundAdaptive = $null
+    $foundSol = $null
+    $foundAstra = $null
+    foreach ($entry in $catEntries) {
+        if ($entry.id -eq 'gpt-adaptive') { $foundAdaptive = $entry }
+        if ($entry.id -eq 'gpt-5.6-sol') { $foundSol = $entry }
+        if ($entry.id -eq 'gpt-6-astra') { $foundAstra = $entry }
+    }
+
+    Assert-Test "Catalog contains gpt-adaptive entry" ($null -ne $foundAdaptive)
+    Assert-Test "GPT-Adaptive has exact display_name 'GPT-Adaptive'" ($foundAdaptive.display_name -eq 'GPT-Adaptive')
+    Assert-Test "GPT-Adaptive has model_provider_id 'dev-router'" ($foundAdaptive.model_provider_id -eq 'dev-router')
+    Assert-Test "Catalog preserves official model Sol" ($null -ne $foundSol)
+    Assert-Test "Catalog preserves official model Astra" ($null -ne $foundAstra)
+
+    # ------------------------------------------------------------------------
+    # SECTION 20: Real Proxy Lifecycle & Integration
+    # ------------------------------------------------------------------------
+    Write-Host "`nSection 20: Real Proxy Lifecycle & Integration" -ForegroundColor Yellow
+
+    $regResult = Register-DevRouterCodexIntegration -CodexHome $testCodexHome -Port 4049
+    Assert-Test "Register integration returns catalog path" ($null -ne $regResult.CatalogPath)
+    Assert-Test "config.toml registers model_catalog_json" (Test-DevRouterCatalogRegistered -CodexHome $testCodexHome)
+
+    # Start proxy on port 4049
+    $proxyStatus = Start-DevRouterProxy -CodexHome $testCodexHome -Port 4049
+    Assert-Test "Proxy started and responds to health check" ($proxyStatus.Running -eq $true)
+
+    # Status reflects integrated
+    $statusIntegrated = Get-DevRouterStatus -CodexHome $testCodexHome
+    Assert-Test "Dev Router status reports integrated when proxy and catalog are active" ($statusIntegrated.integration_status -eq 'integrated')
+
+    # Stop proxy
+    $stopped = Stop-DevRouterProxy -CodexHome $testCodexHome -Port 4049
+    Assert-Test "Proxy stopped successfully" ($stopped -eq $true)
+
+    # Verify health check fails when stopped
+    Start-Sleep -Milliseconds 300
+    $proxyStoppedStatus = Get-DevRouterProxyStatus -CodexHome $testCodexHome -Port 4049 -TimeoutMs 250
+    Assert-Test "Proxy status reports Running = false after stop" ($proxyStoppedStatus.Running -eq $false)
+
+    # Unregister integration
+    $unreg = Unregister-DevRouterCodexIntegration -CodexHome $testCodexHome
+    Assert-Test "Unregister integration succeeds" ($unreg -eq $true)
+    Assert-Test "Catalog registration removed from config.toml" (-not (Test-DevRouterCatalogRegistered -CodexHome $testCodexHome))
+
+    # ------------------------------------------------------------------------
+    # SECTION 21: End-to-End Proxy Responses Interception & Upstream Streaming
+    # ------------------------------------------------------------------------
+    Write-Host "`nSection 21: End-to-End Proxy Responses Interception & Streaming" -ForegroundColor Yellow
+
+    $mockUpstreamPort = 4055
+    $testProxyPort = 4056
+    $mockUpstreamScript = @"
+import http from 'node:http';
+import fs from 'node:fs';
+
+const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', () => {
+        const received = {
+            method: req.method,
+            url: req.url,
+            headers: req.headers,
+            body: JSON.parse(body)
+        };
+        fs.writeFileSync(process.argv[2], JSON.stringify(received, null, 2), 'utf8');
+        res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        res.write('event: response.completed\ndata: {\"id\":\"resp_test_123\",\"status\":\"completed\"}\n\n');
+        res.end();
+    });
+});
+server.listen($mockUpstreamPort, '127.0.0.1', () => {});
+"@
+
+    $upstreamFile = Join-Path $tempTestDir 'mock-upstream.mjs'
+    $capturedReqFile = Join-Path $tempTestDir 'captured-upstream-req.json'
+    [IO.File]::WriteAllText($upstreamFile, $mockUpstreamScript, [System.Text.Encoding]::UTF8)
+
+    $upstreamPInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $upstreamPInfo.FileName = 'node'
+    $upstreamPInfo.Arguments = "`"$upstreamFile`" `"$capturedReqFile`""
+    $upstreamPInfo.UseShellExecute = $false
+    $upstreamPInfo.CreateNoWindow = $true
+    $upstreamPInfo.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
+    $upstreamProc = [System.Diagnostics.Process]::Start($upstreamPInfo)
+
+    # Start dev-router-proxy with upstream set to mockUpstreamPort
+    $env:DEV_ROUTER_UPSTREAM = "http://127.0.0.1:$mockUpstreamPort"
+    $proxyPInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $proxyPInfo.FileName = 'node'
+    $proxyScript = Join-Path $repoRoot 'scripts\dev-router-proxy.mjs'
+    $proxyPInfo.Arguments = "`"$proxyScript`" --port $testProxyPort --upstream http://127.0.0.1:$mockUpstreamPort --codex-home `"$testCodexHome`""
+    $proxyPInfo.UseShellExecute = $false
+    $proxyPInfo.CreateNoWindow = $true
+    $proxyPInfo.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
+    $proxyProc = [System.Diagnostics.Process]::Start($proxyPInfo)
+
+    # Wait for proxy to listen
+    Start-Sleep -Milliseconds 600
+
+    try {
+        # Send POST /v1/responses with model: gpt-adaptive
+        $clientReqBody = [ordered]@{
+            model = 'gpt-adaptive'
+            input = @(
+                [ordered]@{
+                    role = 'user'
+                    content = @(
+                        [ordered]@{
+                            type = 'input_text'
+                            text = 'Fix a minor typo in markdown'
+                        }
+                    )
+                }
+            )
+            reasoning = [ordered]@{
+                effort = 'low'
+            }
+        } | ConvertTo-Json -Depth 5
+
+        $clientHeaders = @{
+            'Authorization' = 'Bearer eyJhbGciOiJSUzI1Ni...mockToken'
+            'Content-Type'  = 'application/json'
+        }
+
+        $res = Invoke-RestMethod `
+            -Uri "http://127.0.0.1:$testProxyPort/v1/responses" `
+            -Method Post `
+            -Headers $clientHeaders `
+            -Body $clientReqBody `
+            -TimeoutSec 5
+
+        Assert-Test "Proxy responses request returns successfully" ($null -ne $res)
+        Assert-Test "Upstream captured request file created" (Test-Path -LiteralPath $capturedReqFile -PathType Leaf)
+
+        if (Test-Path -LiteralPath $capturedReqFile -PathType Leaf) {
+            $captured = Get-Content -LiteralPath $capturedReqFile -Raw -Encoding UTF8 | ConvertFrom-Json
+            Assert-Test "Upstream received rewritten model (not gpt-adaptive)" ($captured.body.model -ne 'gpt-adaptive')
+            Assert-Test "Upstream received concrete model (Sol/gpt-5.6-sol)" ($captured.body.model -match 'sol')
+            Assert-Test "Upstream received requested effort low" ($captured.body.reasoning.effort -eq 'low')
+            Assert-Test "Upstream received forwarded Authorization header" ($captured.headers.authorization -like '*mockToken*')
+        }
+    }
+    finally {
+        Remove-Item env:DEV_ROUTER_UPSTREAM -ErrorAction SilentlyContinue
+        if ($null -ne $proxyProc -and -not $proxyProc.HasExited) {
+            $proxyProc.Kill()
+            [void]$proxyProc.WaitForExit(1000)
+        }
+        if ($null -ne $upstreamProc -and -not $upstreamProc.HasExited) {
+            $upstreamProc.Kill()
+            [void]$upstreamProc.WaitForExit(1000)
+        }
+    }
 }
 finally {
+    # Ensure any test proxy is stopped
+    [void](Stop-DevRouterProxy -CodexHome $testCodexHome -Port 4049 -ErrorAction SilentlyContinue)
     if (Test-Path -LiteralPath $tempTestDir) {
         Remove-Item -LiteralPath $tempTestDir -Recurse -Force -ErrorAction SilentlyContinue
     }

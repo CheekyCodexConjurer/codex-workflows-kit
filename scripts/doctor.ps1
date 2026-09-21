@@ -1115,6 +1115,27 @@ else {
     Write-Check -Name 'Codebase Memory MCP' -Passed $true -Detail 'Not configured (optional free rollout)' -Optional
 }
 
+$devRouterStatePath = Join-Path $CodexHome 'codex-workflows-kit\dev-router-state.json'
+if (Test-Path -LiteralPath $devRouterStatePath -PathType Leaf) {
+    try {
+        $drRaw = Get-Content -LiteralPath $devRouterStatePath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $drMode = [string]$drRaw.mode
+        $drTarget = [string]$drRaw.target
+        $drDetail = "Mode=$drMode; Target=$drTarget"
+        $drCatalogPath = Join-Path $CodexHome 'codex-workflows-kit\model-catalog.json'
+        if (Test-Path -LiteralPath $drCatalogPath -PathType Leaf) {
+            $drDetail += '; Composite catalog present'
+        }
+        Write-Check -Name 'Dev Router' -Passed $true -Detail $drDetail -Optional
+    }
+    catch {
+        Write-Check -Name 'Dev Router' -Passed $false -Detail "State file invalid: $($_.Exception.Message)" -Optional
+    }
+}
+else {
+    Write-Check -Name 'Dev Router' -Passed $true -Detail 'Default unconfigured (mode=off)' -Optional
+}
+
 $taskFilter = "(?i)(codex|prompt|deepseek|$tOc|$tRly|workflow)"
 $legacyTaskPattern = "(?i)($tOc-$tWk|runtime-adapters|marketplace\.json|$tWk\.toml|$tRly\.toml)"
 try {

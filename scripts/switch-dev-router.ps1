@@ -11,6 +11,18 @@ param(
     [Parameter(ParameterSetName = 'Status')]
     [switch]$Status,
 
+    [Parameter(ParameterSetName = 'ProxyAction')]
+    [switch]$StartProxy,
+
+    [Parameter(ParameterSetName = 'ProxyAction')]
+    [switch]$StopProxy,
+
+    [Parameter(ParameterSetName = 'IntegrationAction')]
+    [switch]$RegisterIntegration,
+
+    [Parameter(ParameterSetName = 'IntegrationAction')]
+    [switch]$UnregisterIntegration,
+
     [string]$CodexHome
 )
 
@@ -27,6 +39,50 @@ $CodexHome = [IO.Path]::GetFullPath($requestedCodexHome)
 $root = [IO.Path]::GetPathRoot($CodexHome)
 if ($CodexHome.TrimEnd('\') -eq $root.TrimEnd('\')) {
     throw "Refusing to use a filesystem root as a Codex home: $CodexHome"
+}
+
+# Handle explicit Integration Actions
+if ($RegisterIntegration) {
+    Write-Host "Registering GPT-Adaptive integration in Codex config.toml..." -ForegroundColor Cyan
+    [void](Export-DevRouterModelCatalog -CodexHome $CodexHome)
+    $reg = Register-DevRouterCodexIntegration -CodexHome $CodexHome
+    Write-Host "Registered model catalog: $($reg.CatalogPath)" -ForegroundColor Green
+    $currentStatus = Get-DevRouterStatus -CodexHome $CodexHome
+    return [pscustomobject]$currentStatus
+}
+
+if ($UnregisterIntegration) {
+    Write-Host "Unregistering GPT-Adaptive integration from Codex config.toml..." -ForegroundColor Cyan
+    [void](Unregister-DevRouterCodexIntegration -CodexHome $CodexHome)
+    Write-Host "GPT-Adaptive integration unregistered." -ForegroundColor Green
+    $currentStatus = Get-DevRouterStatus -CodexHome $CodexHome
+    return [pscustomobject]$currentStatus
+}
+
+# Handle explicit Proxy Actions
+if ($StartProxy) {
+    if (-not (Test-DevRouterCatalogRegistered -CodexHome $CodexHome)) {
+        [void](Export-DevRouterModelCatalog -CodexHome $CodexHome)
+        [void](Register-DevRouterCodexIntegration -CodexHome $CodexHome)
+    }
+    Write-Host "Starting Dev Router loopback proxy..." -ForegroundColor Cyan
+    $pStatus = Start-DevRouterProxy -CodexHome $CodexHome
+    if ($pStatus.Running) {
+        Write-Host "Dev Router proxy running on http://127.0.0.1:$($pStatus.Port)" -ForegroundColor Green
+    }
+    else {
+        Write-Host "Warning: Dev Router proxy failed to start." -ForegroundColor Yellow
+    }
+    $currentStatus = Get-DevRouterStatus -CodexHome $CodexHome
+    return [pscustomobject]$currentStatus
+}
+
+if ($StopProxy) {
+    Write-Host "Stopping Dev Router loopback proxy..." -ForegroundColor Cyan
+    [void](Stop-DevRouterProxy -CodexHome $CodexHome)
+    Write-Host "Dev Router proxy stopped." -ForegroundColor Green
+    $currentStatus = Get-DevRouterStatus -CodexHome $CodexHome
+    return [pscustomobject]$currentStatus
 }
 
 # If no switch parameters provided, treat as -Status
@@ -72,6 +128,16 @@ if ($nextMode -eq 'off') {
 }
 
 $newState = Set-DevRouterState -Mode $nextMode -Target $nextTarget -CodexHome $CodexHome
+
+# When enabling shadow or on, ensure proxy is started if integration is configured
+if ($nextMode -in @('shadow', 'on') -and (Test-DevRouterCatalogRegistered -CodexHome $CodexHome)) {
+    try {
+        [void](Start-DevRouterProxy -CodexHome $CodexHome)
+    }
+    catch {
+        Write-Warning "Could not start Dev Router proxy: $($_.Exception.Message)"
+    }
+}
 
 Write-Host "Dev Router updated successfully:" -ForegroundColor Green
 Write-Host "  Mode:   $nextMode"
