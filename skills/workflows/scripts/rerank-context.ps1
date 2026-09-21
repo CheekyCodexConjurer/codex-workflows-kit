@@ -106,7 +106,7 @@ begin {
     }
 
     # Policy resolution: Parameter -> Env -> Default ('advisory')
-    $resolvedPolicy = if (-not [string]::IsNullOrWhiteSpace($Policy)) {
+    $resolvedPolicy = if ($PSBoundParameters.ContainsKey('Policy') -and -not [string]::IsNullOrWhiteSpace($Policy)) {
         $Policy.ToLowerInvariant()
     }
     elseif (-not [string]::IsNullOrWhiteSpace($env:CODEX_CONTEXT_RERANK_POLICY)) {
@@ -121,7 +121,7 @@ begin {
     }
 
     # PrivacyScope resolution: Parameter -> AuthorizeContentTransmission -> Env -> Default ('none')
-    $resolvedPrivacyScope = if (-not [string]::IsNullOrWhiteSpace($PrivacyScope)) {
+    $resolvedPrivacyScope = if ($PSBoundParameters.ContainsKey('PrivacyScope') -and -not [string]::IsNullOrWhiteSpace($PrivacyScope)) {
         $PrivacyScope.ToLowerInvariant()
     }
     elseif ($AuthorizeContentTransmission.IsPresent) {
@@ -138,20 +138,20 @@ begin {
         'none'
     }
 
-    # Environment overrides for trigger & cost limits
-    if (-not [string]::IsNullOrWhiteSpace($env:CODEX_CONTEXT_RERANK_MIN_CANDIDATES)) {
+    # Environment overrides for trigger & cost limits: explicit parameter > env > default
+    if (-not $PSBoundParameters.ContainsKey('MinCandidates') -and -not [string]::IsNullOrWhiteSpace($env:CODEX_CONTEXT_RERANK_MIN_CANDIDATES)) {
         $MinCandidates = [int]$env:CODEX_CONTEXT_RERANK_MIN_CANDIDATES
     }
-    if (-not [string]::IsNullOrWhiteSpace($env:CODEX_CONTEXT_RERANK_TRIGGER_BYTES)) {
+    if (-not $PSBoundParameters.ContainsKey('ContextBudgetTriggerBytes') -and -not [string]::IsNullOrWhiteSpace($env:CODEX_CONTEXT_RERANK_TRIGGER_BYTES)) {
         $ContextBudgetTriggerBytes = [int]$env:CODEX_CONTEXT_RERANK_TRIGGER_BYTES
     }
-    if (-not [string]::IsNullOrWhiteSpace($env:CODEX_CONTEXT_MAX_CANDIDATES_EVAL)) {
+    if (-not $PSBoundParameters.ContainsKey('MaxCandidatesToEvaluate') -and -not [string]::IsNullOrWhiteSpace($env:CODEX_CONTEXT_MAX_CANDIDATES_EVAL)) {
         $MaxCandidatesToEvaluate = [int]$env:CODEX_CONTEXT_MAX_CANDIDATES_EVAL
     }
-    if (-not [string]::IsNullOrWhiteSpace($env:CODEX_CONTEXT_MAX_JEV_CALLS)) {
+    if (-not $PSBoundParameters.ContainsKey('MaxJevCalls') -and -not [string]::IsNullOrWhiteSpace($env:CODEX_CONTEXT_MAX_JEV_CALLS)) {
         $MaxJevCalls = [int]$env:CODEX_CONTEXT_MAX_JEV_CALLS
     }
-    if (-not [string]::IsNullOrWhiteSpace($env:CODEX_CONTEXT_MAX_PAYLOAD_BYTES)) {
+    if (-not $PSBoundParameters.ContainsKey('MaxTotalPayloadBytes') -and -not [string]::IsNullOrWhiteSpace($env:CODEX_CONTEXT_MAX_PAYLOAD_BYTES)) {
         $MaxTotalPayloadBytes = [int]$env:CODEX_CONTEXT_MAX_PAYLOAD_BYTES
     }
 
@@ -474,16 +474,108 @@ end {
         $finalManifest.Add($m)
     }
 
+    # Revalidate selected candidates before final delivery to catch drift during Jev evaluation
+    $verifiedSelected = [System.Collections.Generic.List[object]]::new()
+    $pinnedSetForReval = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($p in $PinnedIds) {
+        if (-not [string]::IsNullOrWhiteSpace($p)) {
+            $pinnedSetForReval.Add($p.Trim()) | Out-Null
+        }
+    }
+
+    $pinnedFailedReval = $false
+    $failedPinnedId = $null
+
+    foreach ($sel in $package.selected) {
+        $cRef = [string]$sel.source_ref
+        $cId = [string]$sel.id
+        $isPinned = $pinnedSetForReval.Contains($cId)
+
+        # Non-file sources (memory, history, symbol, cbm, test) bypass on-disk freshness
+        $fullPath = [IO.Path]::Combine($resolvedWorkingDir, ($cRef -replace '/', [IO.Path]::DirectorySeparatorChar))
+        if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf)) {
+            if ([string]$sel.source -in @('memory', 'history', 'symbol', 'cbm', 'test')) {
+                $verifiedSelected.Add($sel)
+                continue
+            }
+            # Missing source file
+            $missingCount++
+            if ($isPinned) {
+                $pinnedFailedReval = $true
+                $failedPinnedId = $cId
+            }
+            $finalManifest.Add([ordered]@{
+                id               = $cId
+                source_ref       = $cRef
+                line_start       = $sel.line_start
+                line_end         = $sel.line_end
+                score            = $sel.score
+                decision         = 'EXCLUDED'
+                exclusion_reason = 'source_missing'
+            })
+            continue
+        }
+
+        $freshResult = Test-ContextCandidateFreshness -Candidate $sel -RepoPath $resolvedWorkingDir
+        if ($freshResult.Fresh) {
+            $verifiedSelected.Add($sel)
+        }
+        else {
+            $reason = if ($freshResult.Status -eq 'drifted') {
+                $driftedCount++
+                'source_drifted'
+            }
+            else {
+                $missingCount++
+                'source_missing'
+            }
+
+            if ($isPinned) {
+                $pinnedFailedReval = $true
+                $failedPinnedId = $cId
+            }
+
+            $finalManifest.Add([ordered]@{
+                id               = $cId
+                source_ref       = $cRef
+                line_start       = $sel.line_start
+                line_end         = $sel.line_end
+                score            = $sel.score
+                decision         = 'EXCLUDED'
+                exclusion_reason = $reason
+            })
+        }
+    }
+
+    $finalStatus = $package.status
+    if ($pinnedFailedReval) {
+        $finalStatus = 'pinned_unavailable'
+        $finalSelected = @()
+        $finalDeliveredBytes = 0
+    }
+    else {
+        $finalSelected = @($verifiedSelected.ToArray())
+        $finalDeliveredBytes = if ($finalSelected.Count -eq 0) {
+            0
+        }
+        elseif ($finalSelected.Count -eq 1) {
+            [System.Text.Encoding]::UTF8.GetByteCount('[' + ($finalSelected[0] | ConvertTo-Json -Depth 6 -Compress) + ']')
+        }
+        else {
+            [System.Text.Encoding]::UTF8.GetByteCount((@($finalSelected) | ConvertTo-Json -Depth 6 -Compress))
+        }
+    }
+
     $stopwatch.Stop()
 
     $result = [ordered]@{
         version           = 1
-        status            = $package.status
+        status            = $finalStatus
         gate_status       = $gateStatus
         policy            = $resolvedPolicy
         privacy_scope     = $resolvedPrivacyScope
         routing_objective = $sanitizedObjective
-        selected          = $package.selected
+        selected          = $finalSelected
         manifest          = @($finalManifest)
         metrics           = [ordered]@{
             candidates_received      = $totalReceived
@@ -504,9 +596,9 @@ end {
             valid_evaluations        = $validEvalCount
             invalid_evaluations      = $invalidEvalCount
             missing_evaluations      = $missingEvalCount
-            selected_count           = $package.selected_count
+            selected_count           = $finalSelected.Count
             deferred_count           = $finalManifest.Count
-            delivered_bytes          = $package.delivered_bytes
+            delivered_bytes          = $finalDeliveredBytes
             budget_bytes             = $MaxBudgetBytes
             latency_ms               = $stopwatch.ElapsedMilliseconds
             requests_made            = $requestCount

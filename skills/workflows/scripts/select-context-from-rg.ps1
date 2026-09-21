@@ -426,17 +426,6 @@ $rerankParams = @{
     TaskObjective                = $effectiveObjective
     Mode                         = $Mode
     WorkingDir                   = $canonicalRepoRoot
-    KeepThreshold                = $KeepThreshold
-    MaybeThreshold               = $MaybeThreshold
-    MaxSelectedCandidates        = $MaxSelectedCandidates
-    MaxBudgetBytes               = $MaxBudgetBytes
-    MinCandidates                = $MinCandidates
-    ContextBudgetTriggerBytes    = $ContextBudgetTriggerBytes
-    MaxCandidatesToEvaluate      = $MaxCandidatesToEvaluate
-    MaxJevCalls                  = $MaxJevCalls
-    MaxTotalPayloadBytes         = $MaxTotalPayloadBytes
-    BatchSize                    = $BatchSize
-    PinnedIds                    = $PinnedIds
     MockResponses                = $MockResponses
     HttpTransportMock            = $HttpTransportMock
     AsJson                       = $AsJson.IsPresent
@@ -444,11 +433,44 @@ $rerankParams = @{
     AuthorizeContentTransmission = $AuthorizeContentTransmission.IsPresent
 }
 
-if (-not [string]::IsNullOrWhiteSpace($Policy)) {
+if ($PSBoundParameters.ContainsKey('Policy') -and -not [string]::IsNullOrWhiteSpace($Policy)) {
     $rerankParams['Policy'] = $Policy
 }
-if (-not [string]::IsNullOrWhiteSpace($PrivacyScope)) {
+if ($PSBoundParameters.ContainsKey('PrivacyScope') -and -not [string]::IsNullOrWhiteSpace($PrivacyScope)) {
     $rerankParams['PrivacyScope'] = $PrivacyScope
+}
+if ($PSBoundParameters.ContainsKey('KeepThreshold')) {
+    $rerankParams['KeepThreshold'] = $KeepThreshold
+}
+if ($PSBoundParameters.ContainsKey('MaybeThreshold')) {
+    $rerankParams['MaybeThreshold'] = $MaybeThreshold
+}
+if ($PSBoundParameters.ContainsKey('MaxSelectedCandidates')) {
+    $rerankParams['MaxSelectedCandidates'] = $MaxSelectedCandidates
+}
+if ($PSBoundParameters.ContainsKey('MaxBudgetBytes')) {
+    $rerankParams['MaxBudgetBytes'] = $MaxBudgetBytes
+}
+if ($PSBoundParameters.ContainsKey('MinCandidates')) {
+    $rerankParams['MinCandidates'] = $MinCandidates
+}
+if ($PSBoundParameters.ContainsKey('ContextBudgetTriggerBytes')) {
+    $rerankParams['ContextBudgetTriggerBytes'] = $ContextBudgetTriggerBytes
+}
+if ($PSBoundParameters.ContainsKey('MaxCandidatesToEvaluate')) {
+    $rerankParams['MaxCandidatesToEvaluate'] = $MaxCandidatesToEvaluate
+}
+if ($PSBoundParameters.ContainsKey('MaxJevCalls')) {
+    $rerankParams['MaxJevCalls'] = $MaxJevCalls
+}
+if ($PSBoundParameters.ContainsKey('MaxTotalPayloadBytes')) {
+    $rerankParams['MaxTotalPayloadBytes'] = $MaxTotalPayloadBytes
+}
+if ($PSBoundParameters.ContainsKey('BatchSize')) {
+    $rerankParams['BatchSize'] = $BatchSize
+}
+if ($PSBoundParameters.ContainsKey('PinnedIds')) {
+    $rerankParams['PinnedIds'] = $PinnedIds
 }
 
 $rerankResult = & $rerankScript @rerankParams

@@ -5,7 +5,7 @@
 
 Set-StrictMode -Version Latest
 
-function New-ContextCandidate {
+    function New-ContextCandidate {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Source,
@@ -14,6 +14,7 @@ function New-ContextCandidate {
         [Parameter()][string]$Id = '',
         [Parameter()][string]$RepositoryScope = 'repo',
         [Parameter()][string]$RevisionOrHash = 'HEAD',
+        [Parameter()][string]$ContentSha256 = '',
         [Parameter()][Nullable[int]]$LineStart = $null,
         [Parameter()][Nullable[int]]$LineEnd = $null,
         [Parameter()][int]$OriginalRank = 1,
@@ -25,7 +26,7 @@ function New-ContextCandidate {
     $cleanContent = $Content
 
     $sha = [System.Security.Cryptography.SHA256]::Create()
-    $contentSha256 = try {
+    $computedContentSha256 = try {
         $contentBytes = [System.Text.Encoding]::UTF8.GetBytes($cleanContent)
         $hashBytes = $sha.ComputeHash($contentBytes)
         -join ($hashBytes | ForEach-Object { $_.ToString('x2') })
@@ -34,12 +35,18 @@ function New-ContextCandidate {
         $sha.Dispose()
     }
 
+    if (-not [string]::IsNullOrWhiteSpace($ContentSha256)) {
+        if ($ContentSha256.Trim().ToLowerInvariant() -ne $computedContentSha256) {
+            throw "Content hash mismatch: supplied ContentSha256 '$ContentSha256' does not match computed SHA256 '$computedContentSha256'."
+        }
+    }
+
     $computedId = if (-not [string]::IsNullOrWhiteSpace($Id)) {
         $Id.Trim()
     }
     else {
-        # Seed includes $contentSha256 so contradictory content at same line range gets distinct IDs
-        $seed = "$RepositoryScope|$cleanRef|$RevisionOrHash|$LineStart|$LineEnd|$Representation|$contentSha256"
+        # Seed includes $computedContentSha256 so contradictory content at same line range gets distinct IDs
+        $seed = "$RepositoryScope|$cleanRef|$RevisionOrHash|$LineStart|$LineEnd|$Representation|$computedContentSha256"
         $shaId = [System.Security.Cryptography.SHA256]::Create()
         try {
             $bytes = [System.Text.Encoding]::UTF8.GetBytes($seed)
@@ -59,7 +66,7 @@ function New-ContextCandidate {
         source_ref         = $cleanRef
         repository_scope   = $RepositoryScope.Trim()
         revision_or_hash   = $RevisionOrHash.Trim()
-        content_sha256     = $contentSha256
+        content_sha256     = $computedContentSha256
         line_start         = $LineStart
         line_end           = $LineEnd
         original_rank      = $OriginalRank
@@ -95,6 +102,21 @@ function Test-ContextCandidate {
 
     if ([string]::IsNullOrWhiteSpace($cId) -or [string]::IsNullOrWhiteSpace($cRef)) {
         return $false
+    }
+
+    if ($props -contains 'content_sha256' -and -not [string]::IsNullOrWhiteSpace([string]$Candidate.content_sha256)) {
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        $expectedHash = try {
+            $bytes = [System.Text.Encoding]::UTF8.GetBytes($cContent)
+            $hBytes = $sha.ComputeHash($bytes)
+            -join ($hBytes | ForEach-Object { $_.ToString('x2') })
+        }
+        finally {
+            $sha.Dispose()
+        }
+        if ([string]$Candidate.content_sha256.ToLowerInvariant() -ne $expectedHash) {
+            return $false
+        }
     }
 
     return $true
@@ -492,7 +514,12 @@ function Test-ContextCandidateFreshness {
             if ($lineStart -le $allLines.Length) {
                 $actualEnd = [Math]::Min($lineEnd, $allLines.Length)
                 $sliceLines = $allLines[($lineStart - 1)..($actualEnd - 1)]
-                $currentContent = ($sliceLines -join "`n") + "`n"
+                $candRaw = [string]$Candidate.content
+                $hasTrailingNewline = $candRaw.EndsWith("`n") -or $candRaw.EndsWith("`r")
+                $currentContent = $sliceLines -join "`n"
+                if ($hasTrailingNewline) {
+                    $currentContent += "`n"
+                }
             }
             else {
                 $currentContent = ""
@@ -511,6 +538,9 @@ function Test-ContextCandidateFreshness {
         }
     }
 
+    $candContentClean = ([string]$Candidate.content).Replace("`r`n", "`n")
+    $currContentClean = $currentContent.Replace("`r`n", "`n")
+
     $sha = [System.Security.Cryptography.SHA256]::Create()
     $currentHash = try {
         $bytes = [System.Text.Encoding]::UTF8.GetBytes($currentContent)
@@ -521,10 +551,7 @@ function Test-ContextCandidateFreshness {
         $sha.Dispose()
     }
 
-    $candContentClean = ([string]$Candidate.content).Replace("`r`n", "`n")
-    $currContentClean = $currentContent.Replace("`r`n", "`n")
-
-    $isMatch = ($currContentClean -eq $candContentClean) -or ($null -ne $recordedHash -and $currentHash -eq $recordedHash)
+    $isMatch = ($currContentClean -ceq $candContentClean) -or ($currContentClean.TrimEnd("`n") -ceq $candContentClean.TrimEnd("`n")) -or ($null -ne $recordedHash -and $currentHash -ceq $recordedHash)
     if ($isMatch) {
         return [ordered]@{
             Status      = 'fresh'
@@ -550,8 +577,8 @@ function Optimize-CandidateSet {
         [Parameter()][string]$RepoPath = ''
     )
 
-    $idMap = [ordered]@{}
-    $exactContentMap = [ordered]@{}
+    $idMap = New-Object System.Collections.Specialized.OrderedDictionary ([System.StringComparer]::Ordinal)
+    $exactContentMap = New-Object System.Collections.Specialized.OrderedDictionary ([System.StringComparer]::Ordinal)
     $duplicatesCount = 0
 
     foreach ($cand in $Candidates) {
@@ -958,18 +985,30 @@ function Invoke-JevRerankBatch {
                     if ($ansProps -contains 'noul') {
                         $rawNum = if ($ans -is [System.Collections.IDictionary]) { $ans['noul'] } else { $ans.noul }
                     }
-                    elseif ($ans -is [double] -or $ans -is [int] -or $ans -is [decimal]) {
+                    elseif ($ans -is [double] -or $ans -is [int] -or $ans -is [decimal] -or $ans -is [single] -or $ans -is [long]) {
                         $rawNum = $ans
                     }
 
-                    if ($null -ne $rawNum -and -not ($rawNum -is [string]) -and -not [double]::IsNaN([double]$rawNum) -and -not [double]::IsInfinity([double]$rawNum)) {
+                    $isNumeric = ($null -ne $rawNum) -and
+                                 ($rawNum -isnot [bool]) -and
+                                 -not ($rawNum -is [string]) -and
+                                 -not ($rawNum -is [System.Collections.IEnumerable]) -and
+                                 ($rawNum -is [double] -or $rawNum -is [int] -or $rawNum -is [long] -or $rawNum -is [decimal] -or $rawNum -is [single] -or $rawNum -is [byte] -or $rawNum -is [int16] -or $rawNum -is [int64])
+
+                    if ($isNumeric) {
                         $dbl = [double]$rawNum
-                        if ($dbl -ge 0.0 -and $dbl -le 1.0) {
-                            $scoreVal = [Math]::Round($dbl, 4)
+                        if (-not [double]::IsNaN($dbl) -and -not [double]::IsInfinity($dbl)) {
+                            if ($dbl -ge 0.0 -and $dbl -le 1.0) {
+                                $scoreVal = [Math]::Round($dbl, 4)
+                            }
+                            else {
+                                $status = 'out_of_range'
+                                $msg = "Score out of range [0, 1]: $dbl"
+                            }
                         }
                         else {
-                            $status = 'out_of_range'
-                            $msg = "Score out of range [0, 1]: $dbl"
+                            $status = 'invalid_score'
+                            $msg = "Invalid non-finite score: $rawNum"
                         }
                     }
                     else {
@@ -1127,7 +1166,12 @@ function Select-ContextPackage {
     function Measure-SelectedPackageBytes {
         param([object[]]$Items)
         if ($null -eq $Items -or $Items.Count -eq 0) { return 0 }
-        $json = @($Items) | ConvertTo-Json -Depth 6 -Compress
+        $json = if ($Items.Count -eq 1) {
+            '[' + ($Items[0] | ConvertTo-Json -Depth 6 -Compress) + ']'
+        }
+        else {
+            @($Items) | ConvertTo-Json -Depth 6 -Compress
+        }
         return [System.Text.Encoding]::UTF8.GetByteCount($json)
     }
 
@@ -1141,6 +1185,7 @@ function Select-ContextPackage {
             source_ref       = $cand.source_ref
             repository_scope = $cand.repository_scope
             revision_or_hash = $cand.revision_or_hash
+            content_sha256   = $cand.content_sha256
             line_start       = $cand.line_start
             line_end         = $cand.line_end
             original_rank    = $cand.original_rank
@@ -1154,6 +1199,41 @@ function Select-ContextPackage {
 
     $selected = [System.Collections.Generic.List[object]]::new()
     $manifest = [System.Collections.Generic.List[object]]::new()
+
+    # Pre-check 0: verify if all requested PINNED candidates are available in candidate set
+    $foundPinnedSet = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($p in $pinnedList) {
+        $foundPinnedSet.Add($p.Id) | Out-Null
+    }
+    $missingPinned = [System.Collections.Generic.List[string]]::new()
+    foreach ($reqPin in $pinnedSet) {
+        if (-not $foundPinnedSet.Contains($reqPin)) {
+            $missingPinned.Add($reqPin)
+        }
+    }
+    if ($missingPinned.Count -gt 0) {
+        return [ordered]@{
+            version         = 1
+            status          = 'pinned_unavailable'
+            policy          = $Policy
+            message         = "Mandatory pinned context unavailable: $($missingPinned -join ', ')"
+            selected        = @()
+            manifest        = @($classified | ForEach-Object {
+                [ordered]@{
+                    id               = $_.Id
+                    source_ref       = $_.Candidate.source_ref
+                    line_start       = $_.Candidate.line_start
+                    line_end         = $_.Candidate.line_end
+                    score            = $_.Score
+                    decision         = $_.Decision
+                    exclusion_reason = 'mandatory_pinned_unavailable'
+                }
+            })
+            delivered_bytes = 0
+            selected_count  = 0
+            deferred_count  = $classified.Count
+        }
+    }
 
     # Pre-check 1: verify if PINNED candidate count alone exceeds MaxSelectedCandidates
     if ($pinnedList.Count -gt $MaxSelectedCandidates) {

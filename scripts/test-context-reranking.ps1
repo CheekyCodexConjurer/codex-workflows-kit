@@ -564,8 +564,14 @@ class DatabasePool:
         -MaxBudgetBytes 700
 
     Assert-Test 'delivered_bytes is less than or equal to MaxBudgetBytes' ($serPkg.delivered_bytes -le 700)
+    $expectedSerializedBytes = if ($serPkg.selected.Count -eq 1) {
+        [System.Text.Encoding]::UTF8.GetByteCount('[' + ($serPkg.selected[0] | ConvertTo-Json -Depth 6 -Compress) + ']')
+    }
+    else {
+        [System.Text.Encoding]::UTF8.GetByteCount(($serPkg.selected | ConvertTo-Json -Depth 6 -Compress))
+    }
     Assert-Test 'delivered_bytes accurately matches serialized UTF-8 bytes of selected JSON array' (
-        $serPkg.delivered_bytes -eq [System.Text.Encoding]::UTF8.GetByteCount(($serPkg.selected | ConvertTo-Json -Depth 6 -Compress))
+        $serPkg.delivered_bytes -eq $expectedSerializedBytes
     )
     Assert-Test 'Candidates deferred by serialized budget are recorded in manifest with budget_deferred' (
         @($serPkg.manifest | Where-Object { $_.exclusion_reason -eq 'budget_deferred' }).Count -ge 1
@@ -1037,6 +1043,225 @@ API_KEY=my_secret_key
         $pinnedOverflowPkg.manifest[0].exclusion_reason -eq 'count_exceeded_by_pinned' -and
         $pinnedOverflowPkg.message -match 'Sharding required'
     )
+
+    # ---------------------------------------------------------
+    # 24. Score Parsing: Boolean, Array, and Object Rejection
+    # ---------------------------------------------------------
+    $boolMock = {
+        param($req)
+        return [ordered]@{
+            model = 'jev-bool-v1'
+            answers = [ordered]@{
+                q_0 = [ordered]@{ noul = $true }
+                q_1 = [ordered]@{ noul = @(0.5, 0.8) }
+                q_2 = [ordered]@{ noul = [ordered]@{ nested = 0.9 } }
+            }
+        }
+    }
+    $boolCands = @(
+        (New-ContextCandidate -Source 'memory' -SourceRef 'm1' -Content 'c1' -Id 'bool_1'),
+        (New-ContextCandidate -Source 'memory' -SourceRef 'm2' -Content 'c2' -Id 'bool_2'),
+        (New-ContextCandidate -Source 'memory' -SourceRef 'm3' -Content 'c3' -Id 'bool_3')
+    )
+    $boolResult = Invoke-JevRerankBatch -Candidates $boolCands -HttpTransportMock $boolMock -PrivacyScope 'snippets_allowed'
+    Assert-Test 'Boolean noul score is rejected as invalid_score' (
+        $boolResult.Scores['bool_1'].Status -eq 'invalid_score'
+    )
+    Assert-Test 'Array noul score is rejected as invalid_score' (
+        $boolResult.Scores['bool_2'].Status -eq 'invalid_score'
+    )
+    Assert-Test 'Object noul score is rejected as invalid_score' (
+        $boolResult.Scores['bool_3'].Status -eq 'invalid_score'
+    )
+    Assert-Test 'Batch with zero valid scores yields status=unavailable' (
+        $boolResult.GlobalStatus -eq 'unavailable' -and $boolResult.ValidCount -eq 0
+    )
+
+    # ---------------------------------------------------------
+    # 25. Case Sensitivity, ContentSha256 Integrity, and Ordinal Deduplication
+    # ---------------------------------------------------------
+    # Test-ContextCandidateFreshness detects case-drift on disk
+    $caseTempDir = Join-Path ([IO.Path]::GetTempPath()) ("case-test-" + [Guid]::NewGuid().ToString('N'))
+    try {
+        $null = New-Item -ItemType Directory -Path $caseTempDir -Force
+        $caseFile = Join-Path $caseTempDir 'case.txt'
+        Set-Content -LiteralPath $caseFile -Value "const myVar = 1;`n" -Encoding UTF8
+
+        $caseCand = New-ContextCandidate -Source 'rg' -SourceRef 'case.txt' -Content "const myVar = 1;`n" -LineStart 1 -LineEnd 1
+        $caseStatusInitial = Test-ContextCandidateFreshness -Candidate $caseCand -RepoPath $caseTempDir
+        Assert-Test 'Test-ContextCandidateFreshness reports fresh for exact case match' ($caseStatusInitial.Fresh -eq $true)
+
+        # Mutate case on disk: myVar -> myvar
+        Set-Content -LiteralPath $caseFile -Value "const myvar = 1;`n" -Encoding UTF8
+        $caseStatusDrifted = Test-ContextCandidateFreshness -Candidate $caseCand -RepoPath $caseTempDir
+        Assert-Test 'Test-ContextCandidateFreshness detects case drift as drifted' (
+            $caseStatusDrifted.Fresh -eq $false -and $caseStatusDrifted.Status -eq 'drifted'
+        )
+
+        # Freshness without trailing newline matches line on disk without error
+        $noNlCand = New-ContextCandidate -Source 'rg' -SourceRef 'case.txt' -Content "const myvar = 1;" -LineStart 1 -LineEnd 1
+        $noNlStatus = Test-ContextCandidateFreshness -Candidate $noNlCand -RepoPath $caseTempDir
+        Assert-Test 'Candidate without trailing newline matches on-disk line without inventing trailing newline' (
+            $noNlStatus.Fresh -eq $true
+        )
+    }
+    finally {
+        if (Test-Path -LiteralPath $caseTempDir) {
+            Remove-Item -LiteralPath $caseTempDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    # New-ContextCandidate with matching ContentSha256 succeeds, mismatch throws
+    $testContent = "console.log('hello');"
+    $expectedTestHash = 'b98785ede1f35602a98818397e292fd8d4dcb66267c427d7d5486196b8b3bcd1'
+    $validCandWithHash = New-ContextCandidate -Source 'rg' -SourceRef 'test.js' -Content $testContent -ContentSha256 $expectedTestHash
+    Assert-Test 'New-ContextCandidate accepts matching ContentSha256' ($validCandWithHash.content_sha256 -eq $expectedTestHash)
+
+    $mismatchThrown = $false
+    try {
+        $null = New-ContextCandidate -Source 'rg' -SourceRef 'test.js' -Content $testContent -ContentSha256 'badbadbadbadbadbadbadbadbadbadbadbadbadbadbadbadbadbadbadbadbadb'
+    }
+    catch {
+        $mismatchThrown = $_.Exception.Message -match 'Content hash mismatch'
+    }
+    Assert-Test 'New-ContextCandidate throws on ContentSha256 mismatch' ($mismatchThrown -eq $true)
+
+    # Test-ContextCandidate checks content_sha256 integrity
+    $tamperedCand = [ordered]@{
+        schema_version     = 1
+        id                 = 'cand:tampered'
+        source             = 'rg'
+        source_ref         = 'test.js'
+        repository_scope   = 'repo'
+        representation     = 'snippet'
+        content            = "original content"
+        content_sha256     = 'tampered_hash_value'
+    }
+    Assert-Test 'Test-ContextCandidate returns false when content_sha256 does not match content' (
+        (Test-ContextCandidate -Candidate $tamperedCand) -eq $false
+    )
+
+    # Selected candidate preserves content_sha256
+    $selCandPreserve = New-ContextCandidate -Source 'memory' -SourceRef 'm/preserve' -Content 'preserve content' -Id 'cand:pres'
+    $selPkgPreserve = Select-ContextPackage -Candidates @($selCandPreserve) -Evaluations @{ 'cand:pres' = @{ Score = 0.9; Status = 'ok' } }
+    Assert-Test 'Select-ContextPackage preserves content_sha256 in selected object' (
+        $selPkgPreserve.selected[0].content_sha256 -eq $selCandPreserve.content_sha256
+    )
+
+    # Optimize-CandidateSet case-sensitive deduplication
+    $caseDedupCand1 = New-ContextCandidate -Source 'rg' -SourceRef 'file.ts' -Content 'function Test() {}' -LineStart 1 -LineEnd 1 -Id 'cand:test1'
+    $caseDedupCand2 = New-ContextCandidate -Source 'rg' -SourceRef 'file.ts' -Content 'function test() {}' -LineStart 1 -LineEnd 1 -Id 'cand:test2'
+    $caseDedupResult = Optimize-CandidateSet -Candidates @($caseDedupCand1, $caseDedupCand2)
+    Assert-Test 'Optimize-CandidateSet does not merge candidates differing in case' (
+        $caseDedupResult.UniqueCandidates.Count -eq 2 -and $caseDedupResult.DuplicatesCount -eq 0
+    )
+
+    # ---------------------------------------------------------
+    # 26. PINNED Candidate Availability (pinned_unavailable)
+    # ---------------------------------------------------------
+    $availCands = @(
+        (New-ContextCandidate -Source 'memory' -SourceRef 'mem/1' -Content 'content 1' -Id 'avail_1')
+    )
+    $missingPinPkg = Select-ContextPackage `
+        -Candidates $availCands `
+        -PinnedIds @('avail_1', 'missing_pin_999')
+    Assert-Test 'Missing PINNED candidate returns status=pinned_unavailable' (
+        $missingPinPkg.status -eq 'pinned_unavailable'
+    )
+    Assert-Test 'pinned_unavailable returns empty selected array' (
+        $missingPinPkg.selected.Count -eq 0 -and $missingPinPkg.delivered_bytes -eq 0
+    )
+    Assert-Test 'pinned_unavailable records mandatory_pinned_unavailable in manifest' (
+        $missingPinPkg.manifest[0].exclusion_reason -eq 'mandatory_pinned_unavailable' -and
+        $missingPinPkg.message -match 'Mandatory pinned context unavailable'
+    )
+
+    # ---------------------------------------------------------
+    # 27. Post-Evaluation Revalidation Before Delivery
+    # ---------------------------------------------------------
+    $revalDir = Join-Path ([IO.Path]::GetTempPath()) ("reval-test-" + [Guid]::NewGuid().ToString('N'))
+    try {
+        $null = New-Item -ItemType Directory -Path $revalDir -Force
+        $revalFile = Join-Path $revalDir 'drift_after_jev.txt'
+        Set-Content -LiteralPath $revalFile -Value "initial version;`n" -Encoding UTF8
+
+        $revalCand = New-ContextCandidate -Source 'rg' -SourceRef 'drift_after_jev.txt' -Content "initial version;`n" -LineStart 1 -LineEnd 1 -Id 'cand:reval'
+
+        # Transport mock mutates file on disk during Jev call!
+        $driftDuringJevMock = {
+            param($req)
+            Set-Content -LiteralPath $revalFile -Value "mutated during jev;`n" -Encoding UTF8
+            return [ordered]@{
+                model = 'jev-reval-v1'
+                answers = [ordered]@{
+                    q_0 = [ordered]@{ noul = 0.95 }
+                }
+            }
+        }
+
+        $rerankScript = Join-Path $PSScriptRoot '..\skills\workflows\scripts\rerank-context.ps1'
+        $revalResult = & $rerankScript `
+            -Candidates @($revalCand) `
+            -RoutingObjective 'Test post-evaluation revalidation' `
+            -WorkingDir $revalDir `
+            -HttpTransportMock $driftDuringJevMock `
+            -AuthorizeContentTransmission `
+            -MinCandidates 1
+
+        Assert-Test 'Candidate drifting during Jev is excluded from selected' (
+            $revalResult.selected.Count -eq 0
+        )
+        Assert-Test 'Candidate drifting during Jev is recorded in manifest with source_drifted' (
+            @($revalResult.manifest | Where-Object { $_.exclusion_reason -eq 'source_drifted' }).Count -ge 1
+        )
+    }
+    finally {
+        if (Test-Path -LiteralPath $revalDir) {
+            Remove-Item -LiteralPath $revalDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    # ---------------------------------------------------------
+    # 28. Parameter Precedence (explicit parameter > env > default)
+    # ---------------------------------------------------------
+    $prevEnvMin = $env:CODEX_CONTEXT_RERANK_MIN_CANDIDATES
+    $prevEnvPol = $env:CODEX_CONTEXT_RERANK_POLICY
+    try {
+        $env:CODEX_CONTEXT_RERANK_MIN_CANDIDATES = '50'
+        $env:CODEX_CONTEXT_RERANK_POLICY = 'off'
+
+        $precCand = New-ContextCandidate -Source 'memory' -SourceRef 'prec' -Content 'prec content' -Id 'cand:prec'
+        $precScript = Join-Path $PSScriptRoot '..\skills\workflows\scripts\rerank-context.ps1'
+
+        # Explicit -Policy 'advisory' should win over env 'off'
+        # Explicit -MinCandidates 1 should win over env '50'
+        $precMock = {
+            param($req)
+            return [ordered]@{
+                model = 'jev-prec-v1'
+                answers = [ordered]@{
+                    q_0 = [ordered]@{ noul = 0.90 }
+                }
+            }
+        }
+        $precResult = & $precScript `
+            -Candidates @($precCand) `
+            -Policy 'advisory' `
+            -MinCandidates 1 `
+            -HttpTransportMock $precMock `
+            -AuthorizeContentTransmission
+
+        Assert-Test 'Explicit -Policy parameter overrides CODEX_CONTEXT_RERANK_POLICY env' (
+            $precResult.policy -eq 'advisory'
+        )
+        Assert-Test 'Explicit -MinCandidates parameter overrides CODEX_CONTEXT_RERANK_MIN_CANDIDATES env' (
+            $precResult.gate_status -eq 'triggered'
+        )
+    }
+    finally {
+        $env:CODEX_CONTEXT_RERANK_MIN_CANDIDATES = $prevEnvMin
+        $env:CODEX_CONTEXT_RERANK_POLICY = $prevEnvPol
+    }
 }
 finally {
     if (Test-Path -LiteralPath $fixtureDir) {
