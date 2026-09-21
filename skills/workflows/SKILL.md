@@ -110,7 +110,7 @@ Under `subagent_continuation = park_and_wake`, the cycle includes autonomous sus
 FRAME -> FANOUT -> [PARK -> SUSPENDED -> WAKE ->] COLLECT -> ACT -> VERIFY -> REVIEW -> DONE
 ```
 
-- FRAME: goal, expected behavior, validation, and done gate before acting.
+- FRAME: goal, expected behavior, validation, and done gate before acting. During FRAME, the system can execute an optional skill-routing gate before FANOUT (`references/skill-routing.md`): identify explicitly requested skills (marked forced, bypassing Jev); discover candidate skills from kit installation (`install-state.json`) and local repository scopes (`.agents/skills`); build a lightweight catalog from SKILL.md frontmatter metadata (name, description, scope, path); evaluate candidate relevance via TypeSafe/Jev System One (noul probability primitive) when enabled (`off`, `advisory`, `enforce`); resolve candidate decisions (`forced`, `select`, `review`, `skip`) under configurable thresholds (bootstrap: select >= 0.70, review 0.45-0.70, skip < 0.45, max_selected_skills = 3); and allow the parent GPT orchestrator to finalize the routing before advancing to FANOUT. The parent GPT remains the orchestrator and final decider; DeepSeek Sub-Agent MCP remains the main executor of material work; Jev serves solely as a semantic evaluation engine.
 - FANOUT: policy-aware delegation. In `balanced`, fan out conditionally for
   concrete independent parallelism, specialization, risk isolation, or
   large-context compression. In `aggressive`, map all independent fronts,

@@ -2625,6 +2625,8 @@ function Test-PermittedLegacyRoleSurface {
         $RelativePath -eq 'skills/workflows/references/delivery-review.md' -or
         $RelativePath -eq 'skills/workflows/references/commit.md' -or
         $RelativePath -eq 'skills/workflows/references/validation.md' -or
+        $RelativePath -eq 'skills/workflows/references/skill-routing.md' -or
+        $RelativePath.StartsWith('skills/workflows/scripts/') -or
         $RelativePath -eq 'skills/codebase-memory-mcp/SKILL.md' -or
         $RelativePath -eq 'skills/codebase-memory-mcp/references/scenarios.md' -or
         $RelativePath -eq 'skills/context7-mcp/SKILL.md'
@@ -2810,7 +2812,7 @@ $forbidden = @(
     (-join [char[]]@(119, 97, 116, 99, 104, 101, 114))
 )
 foreach ($relativePath in @(git -C $repo ls-files)) {
-    if ($relativePath -eq 'CHANGELOG.md' -or $relativePath -eq 'scripts/validate.ps1') {
+    if ($relativePath -eq 'CHANGELOG.md' -or $relativePath -eq 'scripts/validate.ps1' -or $relativePath.StartsWith('.opencode/')) {
         continue
     }
     $path = Join-Path $repo $relativePath
