@@ -159,6 +159,7 @@ $script:PriorBackendState = $null
 $script:PriorDelegationState = $null
 $script:PriorStrategyState = $null
 $script:PriorContinuationState = $null
+$script:PriorDevRouterState = $null
 $script:SelectedBackend = 'deepseek'
 $script:SelectedPolicy = 'balanced'
 $script:SelectedStrategy = 'worker'
@@ -340,6 +341,10 @@ function Initialize-PriorState {
                 $script:PriorContinuationState = $state.codexContinuation
                 $script:SelectedContinuation = [string]$state.codexContinuation.selected
             }
+            if ($state.PSObject.Properties.Name -contains 'codexDevRouter') {
+                Assert-CodexDevRouterState -DevRouterState $state.codexDevRouter
+                $script:PriorDevRouterState = $state.codexDevRouter
+            }
         }
         catch {
             throw "Previous install state is invalid: $($_.Exception.Message)"
@@ -367,6 +372,10 @@ function Initialize-PriorState {
     if ($null -eq $script:PriorContinuationState) {
         $script:PriorContinuationState = New-CodexContinuationState -ExistingInstallState $existingState
         $script:SelectedContinuation = [string]$script:PriorContinuationState.selected
+    }
+
+    if ($null -eq $script:PriorDevRouterState) {
+        $script:PriorDevRouterState = New-CodexDevRouterState -ExistingInstallState $existingState
     }
 }
 
@@ -1197,6 +1206,7 @@ function Save-InstallState {
     $delegationState = $script:PriorDelegationState
     $strategyState = $script:PriorStrategyState
     $continuationState = $script:PriorContinuationState
+    $devRouterState = $script:PriorDevRouterState
 
     $state = [ordered]@{
         schemaVersion = 5
@@ -1210,9 +1220,24 @@ function Save-InstallState {
         codexDelegation = $delegationState
         codexStrategy = $strategyState
         codexContinuation = $continuationState
+        codexDevRouter = $devRouterState
     }
 
     Install-ManagedContent -Destination $statePath -Content (($state | ConvertTo-Json -Depth 8) + $nl)
+
+    $devRouterStatePath = Join-Path $CodexHome 'codex-workflows-kit\dev-router-state.json'
+    if (-not (Test-Path -LiteralPath $devRouterStatePath -PathType Leaf)) {
+        $devRouterInit = [ordered]@{
+            version   = 1
+            product   = 'codex-workflows-kit'
+            component = 'dev-router'
+            mode      = 'off'
+            target    = 'effort_only'
+            updatedAt = [datetime]::UtcNow.ToString('o')
+        }
+        $drJson = ($devRouterInit | ConvertTo-Json -Depth 4) + $nl
+        [IO.File]::WriteAllText($devRouterStatePath, $drJson, [System.Text.Encoding]::UTF8)
+    }
 }
 
 function Assert-InstallPreflight {

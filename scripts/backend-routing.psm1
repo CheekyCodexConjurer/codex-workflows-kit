@@ -611,6 +611,53 @@ function New-CodexContinuationState {
     return $state
 }
 
+function Assert-CodexDevRouterState {
+    param([Parameter(Mandatory)][object]$DevRouterState)
+
+    if ($null -eq $DevRouterState) {
+        throw 'Dev Router state cannot be null.'
+    }
+    if (-not (Test-ObjectProperty -Object $DevRouterState -Name 'mode')) {
+        throw 'Dev Router state is missing mode.'
+    }
+    $mode = [string](Get-ObjectPropertyValue -Object $DevRouterState -Name 'mode')
+    if ($mode -notin @('off', 'shadow', 'on')) {
+        throw "Dev Router state has unsupported mode: $mode"
+    }
+
+    if (-not (Test-ObjectProperty -Object $DevRouterState -Name 'target')) {
+        throw 'Dev Router state is missing target.'
+    }
+    $target = [string](Get-ObjectPropertyValue -Object $DevRouterState -Name 'target')
+    if ($target -notin @('effort_only', 'model_only', 'model_and_effort')) {
+        throw "Dev Router state has unsupported target: $target"
+    }
+}
+
+function New-CodexDevRouterState {
+    param([object]$ExistingInstallState)
+
+    if ($null -ne $ExistingInstallState -and (Test-ObjectProperty -Object $ExistingInstallState -Name 'codexDevRouter')) {
+        $existingDevRouter = Get-ObjectPropertyValue -Object $ExistingInstallState -Name 'codexDevRouter'
+        if ($null -ne $existingDevRouter) {
+            Assert-CodexDevRouterState -DevRouterState $existingDevRouter
+            return [ordered]@{
+                version = 1
+                mode    = [string](Get-ObjectPropertyValue -Object $existingDevRouter -Name 'mode')
+                target  = [string](Get-ObjectPropertyValue -Object $existingDevRouter -Name 'target')
+            }
+        }
+    }
+
+    $state = [ordered]@{
+        version = 1
+        mode    = 'off'
+        target  = 'effort_only'
+    }
+    Assert-CodexDevRouterState -DevRouterState $state
+    return $state
+}
+
 function Get-CodexRuntimeBlockInfo {
     param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
 
@@ -1731,6 +1778,8 @@ Export-ModuleMember -Function @(
     'New-CodexStrategyState',
     'Assert-CodexContinuationState',
     'New-CodexContinuationState',
+    'Assert-CodexDevRouterState',
+    'New-CodexDevRouterState',
     'Get-CodexRuntimeBlockInfo',
     'Format-CodexRuntimeBlock',
     'Set-CodexAgentsManagedBlockText',

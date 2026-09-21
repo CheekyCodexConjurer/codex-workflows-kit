@@ -84,4 +84,18 @@ NumpadDot::PastePrompt("$workflows mode=CONSULT")
 
 ^Numpad0::PastePrompt(".\scripts\switch-subagent-backend.ps1 -Status")
 
+; --- Dev Router Commands (Alt + Numpad) ---
+; Controls parent orchestrator model and reasoning effort via TypeSafe/Jev
+!Numpad1::PastePrompt(".\scripts\switch-dev-router.ps1 -Mode off")
+
+!Numpad2::PastePrompt(".\scripts\switch-dev-router.ps1 -Mode shadow")
+
+!Numpad3::PastePrompt(".\scripts\switch-dev-router.ps1 -Mode on -Target effort_only")
+
+!Numpad4::PastePrompt(".\scripts\switch-dev-router.ps1 -Mode on -Target model_only")
+
+!Numpad5::PastePrompt(".\scripts\switch-dev-router.ps1 -Mode on -Target model_and_effort")
+
+!Numpad0::PastePrompt(".\scripts\switch-dev-router.ps1 -Status")
+
 #HotIf

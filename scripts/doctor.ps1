@@ -184,6 +184,12 @@ function Assert-InstallState {
         }
         Assert-CodexContinuationState -ContinuationState $State.codexContinuation
     }
+    if ($State.PSObject.Properties.Name -contains 'codexDevRouter') {
+        if ($null -eq $State.codexDevRouter) {
+            throw "Install state contains an invalid codexDevRouter property."
+        }
+        Assert-CodexDevRouterState -DevRouterState $State.codexDevRouter
+    }
 
     if ($schema -ge 5) {
         if (-not ($State.PSObject.Properties.Name -contains 'codexBackend') -or $null -eq $State.codexBackend) {
@@ -753,6 +759,27 @@ if ($installedProfile -eq 'safe') {
         }
         catch {
             Write-Check -Name 'Delegation policy' -Passed $false -Detail $_.Exception.Message
+        }
+    }
+
+    $devRouterStateFile = Join-Path $CodexHome 'codex-workflows-kit\dev-router-state.json'
+    if (Test-Path -LiteralPath $devRouterStateFile -PathType Leaf) {
+        try {
+            $dState = Get-Content -LiteralPath $devRouterStateFile -Raw -Encoding UTF8 | ConvertFrom-Json
+            Assert-CodexDevRouterState -DevRouterState $dState
+            Write-Check -Name 'Dev Router configuration' -Passed $true -Detail "mode=$($dState.mode), target=$($dState.target)"
+        }
+        catch {
+            Write-Check -Name 'Dev Router configuration' -Passed $false -Detail $_.Exception.Message
+        }
+    }
+    elseif ($null -ne $state -and ($state.PSObject.Properties.Name -contains 'codexDevRouter') -and $null -ne $state.codexDevRouter) {
+        try {
+            Assert-CodexDevRouterState -DevRouterState $state.codexDevRouter
+            Write-Check -Name 'Dev Router configuration' -Passed $true -Detail "mode=$($state.codexDevRouter.mode), target=$($state.codexDevRouter.target)"
+        }
+        catch {
+            Write-Check -Name 'Dev Router configuration' -Passed $false -Detail $_.Exception.Message
         }
     }
 
