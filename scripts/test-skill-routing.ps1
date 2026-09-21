@@ -1,5 +1,5 @@
 # scripts/test-skill-routing.ps1
-# Deterministic contract tests for optional TypeSafe/Jev skill routing gate during FRAME.
+# Deterministic contract tests for TypeSafe/Jev skill routing gate during FRAME.
 
 [CmdletBinding()]
 param()
@@ -45,52 +45,105 @@ Assert-Test 'route-skills.ps1 exists in canonical workflows scripts' (Test-Path 
 Assert-Test 'skill-routing.md reference documentation exists' (Test-Path -LiteralPath $skillRoutingRef -PathType Leaf)
 
 $skillText = Get-Content -LiteralPath $workflowSkill -Raw -Encoding UTF8
-Assert-Test 'workflows SKILL.md documents skill-routing in FRAME' ($skillText -match '(?i)skill-routing gate before FANOUT')
+Assert-Test 'workflows SKILL.md documents skill-routing in FRAME' ($skillText -match '(?i)skill-routing is a deterministic sub-step executed during FRAME')
 Assert-Test 'workflows SKILL.md links to references/skill-routing.md' ($skillText -match 'references/skill-routing\.md')
-Assert-Test 'workflows SKILL.md preserves parent GPT orchestration authority' ($skillText -match '(?i)parent GPT remains the orchestrator and final decider')
+Assert-Test 'workflows SKILL.md preserves parent GPT orchestration authority' ($skillText -match '(?i)parent GPT remains the sole orchestrator and final decider')
+Assert-Test 'workflows SKILL.md defines deterministic policy != off execution' ($skillText -match '(?i)if routing policy != off: execute skill-routing before FANOUT')
+Assert-Test 'workflows SKILL.md defines deterministic policy == off preservation' ($skillText -match '(?i)if routing policy == off: preserve normal skill resolution')
+
+# Verification: SKILL.md must not use purely optional language for the active gate
+$frameLine = ($skillText -split "\r?\n" | Where-Object { $_ -match '^- FRAME:' })
+$hasOptionalWording = ($frameLine -match '\b(?:can execute|may execute|optionally execute)\b')
+Assert-Test 'workflows SKILL.md does not use optional-only wording for active routing gate' (-not $hasOptionalWording)
 
 # 2. Test Policy: 'off'
 $resultOff = & $routeSkillsScript -RoutingPolicy off -WorkingDir $repoRoot -Quiet
 Assert-Test "policy 'off' reports policy=off" ($resultOff.policy -eq 'off')
 Assert-Test "policy 'off' reports status=ok" ($resultOff.status -eq 'ok')
-Assert-Test "policy 'off' marks workflows as forced" (($resultOff.results | Where-Object { $_.name -eq 'workflows' }).decision -eq 'forced')
-$allNonForcedSkipped = $true
-foreach ($r in @($resultOff.results | Where-Object { $_.decision -ne 'forced' })) {
-    if ($r.decision -ne 'skip') {
-        $allNonForcedSkipped = $false
-        break
+Assert-Test "policy 'off' makes 0 Jev calls" ($resultOff.jev_calls -eq 0)
+Assert-Test "policy 'off' marks workflows as forced with enforced=true" ((($resultOff.results | Where-Object { $_.name -eq 'workflows' }).decision -eq 'forced') -and (($resultOff.results | Where-Object { $_.name -eq 'workflows' }).enforced -eq $true))
+
+$unforcedCandidates = @($resultOff.results | Where-Object { $_.decision -ne 'forced' })
+$allUnrouted = ($unforcedCandidates.Count -gt 0)
+$noSkipInOff = $true
+foreach ($r in $unforcedCandidates) {
+    if ($r.decision -ne 'unrouted' -or $r.enforced -ne $false) {
+        $allUnrouted = $false
+    }
+    if ($r.decision -eq 'skip') {
+        $noSkipInOff = $false
     }
 }
-Assert-Test "policy 'off' marks all unforced candidates as skip" $allNonForcedSkipped
+Assert-Test "policy 'off' marks all unforced candidates as unrouted with enforced=false" $allUnrouted
+Assert-Test "policy 'off' produces no skip decisions (normal resolution preserved)" $noSkipInOff
+Assert-Test "policy 'off' summary contains unrouted list" ($resultOff.summary.unrouted.Count -eq $unforcedCandidates.Count)
 
-# 3. Test Frontmatter Parsing & Discovery with Disposable Fixture
+# 3. Test Frontmatter Parsing & Disposable Hierarchical Fixture
 $tempFixtureDir = Join-Path ([IO.Path]::GetTempPath()) ("skill-routing-test-" + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $tempFixtureDir -Force | Out-Null
 try {
-    # Create mock repo with .agents/skills and nested packages/api/.agents/skills
-    $repoSkillsDir = Join-Path $tempFixtureDir '.agents\skills\db-query'
-    New-Item -ItemType Directory -Path $repoSkillsDir -Force | Out-Null
-    $dbSkillContent = @"
----
-name: db-query
-description: Execute optimized read-only queries against relational databases.
----
-# DB Query Skill
-"@
-    [IO.File]::WriteAllText((Join-Path $repoSkillsDir 'SKILL.md'), $dbSkillContent, [System.Text.Encoding]::UTF8)
+    # Initialize fake git repo in fixture to test Get-RepositoryRoot
+    $fixtureRepo = Join-Path $tempFixtureDir 'my-repo'
+    New-Item -ItemType Directory -Path (Join-Path $fixtureRepo '.git') -Force | Out-Null
 
-    $nestedSkillsDir = Join-Path $tempFixtureDir 'packages\api\.agents\skills\api-client'
-    New-Item -ItemType Directory -Path $nestedSkillsDir -Force | Out-Null
+    # Hierarchy:
+    # my-repo/
+    #   .agents/skills/root-skill/SKILL.md (named 'db-helper')
+    #   packages/
+    #     .agents/skills/package-skill/SKILL.md
+    #     api/
+    #       .agents/skills/api-skill/SKILL.md (also named 'db-helper' to test name collision)
+    #       src/ (WorkingDir for test)
+    #     worker-only/
+    #       .agents/skills/worker-only/SKILL.md (sibling: MUST NOT be discovered)
+
+    $rootSkillDir = Join-Path $fixtureRepo '.agents\skills\root-skill'
+    New-Item -ItemType Directory -Path $rootSkillDir -Force | Out-Null
+    $rootSkillContent = @"
+---
+name: db-helper
+description: Root database query utilities.
+---
+# Root DB
+"@
+    [IO.File]::WriteAllText((Join-Path $rootSkillDir 'SKILL.md'), $rootSkillContent, [System.Text.Encoding]::UTF8)
+
+    $packageSkillDir = Join-Path $fixtureRepo 'packages\.agents\skills\package-skill'
+    New-Item -ItemType Directory -Path $packageSkillDir -Force | Out-Null
+    $pkgSkillContent = @"
+---
+name: package-tool
+description: Shared package level utilities.
+---
+# Package Tool
+"@
+    [IO.File]::WriteAllText((Join-Path $packageSkillDir 'SKILL.md'), $pkgSkillContent, [System.Text.Encoding]::UTF8)
+
+    $apiSkillDir = Join-Path $fixtureRepo 'packages\api\.agents\skills\api-skill'
+    $apiSrcDir = Join-Path $fixtureRepo 'packages\api\src'
+    New-Item -ItemType Directory -Path $apiSkillDir -Force | Out-Null
+    New-Item -ItemType Directory -Path $apiSrcDir -Force | Out-Null
     $apiSkillContent = @"
 ---
-name: api-client
-description: Specialized client for interacting with upstream REST APIs.
+name: db-helper
+description: API-specific query utilities with caching.
 ---
-# API Client Skill
+# API DB Helper
 "@
-    [IO.File]::WriteAllText((Join-Path $nestedSkillsDir 'SKILL.md'), $apiSkillContent, [System.Text.Encoding]::UTF8)
+    [IO.File]::WriteAllText((Join-Path $apiSkillDir 'SKILL.md'), $apiSkillContent, [System.Text.Encoding]::UTF8)
 
-    # Create mock install-state.json
+    $siblingSkillDir = Join-Path $fixtureRepo 'packages\worker-only\.agents\skills\worker-only'
+    New-Item -ItemType Directory -Path $siblingSkillDir -Force | Out-Null
+    $siblingSkillContent = @"
+---
+name: worker-only
+description: Worker background task processor.
+---
+# Worker Only
+"@
+    [IO.File]::WriteAllText((Join-Path $siblingSkillDir 'SKILL.md'), $siblingSkillContent, [System.Text.Encoding]::UTF8)
+
+    # Create mock codex home with install-state.json
     $mockCodexHome = Join-Path $tempFixtureDir '.codex'
     $mockStateDir = Join-Path $mockCodexHome 'codex-workflows-kit'
     New-Item -ItemType Directory -Path $mockStateDir -Force | Out-Null
@@ -116,103 +169,173 @@ description: Custom dynamic tool installed via codex-workflows-kit.
     } | ConvertTo-Json -Depth 5
     [IO.File]::WriteAllText((Join-Path $mockStateDir 'install-state.json'), $mockStateJson, [System.Text.Encoding]::UTF8)
 
-    # Run discovery against the fixture
-    $fixtureResult = & $routeSkillsScript -RoutingPolicy off -WorkingDir $tempFixtureDir -CodexHome $mockCodexHome -Quiet
-    
-    $discoveredIds = @($fixtureResult.results | ForEach-Object { [string]$_.id })
-    Assert-Test 'discovers custom kit skill dynamically from install-state.json' ($discoveredIds -contains 'kit:custom-kit-tool')
-    Assert-Test 'discovers local repo skill in .agents/skills' ($discoveredIds -contains 'repo:.agents/skills/db-query')
-    Assert-Test 'discovers nested repo skill in packages/api/.agents/skills' ($discoveredIds -contains 'repo:packages/api/.agents/skills/api-client')
+    # 4. Test Hierarchical Discovery from CWD (packages/api/src)
+    $hierResult = & $routeSkillsScript -RoutingPolicy off -WorkingDir $apiSrcDir -CodexHome $mockCodexHome -Quiet
+    $hierIds = @($hierResult.results | ForEach-Object { [string]$_.id })
 
-    $dbSkill = $fixtureResult.results | Where-Object { $_.id -eq 'repo:.agents/skills/db-query' }
-    Assert-Test 'lightweight catalog extracts frontmatter name' ($dbSkill.name -eq 'db-query')
-    Assert-Test 'lightweight catalog extracts frontmatter description' ($dbSkill.description -match 'relational databases')
+    Assert-Test 'discovers custom kit skill dynamically from install-state.json' ($hierIds -contains 'kit:custom-kit-tool')
+    Assert-Test 'discovers root repo skill traversing upward to repo root' ($hierIds -contains 'repo:.agents/skills/root-skill')
+    Assert-Test 'discovers intermediate package repo skill' ($hierIds -contains 'repo:packages/.agents/skills/package-skill')
+    Assert-Test 'discovers local api repo skill' ($hierIds -contains 'repo:packages/api/.agents/skills/api-skill')
+    Assert-Test 'excludes sibling subproject skill outside CWD ancestor chain' (-not ($hierIds -contains 'repo:packages/worker-only/.agents/skills/worker-only'))
 
-    # 4. Test Forced Skills (explicit and rule-based)
-    $forcedExplicitResult = & $routeSkillsScript -RoutingPolicy off -WorkingDir $tempFixtureDir -CodexHome $mockCodexHome -ForcedSkills @('db-query') -Quiet
-    $dbForced = $forcedExplicitResult.results | Where-Object { $_.name -eq 'db-query' }
-    Assert-Test 'explicit user skill is marked forced with score=null' ($dbForced.decision -eq 'forced' -and $null -eq $dbForced.score)
+    # 5. Test Duplicate Skill Names Across Scopes
+    $dbHelperSkills = @($hierResult.results | Where-Object { $_.name -eq 'db-helper' })
+    Assert-Test 'duplicate skill names across different scopes do not collide' ($dbHelperSkills.Count -eq 2)
+    $dbHelperIds = @($dbHelperSkills | ForEach-Object { $_.id })
+    Assert-Test 'duplicate skill names preserve distinct stable IDs' ($dbHelperIds -contains 'repo:.agents/skills/root-skill' -and $dbHelperIds -contains 'repo:packages/api/.agents/skills/api-skill')
+
+    # 6. Test Kit Ownership Protection (Unmanaged global skill must NOT become kit:*)
+    # Create fake unmanaged skill in a mock global directory
+    $fakeGlobalSkillsDir = Join-Path $tempFixtureDir 'fake-global\.agents\skills\random-user-skill'
+    New-Item -ItemType Directory -Path $fakeGlobalSkillsDir -Force | Out-Null
+    [IO.File]::WriteAllText((Join-Path $fakeGlobalSkillsDir 'SKILL.md'), "---\nname: random-user-skill\ndescription: Not a kit skill\n---\n", [System.Text.Encoding]::UTF8)
+
+    $emptyCodexHome = Join-Path $tempFixtureDir 'empty-codex'
+    New-Item -ItemType Directory -Path $emptyCodexHome -Force | Out-Null
+    $unmanagedTestResult = & $routeSkillsScript -RoutingPolicy off -WorkingDir $apiSrcDir -CodexHome $emptyCodexHome -Quiet
+    $unmanagedIds = @($unmanagedTestResult.results | ForEach-Object { [string]$_.id })
+    Assert-Test 'unmanaged global skill does not become kit:* without proven ownership' (-not ($unmanagedIds -contains 'kit:random-user-skill'))
+
+    # 7. Test Advisory vs Enforce (Observable Difference)
+    $mocks = @{
+        'repo:.agents/skills/root-skill' = 0.90
+        'repo:packages/.agents/skills/package-skill' = 0.55
+        'kit:custom-kit-tool' = 0.20
+    }
+
+    # Under advisory:
+    $advisoryResult = & $routeSkillsScript -RoutingPolicy advisory -WorkingDir $apiSrcDir -CodexHome $mockCodexHome -MockResponses $mocks -Quiet
+    $advSelect = $advisoryResult.results | Where-Object { $_.id -eq 'repo:.agents/skills/root-skill' }
+    $advReview = $advisoryResult.results | Where-Object { $_.id -eq 'repo:packages/.agents/skills/package-skill' }
+    $advSkip = $advisoryResult.results | Where-Object { $_.id -eq 'kit:custom-kit-tool' }
+
+    Assert-Test 'advisory selects candidate with enforced=false' ($advSelect.decision -eq 'select' -and $advSelect.enforced -eq $false)
+    Assert-Test 'advisory reviews candidate with enforced=false' ($advReview.decision -eq 'review' -and $advReview.enforced -eq $false)
+    Assert-Test 'advisory skips candidate with enforced=false' ($advSkip.decision -eq 'skip' -and $advSkip.enforced -eq $false)
+
+    # Under enforce:
+    $enforceResult = & $routeSkillsScript -RoutingPolicy enforce -WorkingDir $apiSrcDir -CodexHome $mockCodexHome -MockResponses $mocks -Quiet
+    $enfSelect = $enforceResult.results | Where-Object { $_.id -eq 'repo:.agents/skills/root-skill' }
+    $enfReview = $enforceResult.results | Where-Object { $_.id -eq 'repo:packages/.agents/skills/package-skill' }
+    $enfSkip = $enforceResult.results | Where-Object { $_.id -eq 'kit:custom-kit-tool' }
+
+    Assert-Test 'enforce selects candidate with enforced=true' ($enfSelect.decision -eq 'select' -and $enfSelect.enforced -eq $true)
+    Assert-Test 'enforce reviews candidate with enforced=false (escalated to parent)' ($enfReview.decision -eq 'review' -and $enfReview.enforced -eq $false)
+    Assert-Test 'enforce skips candidate with enforced=true' ($enfSkip.decision -eq 'skip' -and $enfSkip.enforced -eq $true)
+    Assert-Test 'advisory and enforce exhibit observably different enforcement flags' ($advSelect.enforced -ne $enfSelect.enforced -and $advSkip.enforced -ne $enfSkip.enforced)
+
+    # 8. Test Jev Parallel Batching & Call Count Metrics
+    # In fixture, we have 4 unforced candidates (root-skill, package-skill, api-skill, custom-kit-tool).
+    $allMocks = @{
+        'repo:.agents/skills/root-skill' = 0.88
+        'repo:packages/.agents/skills/package-skill' = 0.50
+        'repo:packages/api/.agents/skills/api-skill' = 0.92
+        'kit:custom-kit-tool' = 0.35
+    }
+
+    # With default batch size (25): 4 candidates evaluated in 1 call
+    $batchResult1 = & $routeSkillsScript -RoutingPolicy advisory -WorkingDir $apiSrcDir -CodexHome $mockCodexHome -MockResponses $allMocks -BatchSize 25 -Quiet
+    Assert-Test 'evaluates all 4 candidates in a single Jev batch call (batch_size=25)' ($batchResult1.jev_calls -eq 1 -and $batchResult1.candidates_evaluated -eq 4)
+
+    # With batch size 2: 4 candidates evaluated across 2 calls
+    $batchResult2 = & $routeSkillsScript -RoutingPolicy advisory -WorkingDir $apiSrcDir -CodexHome $mockCodexHome -MockResponses $allMocks -BatchSize 2 -Quiet
+    Assert-Test 'chunks 4 candidates into 2 Jev batch calls when batch_size=2' ($batchResult2.jev_calls -eq 2 -and $batchResult2.candidates_evaluated -eq 4)
+
+    # 9. Test Data Minimization & Privacy Protection
+    $dirtyPrompt = @"
+Please help fix auth bug:
+TYPESAFE_API_KEY=apikey_fake_secret_1234567890abcdef
+Authorization: Bearer my_top_secret_bearer_token
+-----BEGIN PRIVATE KEY-----
+MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC7
+-----END PRIVATE KEY-----
+OPENAI_API_KEY=sk-test12345678901234567890abcdef
+password=SuperSecretPassword!
+```python
+def leak_code():
+    pass
+```
+diff --git a/test.py b/test.py
+@@ -1,2 +1,2 @@
+-old
++new
+Fix authentication regression in REST API
+"@
+
+    # Run with -TaskObjective dirty prompt (fallback sanitizer)
+    $cleanTestResult = & $routeSkillsScript -RoutingPolicy advisory -WorkingDir $apiSrcDir -CodexHome $mockCodexHome -TaskObjective $dirtyPrompt -MockResponses $mocks -AsJson -Quiet
+    Assert-Test 'dirty TaskObjective strips TYPESAFE_API_KEY pattern' (-not ($cleanTestResult -match 'apikey_fake_secret_1234567890abcdef'))
+    Assert-Test 'dirty TaskObjective strips Bearer token' (-not ($cleanTestResult -match 'my_top_secret_bearer_token'))
+    Assert-Test 'dirty TaskObjective strips private keys' (-not ($cleanTestResult -match 'BEGIN PRIVATE KEY'))
+    Assert-Test 'dirty TaskObjective strips OPENAI_API_KEY' (-not ($cleanTestResult -match 'sk-test12345678901234567890abcdef'))
+    Assert-Test 'dirty TaskObjective strips password pattern' (-not ($cleanTestResult -match 'SuperSecretPassword'))
+    Assert-Test 'dirty TaskObjective strips fenced code blocks' (-not ($cleanTestResult -match 'def leak_code'))
+
+    # Preferred -RoutingObjective
+    $prefObjResult = & $routeSkillsScript -RoutingPolicy advisory -WorkingDir $apiSrcDir -CodexHome $mockCodexHome -RoutingObjective 'Clean minimized task summary' -MockResponses $mocks -AsJson -Quiet
+    Assert-Test 'preferred RoutingObjective executes cleanly' ($null -ne ($prefObjResult | ConvertFrom-Json))
+
+    # 10. Test Forced Skills (explicit and rule-based)
+    $forcedExplicitResult = & $routeSkillsScript -RoutingPolicy off -WorkingDir $apiSrcDir -CodexHome $mockCodexHome -ForcedSkills @('package-tool') -Quiet
+    $pkgForced = $forcedExplicitResult.results | Where-Object { $_.name -eq 'package-tool' }
+    Assert-Test 'explicit user skill is marked forced with score=null and enforced=true' ($pkgForced.decision -eq 'forced' -and $pkgForced.enforced -eq $true -and $null -eq $pkgForced.score)
 
     $researchModeResult = & $routeSkillsScript -RoutingPolicy off -Mode 'RESEARCH.DEEP' -WorkingDir $repoRoot -Quiet
     $evidenceForced = $researchModeResult.results | Where-Object { $_.name -eq 'evidence-first' }
-    Assert-Test 'workflow policy rule enforces evidence-first under RESEARCH.DEEP' ($evidenceForced.decision -eq 'forced')
+    Assert-Test 'workflow policy rule enforces evidence-first under RESEARCH.DEEP' ($evidenceForced.decision -eq 'forced' -and $evidenceForced.enforced -eq $true)
 
-    # 5. Test Jev Scoring & Thresholds via Mock Responses
-    $mocks = @{
-        'repo:.agents/skills/db-query' = 0.92
-        'repo:packages/api/.agents/skills/api-client' = 0.58
-        'kit:custom-kit-tool' = 0.30
-    }
-    $evalResult = & $routeSkillsScript -RoutingPolicy advisory -WorkingDir $tempFixtureDir -CodexHome $mockCodexHome -MockResponses $mocks -Quiet
-    Assert-Test 'mock evaluation reports status=mock' ($evalResult.status -eq 'mock')
-
-    $dbEval = $evalResult.results | Where-Object { $_.id -eq 'repo:.agents/skills/db-query' }
-    Assert-Test 'score >= 0.70 results in select' ($dbEval.decision -eq 'select' -and $dbEval.score -eq 0.92)
-
-    $apiEval = $evalResult.results | Where-Object { $_.id -eq 'repo:packages/api/.agents/skills/api-client' }
-    Assert-Test 'score between 0.45 and 0.70 results in review' ($apiEval.decision -eq 'review' -and $apiEval.score -eq 0.58)
-
-    $kitEval = $evalResult.results | Where-Object { $_.id -eq 'kit:custom-kit-tool' }
-    Assert-Test 'score < 0.45 results in skip' ($kitEval.decision -eq 'skip' -and $kitEval.score -eq 0.30)
-
-    # 6. Test Capacity Limit (MaxSelectedSkills)
+    # 11. Test Capacity Limit (MaxSelectedSkills)
     $mocksMultiSelect = @{
-        'repo:.agents/skills/db-query' = 0.95
-        'repo:packages/api/.agents/skills/api-client' = 0.85
+        'repo:packages/api/.agents/skills/api-skill' = 0.95
+        'repo:.agents/skills/root-skill' = 0.85
         'kit:custom-kit-tool' = 0.78
     }
     # Set MaxSelectedSkills = 1: only the top score should be selected, others downgraded to review
-    $capResult = & $routeSkillsScript -RoutingPolicy advisory -WorkingDir $tempFixtureDir -CodexHome $mockCodexHome -MaxSelectedSkills 1 -MockResponses $mocksMultiSelect -Quiet
+    $capResult = & $routeSkillsScript -RoutingPolicy enforce -WorkingDir $apiSrcDir -CodexHome $mockCodexHome -MaxSelectedSkills 1 -MockResponses $mocksMultiSelect -Quiet
     $selectedSkills = @($capResult.results | Where-Object { $_.decision -eq 'select' })
     Assert-Test 'MaxSelectedSkills caps the number of selected skills' ($selectedSkills.Count -eq 1)
-    Assert-Test 'Top-scored skill is selected' ($selectedSkills[0].id -eq 'repo:.agents/skills/db-query')
+    Assert-Test 'Top-scored skill is selected with enforced=true' ($selectedSkills[0].id -eq 'repo:packages/api/.agents/skills/api-skill' -and $selectedSkills[0].enforced -eq $true)
 
-    $downgradedSkill = $capResult.results | Where-Object { $_.id -eq 'repo:packages/api/.agents/skills/api-client' }
-    Assert-Test 'Excess select candidate is downgraded to review with capacity notice' ($downgradedSkill.decision -eq 'review' -and $downgradedSkill.note -eq 'capacity_limit_exceeded')
+    $downgradedSkill = $capResult.results | Where-Object { $_.id -eq 'repo:.agents/skills/root-skill' }
+    Assert-Test 'Excess select candidate is downgraded to review with capacity notice and enforced=false' ($downgradedSkill.decision -eq 'review' -and $downgradedSkill.enforced -eq $false -and $downgradedSkill.note -eq 'capacity_limit_exceeded')
 
-    # Forced skills do not consume capacity
-    Assert-Test 'Workflows skill remains forced and does not count towards MaxSelectedSkills' (($capResult.results | Where-Object { $_.name -eq 'workflows' }).decision -eq 'forced')
-
-    # 7. Test Fail-Safe Handling: Missing TYPESAFE_API_KEY
+    # 12. Test Fail-Safe Handling: Missing TYPESAFE_API_KEY
     $oldKey = $env:TYPESAFE_API_KEY
     try {
         $env:TYPESAFE_API_KEY = ''
-        $failSafeResult = & $routeSkillsScript -RoutingPolicy advisory -WorkingDir $tempFixtureDir -CodexHome $mockCodexHome -Quiet
+        $failSafeResult = & $routeSkillsScript -RoutingPolicy enforce -WorkingDir $apiSrcDir -CodexHome $mockCodexHome -Quiet
         Assert-Test 'missing key does not throw exception' ($null -ne $failSafeResult)
         Assert-Test 'missing key reports status=unavailable' ($failSafeResult.status -eq 'unavailable')
-        
+
         $unforcedResults = @($failSafeResult.results | Where-Object { $_.decision -ne 'forced' })
         $allFallbackToReview = $true
+        $noFalseSkipOnMissingKey = $true
         foreach ($unf in $unforcedResults) {
-            if ($unf.decision -ne 'review') {
+            if ($unf.decision -ne 'review' -or $unf.enforced -ne $false) {
                 $allFallbackToReview = $false
-                break
+            }
+            if ($unf.decision -eq 'skip') {
+                $noFalseSkipOnMissingKey = $false
             }
         }
-        Assert-Test 'missing key safely defaults unforced candidates to review' $allFallbackToReview
+        Assert-Test 'missing key safely defaults unforced candidates to review with enforced=false' $allFallbackToReview
+        Assert-Test 'missing key never produces false skip' $noFalseSkipOnMissingKey
     }
     finally {
         $env:TYPESAFE_API_KEY = $oldKey
     }
 
-    # 8. Test Fail-Safe Handling: Mock API Error / Network Failure
+    # 13. Test Fail-Safe Handling: Mock API Error / Network Failure
     $mocksWithError = @{
-        'repo:.agents/skills/db-query' = @{ error = 'Simulated 503 Service Unavailable' }
+        'repo:packages/api/.agents/skills/api-skill' = @{ error = 'Simulated 503 Service Unavailable' }
         'kit:custom-kit-tool' = 0.90
     }
-    $errorResult = & $routeSkillsScript -RoutingPolicy advisory -WorkingDir $tempFixtureDir -CodexHome $mockCodexHome -MockResponses $mocksWithError -Quiet
-    $errorCand = $errorResult.results | Where-Object { $_.id -eq 'repo:.agents/skills/db-query' }
-    Assert-Test 'API error marks candidate as review with jev_unavailable note' ($errorCand.decision -eq 'review' -and $errorCand.note -eq 'jev_unavailable')
+    $errorResult = & $routeSkillsScript -RoutingPolicy enforce -WorkingDir $apiSrcDir -CodexHome $mockCodexHome -MockResponses $mocksWithError -Quiet
+    $errorCand = $errorResult.results | Where-Object { $_.id -eq 'repo:packages/api/.agents/skills/api-skill' }
+    Assert-Test 'API error marks candidate as review with jev_unavailable note and enforced=false' ($errorCand.decision -eq 'review' -and $errorCand.enforced -eq $false -and $errorCand.note -eq 'jev_unavailable')
     $healthyCand = $errorResult.results | Where-Object { $_.id -eq 'kit:custom-kit-tool' }
-    Assert-Test 'Other candidates evaluate successfully despite partial failure' ($healthyCand.decision -eq 'select')
-
-    # 9. Test JSON Output format
-    $jsonOutput = & $routeSkillsScript -RoutingPolicy off -WorkingDir $tempFixtureDir -CodexHome $mockCodexHome -AsJson -Quiet
-    Assert-Test 'AsJson outputs valid parseable JSON' ($null -ne ($jsonOutput | ConvertFrom-Json))
-
-    # 10. Test Security: Verify API key is never in result objects
-    $hasSecret = ($jsonOutput -match 'Bearer' -or $jsonOutput -match 'TYPESAFE_API_KEY')
-    Assert-Test 'No authorization headers or secrets in JSON output' (-not $hasSecret)
+    Assert-Test 'Other candidates evaluate successfully despite partial failure' ($healthyCand.decision -eq 'select' -and $healthyCand.enforced -eq $true)
 }
 finally {
     # Cleanup disposable fixture

@@ -1,6 +1,6 @@
 # Skill Routing Reference
 
-Optional semantic skill routing gate executed during the `FRAME` stage of the canonical workflow lifecycle, before `FANOUT`.
+Semantic skill routing gate executed during the `FRAME` stage of the canonical workflow lifecycle, before `FANOUT`.
 
 ---
 
@@ -9,10 +9,12 @@ Optional semantic skill routing gate executed during the `FRAME` stage of the ca
 In large repositories or multi-skill environments, exposing dozens of full `SKILL.md` documents to the orchestrator creates context bloat, increases prompt token overhead, and introduces distraction.
 
 The skill routing gate solves this by evaluating candidate skills before their full instructions or references are loaded:
-1. **Lightweight Catalog**: Only lightweight frontmatter metadata (`name`, `description`, `scope`, `path`) is inspected initially.
-2. **System One Semantic Judgment (Jev)**: TypeSafe/Jev acts as a fast, non-autoregressive evaluator using the `noul` (boolean probability) primitive to determine whether loading a candidate skill materially improves task completion.
-3. **Orchestrator Sovereignty**: The parent GPT orchestrator retains ultimate routing authority. Jev never executes code, designs plans, or overrides workflow rules.
-4. **Sub-Agent Execution**: DeepSeek Sub-Agent MCP remains the workforce for material tasks.
+1. **Deterministic Lifecycle**: During FRAME, `if routing policy != off: execute skill-routing before FANOUT; if routing policy == off: preserve normal skill resolution`.
+2. **Lightweight Catalog**: Only lightweight frontmatter metadata (`name`, `description`, `scope`, `path`) is inspected initially. Full instruction bodies are never parsed during routing.
+3. **System One Semantic Judgment (Jev)**: TypeSafe/Jev acts as a fast, non-autoregressive evaluator using the `noul` (boolean probability) primitive to determine whether loading a candidate skill materially improves task completion.
+4. **Parallel Batching**: Candidate questions are grouped and evaluated in parallel batches against the minimized task state in a single HTTP request, reducing latency to a minimum.
+5. **Orchestrator Sovereignty**: The parent GPT orchestrator retains ultimate routing authority. Jev never executes code, designs plans, or overrides workflow rules.
+6. **Sub-Agent Execution**: DeepSeek Sub-Agent MCP remains the workforce for material tasks.
 
 ```text
 USER
@@ -20,11 +22,16 @@ USER
 workflow execution mode=<MODE>
   ↓
 FRAME
-  ├── identify explicitly requested skills (marked forced)
-  ├── discover candidate skills (kit + repo)
-  ├── build lightweight catalog (frontmatter only)
-  ├── evaluate relevance via TypeSafe/Jev (noul primitive)
-  └── parent GPT resolves final route (forced, select, review, skip)
+  ├── resolve routing policy (off, advisory, enforce)
+  ├── if policy == off:
+  │     └── preserve normal skill resolution (all unforced candidates unrouted)
+  └── if policy != off:
+        ├── identify explicitly requested skills (marked forced, bypassing Jev)
+        ├── discover candidate skills (kit + repo ancestor chain)
+        ├── build lightweight catalog (frontmatter only)
+        ├── run route-skills with minimized -RoutingObjective
+        ├── batch evaluate relevance via TypeSafe/Jev (noul primitive)
+        └── resolve decisions (forced, select, review, skip) under thresholds & policy
   ↓
 load/use selected skills
   ↓
@@ -41,21 +48,25 @@ COLLECT → ACT → VERIFY → REVIEW → DONE
 
 The router discovers candidate skills from two distinct sources:
 
-### A. Codex Workflows Kit Skills
+### A. Codex Workflows Kit Skills (Strict Ownership)
 - Discovered dynamically via `~/.codex/codex-workflows-kit/install-state.json` (or the repository `skills/` directory when running in development mode).
-- Does not rely on hardcoded skill lists. Any newly installed or added kit skill is automatically discovered.
+- Does not scan generic global skill directories (e.g. `~/.agents/skills`) without proven kit ownership. Unmanaged global skills are never classified as kit skills.
 - Stable ID prefix: `kit:<name>` (e.g. `kit:workflows`, `kit:evidence-first`, `kit:mcp-foundation`, `kit:context7-mcp`, `kit:codebase-memory-mcp`).
 
-### B. Repository Skills
-- Discovered by scanning `.agents/skills` at the repository root and within subpackages/monorepo subdirectories (e.g. `packages/service/.agents/skills/`).
-- Respects project hierarchy to avoid collisions between skills of identical names located in different scopes.
-- Stable ID format: `repo:<relative-path>` (e.g. `repo:.agents/skills/database`, `repo:packages/api/.agents/skills/backend-api`).
+### B. Repository Skills (Hierarchical Ancestor Chain)
+- Discovered by traversing upwards from WorkingDir along the direct ancestor chain to the repository root (`git rev-parse --show-toplevel` or directory `.git` ancestor search):
+  `WorkingDir → Parent → ... → Repository Root`
+- At each level in the chain, checks `.agents/skills/*` for `SKILL.md`.
+- **Excludes Sibling Subdirectories**: Subpackages outside the direct working directory chain (e.g. `repo/packages/worker-only/.agents/skills` when working in `repo/packages/api`) are never scanned.
+- **Stable Identity**: Prefixed with relative repository path to isolate identically named skills across different scopes:
+  - `repo:.agents/skills/database`
+  - `repo:packages/api/.agents/skills/database`
 
 ---
 
 ## 3. Mandatory Policies & Forced Skills
 
-The following skills bypass Jev evaluation entirely and are marked with `decision = "forced"` (`score = null`):
+The following skills bypass Jev evaluation entirely and are marked with `decision = "forced"` (`score = null`, `enforced = true`):
 - **Workflows Skill**: The canonical workflow router (`workflows`) is always forced.
 - **Explicit User Invocations**: Any skill explicitly requested or invoked by the user (e.g. via mode options or explicit prompts) is always forced.
 - **Workflow Mode Policies**: When workflow policies mandate specific skills (such as `evidence-first` for material external or high-impact claims under `RESEARCH.DEEP` or `P.DEEP`), the policy overrides semantic evaluation.
@@ -70,27 +81,37 @@ Jev evaluates **only** implicit, candidate, or complementary skills.
 - **Endpoint**: `POST https://api.typesafe.ai/v1/systemone`
 - **Model**: `jev-latest`
 - **Authentication**: `Authorization: Bearer $env:TYPESAFE_API_KEY`
-- **Latency profile**: 70ms – 500ms typical.
+- **Latency profile**: 70ms – 500ms typical per batch.
 
-### Semantic Question
-The relevance question is fully semantic and self-contained:
-> *"Given the current task, workflow mode, and skill description, would loading this skill materially improve the agent's ability to complete the task correctly, rather than merely being superficially related to the topic?"*
+### Semantic Question & Parallel Batching
+The relevance question is evaluated per candidate in parallel against the shared task state:
+> *"Given skill '<name>' (scope: <scope>). Description: '<description>'. Would loading this skill materially improve the agent's ability to complete this task correctly, rather than merely being superficially related?"*
 
-### Minimal Sanitized Payload
-Only task metadata and skill metadata are transmitted.
+All unforced candidates are grouped into batches (up to 25 candidates per request), evaluating independent `noul` questions in parallel in a single HTTP call. The router records `jev_calls` and `candidates_evaluated` metrics.
+
+### Data Minimization Contract
+The router sends only a minimized routing objective and lightweight skill metadata. Raw repository contents, source code, diffs, logs, secrets, and full user prompts are not sent by default.
+
+- **`-RoutingObjective` (Preferred)**: A concise, purpose-built task summary generated by the parent orchestrator without raw code, logs, or sensitive payloads (e.g. `"Fix authentication regression in REST API"`).
+- **`-TaskObjective` (Deprecated Fallback)**: Conservatively sanitized by stripping fenced/inline code blocks, private keys, bearer/API keys, env assignments, diff headers, stack traces, and bounding length to 300 characters.
+
+Payload structure:
 ```json
 {
   "model": "jev-latest",
-  "state": "{\"task\":{\"mode\":\"BUG.FIX\",\"objective\":\"Fix regression in backtest calculation\"},\"skill\":{\"name\":\"lean-backtest\",\"description\":\"Use when implementing or debugging Lean backtests\",\"scope\":\"repo\"}}",
+  "state": "{\"task\":{\"mode\":\"BUG.FIX\",\"objective\":\"Fix authentication regression in REST API\"}}",
   "questions": {
-    "materially_improves_task": {
+    "q_0": {
       "type": "noul",
-      "instructions": "Given the current task, workflow mode, and skill description, would loading this skill materially improve the agent's ability to complete the task correctly, rather than merely being superficially related to the topic?"
+      "instructions": "Given skill 'db-query' (scope: repo). Description: 'Execute read-only queries against databases'. Would loading this skill materially improve the agent's ability to complete this task correctly, rather than merely being superficially related?"
+    },
+    "q_1": {
+      "type": "noul",
+      "instructions": "Given skill 'context7-mcp' (scope: kit). Description: 'Fetch current documentation and code examples from Context7'. Would loading this skill materially improve the agent's ability to complete this task correctly, rather than merely being superficially related?"
     }
   }
 }
 ```
-**Strict Data Minimization**: The router never transmits repository source code, file contents, git history, diffs, patches, environment variables, user data, or full `SKILL.md` content.
 
 ---
 
@@ -98,17 +119,17 @@ Only task metadata and skill metadata are transmitted.
 
 Configured via parameter `-RoutingPolicy` or environment variable `CODEX_SKILL_ROUTING_POLICY`:
 
-| Policy | Description | Behavior under API Failure / Missing Key |
-| :--- | :--- | :--- |
-| `off` | Jev is disabled. No external calls. | Normal workflow behavior without external routing. |
-| `advisory` *(default)* | Jev scores candidates. Parent GPT reviews recommendations and retains authority. | Logs warning; candidates default to review; workflow continues cleanly. |
-| `enforce` | Scores automatically dictate `select`, `review`, or `skip`. Ambiguities escalate to parent GPT. | Fail-safe: gate escalates to parent GPT rather than blocking workflow. |
+| Policy | Description | Candidate Decisions | Enforcement |
+| :--- | :--- | :--- | :--- |
+| `off` | Jev is disabled. 0 external calls. Normal workflow behavior preserved. | Unforced candidates marked `unrouted`. Forced remain `forced`. | `enforced: false` for unrouted. Parent retains full authority to resolve skills normally. |
+| `advisory` *(default)* | Jev scores candidates. Evaluates relevance and provides non-blocking recommendations. | `select`, `review`, `skip`. Forced remain `forced`. | `enforced: false` across all recommendations. Parent GPT retains sovereign authority to load `skip` or ignore `select`. |
+| `enforce` | Jev + thresholds automatically govern implicit candidate selection. | `select`, `skip` applied deterministically; `review` escalated to parent. Forced remain `forced`. | `enforced: true` for `select`, `skip`, and `forced`. `enforced: false` for `review` (escalated). |
 
 ### Configurable Thresholds & Limits
-- **`SelectThreshold`** (`>= 0.70`): Skill provides material improvement; recommended for loading (`decision: "select"`).
-- **`ReviewThreshold`** (`0.45` – `< 0.70`): Borderline relevance; flagged for parent review (`decision: "review"`).
-- **Skip** (`< 0.45`): Superficially related or irrelevant (`decision: "skip"`).
-- **`MaxSelectedSkills`** (default `3`): Caps the number of implicit skills loaded to preserve context budget. If more than 3 exceed `0.70`, top-ranked skills are selected and the remainder marked `review`. Forced skills do not count toward this cap.
+- **`SelectThreshold`** (`>= 0.70`): Skill provides material improvement; recommended/enforced for loading (`decision: "select"`).
+- **`ReviewThreshold`** (`0.45` – `< 0.70`): Borderline relevance; flagged for parent review (`decision: "review"`, `enforced: false`).
+- **Skip** (`< 0.45`): Irrelevant or superficial (`decision: "skip"`). Under `advisory`, `enforced: false`; under `enforce`, `enforced: true`.
+- **`MaxSelectedSkills`** (default `3`): Caps the number of implicit skills loaded to preserve context budget. If more than 3 exceed `0.70`, top-ranked skills are selected and the remainder marked `review` (`note: "capacity_limit_exceeded"`). Forced skills do not count toward this cap.
 
 ---
 
@@ -116,12 +137,28 @@ Configured via parameter `-RoutingPolicy` or environment variable `CODEX_SKILL_R
 
 The router emits a structured object or JSON payload:
 ```json
-[
-  { "id": "kit:workflows", "name": "workflows", "decision": "forced", "score": null },
-  { "id": "repo:.agents/skills/database", "name": "database", "decision": "select", "score": 0.88 },
-  { "id": "kit:codebase-memory-mcp", "name": "codebase-memory-mcp", "decision": "review", "score": 0.54 },
-  { "id": "kit:context7-mcp", "name": "context7-mcp", "decision": "skip", "score": 0.22 }
-]
+{
+  "policy": "advisory",
+  "status": "ok",
+  "latencyMs": 340,
+  "jev_calls": 1,
+  "candidates_evaluated": 3,
+  "summary": {
+    "discovered": 4,
+    "forced": ["workflows"],
+    "unrouted": [],
+    "evaluated": 3,
+    "selected": ["db-query"],
+    "review": ["api-client"],
+    "skipped": 1
+  },
+  "results": [
+    { "id": "kit:workflows", "name": "workflows", "decision": "forced", "enforced": true, "score": null },
+    { "id": "repo:.agents/skills/db-query", "name": "db-query", "decision": "select", "enforced": false, "score": 0.88 },
+    { "id": "repo:packages/api/.agents/skills/api-client", "name": "api-client", "decision": "review", "enforced": false, "score": 0.54 },
+    { "id": "kit:custom-tool", "name": "custom-tool", "decision": "skip", "enforced": false, "score": 0.22 }
+  ]
+}
 ```
 
 ---
@@ -129,4 +166,4 @@ The router emits a structured object or JSON payload:
 ## 7. Security and Fail-Safe Contract
 
 - **Credential Isolation**: `TYPESAFE_API_KEY` is read strictly from the runtime environment. It is never logged, printed, mirrored into repository files, or referenced in test fixtures.
-- **Fail-Safe Operation**: Timeouts, HTTP 4xx/5xx responses, malformed JSON, or missing credentials log a concise diagnostic notice and fall back gracefully to parent GPT assessment without crashing or blocking the workflow.
+- **Fail-Safe Operation**: Timeouts, HTTP 4xx/5xx responses, malformed JSON, or missing credentials log a concise diagnostic notice and fall back gracefully to `decision: "review"`, `enforced: false`, `note: "jev_unavailable"`. Jev errors never produce false `skip` decisions.
