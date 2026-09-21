@@ -139,21 +139,39 @@ When multiple search queries or search tools identify the same code, redundant t
 ### API Endpoint & Latency
 - **Endpoint**: `POST https://api.typesafe.ai/v1/systemone`
 - **Model**: `jev-latest`
-- **Latency Profile**: 80ms – 400ms per parallel batch.
+- **Latency Profile**: 80ms – 400ms per parallel batch (historical reference observed under typical network conditions, not an SLA or delivery guarantee).
 
 ### Parallel Question Formulation
 Candidates are evaluated using the `noul` primitive (non-autoregressive boolean probability). Up to `BatchSize` (default 20) candidate questions are packed into a single request body against the shared task state. Under `metadata_only`, instructions assess file path, symbol, and location utility without including snippets.
+
+### Deterministic Activation Gate
+To eliminate wasteful network calls and latency on small search results, the reranker evaluates candidates with Jev only when:
+- Candidate count meets or exceeds `MinCandidates` (default 8, configurable [1..1000]), **OR**
+- Total raw content UTF-8 bytes meet or exceed `ContextBudgetTriggerBytes` (default 12000, configurable [256..10485760]).
+
+When below both thresholds, the reranker executes locally without Jev calls (`gate_status = 'skipped_below_threshold'`, `status = 'skipped_below_threshold'`), admitting candidates directly as `MAYBE` within `MaxBudgetBytes`.
+Metrics and output expose `gate_status`: `triggered`, `skipped_below_threshold`, or `disabled` (when `Policy = 'off'`).
+
+### Global Cost Bounds & Circuit Breakers
+To prevent unbounded token usage and API costs, three hard circuit breakers are enforced before making external calls:
+- `MaxCandidatesToEvaluate` (default 100): Maximum candidate count evaluated by Jev across all batches. Excess candidates are marked `unevaluated` with `jev_candidate_limit`.
+- `MaxJevCalls` (default 5): Maximum parallel batch HTTP requests permitted in a single reranking run. Remaining batches are marked `unevaluated` with `jev_call_limit`.
+- `MaxTotalPayloadBytes` (default 262144 / 256 KB): Maximum cumulative request payload bytes transmitted to Jev. Remaining batches are marked `unevaluated` with `jev_payload_limit`.
+
+**Crucial Invariant**: Unevaluated candidates due to cost limits receive `Score = $null` and are classified as `MAYBE`. They are **never** falsely dropped (`DROP`) and remain eligible for budget-bounded local selection. The output metrics record `cost_limit_reason`, `candidates_evaluated`, and `candidates_not_evaluated`.
 
 ### Global Status Semantics
 - `ok`: All candidate evaluations completed with valid numeric scores.
 - `partial`: At least one candidate evaluated successfully, but others failed, returned null, or timed out.
 - `unavailable`: Communication failure, malformed response, or zero valid evaluations when evaluation was required.
 - `skipped_policy_off`: Reranking disabled by policy (`Policy = 'off'`).
+- `skipped_below_threshold`: Candidate set is below activation threshold (`gate_status = 'skipped_below_threshold'`).
 - `skipped_privacy_unauthorized`: Execution blocked due to privacy restrictions (`PrivacyScope = 'none'` or unauthorized snippets).
 - `skipped_no_api_key`: `TYPESAFE_API_KEY` missing and no mock provided.
 - `budget_exceeded`: PINNED candidate set alone exceeds `MaxBudgetBytes`.
+- `count_exceeded`: PINNED candidate count alone exceeds `MaxSelectedCandidates`.
 
-Metrics expose: `valid_evaluations`, `invalid_evaluations`, and `missing_evaluations`.
+Metrics expose: `valid_evaluations`, `invalid_evaluations`, `missing_evaluations`, `gate_status`, `candidates_considered`, `candidates_evaluated`, `candidates_not_evaluated`, and `cost_limit_reason`.
 
 ### Threshold Classification
 - `score >= KeepThreshold` (default 0.70): Classified as `KEEP`.
@@ -170,14 +188,16 @@ The local budget engine enforces deterministic token/byte containment:
 
 1. **Real Serialized JSON Measurement**:
    `MaxBudgetBytes` applies to the **actual UTF-8 byte count of the serialized JSON payload** of `selected`. `delivered_bytes <= MaxBudgetBytes` is guaranteed.
-2. **Pre-Check (Pinned Overflow)**:
-   If the serialized JSON size of `PINNED` items alone exceeds `MaxBudgetBytes`, the reranker terminates immediately with `status = "budget_exceeded"`, returning an empty `selected` array and candidate manifest with `exclusion_reason = "budget_exceeded_by_pinned"`. Sharding is required before execution.
-3. **Selection Ordering**:
+2. **Pre-Check 1 (Pinned Count Overflow)**:
+   If the count of `PINNED` items alone exceeds `MaxSelectedCandidates`, the reranker terminates immediately with `status = "count_exceeded"`, returning an empty `selected` array (`delivered_bytes = 0`) and candidate manifest with `exclusion_reason = "count_exceeded_by_pinned"`. Sharding is required before execution.
+3. **Pre-Check 2 (Pinned Byte Overflow)**:
+   If the serialized JSON size of `PINNED` items alone exceeds `MaxBudgetBytes`, the reranker terminates immediately with `status = "budget_exceeded"`, returning an empty `selected` array (`delivered_bytes = 0`) and candidate manifest with `exclusion_reason = "budget_exceeded_by_pinned"`. Sharding is required before execution.
+4. **Selection Ordering**:
    - `PINNED` candidates admitted first.
    - `KEEP` candidates admitted second (ordered by `score` descending, then `original_rank` ascending).
    - `MAYBE` candidates admitted third (ordered by `score` descending, then `original_rank` ascending).
    - Each addition tentatively verifies that `Measure-SelectedPackageBytes` does not exceed `MaxBudgetBytes`. Excess candidates are deferred (`budget_deferred` or `count_limit_exceeded`).
-4. **Manifest of Deferred / Dropped Evidence**:
+5. **Manifest of Deferred / Dropped Evidence**:
    Candidates not admitted into `selected` are recorded in `manifest` without their heavy `content` property:
    ```json
    {
@@ -194,12 +214,24 @@ The local budget engine enforces deterministic token/byte containment:
    - `low_relevance`: Score fell below `MaybeThreshold`.
    - `budget_deferred`: Candidate scored well (`KEEP` or `MAYBE`) but could not fit within `MaxBudgetBytes`.
    - `count_limit_exceeded`: Exceeded `MaxSelectedCandidates`.
+   - `count_exceeded_by_pinned`: PINNED items exceeded `MaxSelectedCandidates`.
+   - `budget_exceeded_by_pinned`: PINNED items exceeded `MaxBudgetBytes`.
+   - `source_drifted`: On-disk file drifted since candidate retrieval.
+   - `source_missing`: On-disk file missing / deleted.
    - `unsafe_path`: Candidate escaped repository root.
    - `secret_detected`: Candidate matched secret file or credential patterns.
 
 ---
 
-## 7. Tooling & CLI Reference
+## 7. PowerShell Runtime Compatibility Contract
+
+The Context Reranker is fully compatible with and tested on both **Windows PowerShell 5.1** (`powershell.exe`) and **PowerShell 7+** (`pwsh`):
+- **Argument Escaping**: When spawning external processes (such as `rg`), Windows PowerShell 5.1 (.NET Framework) lacks `ProcessStartInfo.ArgumentList`. The adapter invokes `Format-WindowsProcessArgument`, implementing canonical Microsoft CRT / `CommandLineToArgvW` argument escaping rules (doubling backslashes before quotes, safe quoting of whitespace and empty strings) to ensure identical behavior across runtimes without string interpolation or shell injection.
+- **Reparse Point Resolution**: When resolving directory junctions and symlinks, .NET Framework lacks `ResolveLinkTarget`. `Resolve-CanonicalReparsePath` branches safely to `FileSystemInfo.Target` under PS 5.1 and fails closed if targets cannot be safely verified.
+
+---
+
+## 8. Tooling & CLI Reference
 
 ### `rerank-context.ps1`
 Core reranking tool. Accepts candidates from pipeline, JSON string, or array.

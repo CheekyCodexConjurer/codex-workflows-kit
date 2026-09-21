@@ -112,17 +112,107 @@ function Resolve-CanonicalReparsePath {
         if (Test-Path -LiteralPath $next) {
             $item = Get-Item -LiteralPath $next -Force
             if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-                if ($item -is [IO.DirectoryInfo] -or $item -is [IO.FileInfo]) {
-                    $target = $item.ResolveLinkTarget($true)
-                    if ($null -ne $target) {
-                        $next = [IO.Path]::GetFullPath($target.FullName)
+                $resolvedTarget = $null
+                # 1. PowerShell 7+ / .NET 6+ ResolveLinkTarget API
+                if ($item.PSObject.Methods['ResolveLinkTarget']) {
+                    try {
+                        $target = $item.ResolveLinkTarget($true)
+                        if ($null -ne $target) {
+                            $resolvedTarget = $target.FullName
+                        }
+                    }
+                    catch {
+                        $resolvedTarget = $null
                     }
                 }
+                # 2. Windows PowerShell 5.1 / .NET Framework fallback using FileSystemInfo.Target
+                if ([string]::IsNullOrWhiteSpace($resolvedTarget) -and $item.PSObject.Properties['Target']) {
+                    try {
+                        $rawTarget = $item.Target
+                        if ($rawTarget -is [System.Collections.IEnumerable] -and $rawTarget -isnot [string]) {
+                            $rawTarget = @($rawTarget)[0]
+                        }
+                        if (-not [string]::IsNullOrWhiteSpace($rawTarget)) {
+                            if ([IO.Path]::IsPathRooted($rawTarget)) {
+                                $resolvedTarget = $rawTarget
+                            }
+                            else {
+                                $parentDir = if ($item -is [IO.DirectoryInfo] -and $item.Parent) {
+                                    $item.Parent.FullName
+                                }
+                                elseif ($item.DirectoryName) {
+                                    $item.DirectoryName
+                                }
+                                else {
+                                    $current
+                                }
+                                $resolvedTarget = [IO.Path]::Combine($parentDir, $rawTarget)
+                            }
+                        }
+                    }
+                    catch {
+                        $resolvedTarget = $null
+                    }
+                }
+
+                # 3. Fail closed if the reparse point cannot be safely resolved
+                if ([string]::IsNullOrWhiteSpace($resolvedTarget)) {
+                    throw "Unable to safely resolve reparse point '$next'. Failing closed for security."
+                }
+                $next = [IO.Path]::GetFullPath($resolvedTarget)
             }
         }
         $current = $next
     }
     return [IO.Path]::GetFullPath($current)
+}
+
+function Format-WindowsProcessArgument {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)][string]$Arg = ''
+    )
+
+    if ([string]::IsNullOrEmpty($Arg)) {
+        return [string][char]34 + [string][char]34
+    }
+
+    if ($Arg -notmatch '[\s"]') {
+        return $Arg
+    }
+
+    # Standard Microsoft CRT / CommandLineToArgvW escaping rules
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.Append([char]34)
+    $slashCount = 0
+    for ($i = 0; $i -lt $Arg.Length; $i++) {
+        $c = $Arg[$i]
+        if ($c -eq [char]92) {
+            $slashCount++
+        }
+        elseif ($c -eq [char]34) {
+            if ($slashCount -gt 0) {
+                [void]$sb.Append((New-Object string ([char]92, ($slashCount * 2 + 1))))
+            }
+            else {
+                [void]$sb.Append([char]92)
+                [void]$sb.Append([char]34)
+            }
+            $slashCount = 0
+        }
+        else {
+            if ($slashCount -gt 0) {
+                [void]$sb.Append((New-Object string ([char]92, $slashCount)))
+                $slashCount = 0
+            }
+            [void]$sb.Append($c)
+        }
+    }
+    if ($slashCount -gt 0) {
+        [void]$sb.Append((New-Object string ([char]92, ($slashCount * 2))))
+    }
+    [void]$sb.Append([char]34)
+    return $sb.ToString()
 }
 
 function Resolve-CanonicalDirectoryRoot {
@@ -268,18 +358,25 @@ function Sanitize-TaskObjective {
     # 4. Strip stack traces and exceptions
     $clean = [regex]::Replace($clean, '(?i)(?:at\s+[a-zA-Z0-9_.]+(?:\([^)]*\))?\s+in\s+[^\r\n]+|Exception:\s+[^\r\n]+|at\s+[^\r\n]+:line\s+\d+)', ' ')
 
-    # 5. Strip secrets, API keys, tokens, and credentials
-    $clean = [regex]::Replace($clean, '(?i)\b(?:sk-[a-zA-Z0-9_\-]{15,}|ghp_[a-zA-Z0-9]{20,}|AKIA[0-9A-Z]{16}|apikey_[a-zA-Z0-9_]{20,})\b', ' ')
-    $clean = [regex]::Replace($clean, '(?i)(?:api[_-]?key|secret|token|password|auth_token)\s*[:=]\s*["'']?[^\s"'',;]+["'']?', ' ')
+    # 5. Strip private key blocks
+    $clean = [regex]::Replace($clean, '(?si)-----BEGIN[ A-Z0-9_-]+KEY-----.*?-----END[ A-Z0-9_-]+KEY-----', ' ')
 
-    # 6. Strip env assignments and shell variables
+    # 6. Strip Authorization and Bearer headers
+    $clean = [regex]::Replace($clean, '(?i)(?:Authorization|Proxy-Authorization)\s*:\s*(?:Bearer\s+)?[^\s"'',;]+', ' ')
+    $clean = [regex]::Replace($clean, '(?i)\bBearer\s+[a-zA-Z0-9_\-\.]{10,}\b', ' ')
+
+    # 7. Strip secrets, API keys, tokens, and credentials
+    $clean = [regex]::Replace($clean, '(?i)\b(?:sk-[a-zA-Z0-9_\-]{15,}|ghp_[a-zA-Z0-9]{20,}|AKIA[0-9A-Z]{16}|apikey_[a-zA-Z0-9_]{20,})\b', ' ')
+    $clean = [regex]::Replace($clean, '(?i)(?:api[_-]?key|secret|token|password|auth_token|access_key)\s*[:=]\s*["'']?[^\s"'',;]+["'']?', ' ')
+
+    # 8. Strip env assignments and shell variables
     $clean = [regex]::Replace($clean, '(?m)^\s*[A-Za-z_][A-Za-z0-9_]*=[^\r\n]+', ' ')
     $clean = [regex]::Replace($clean, '\$[A-Za-z_][A-Za-z0-9_]*', ' ')
 
-    # 7. Collapse spaces / newlines
+    # 9. Collapse spaces / newlines
     $clean = [regex]::Replace($clean, '\s+', ' ').Trim()
 
-    # 8. Bounds check: truncate to safe summary (max 300 chars)
+    # 10. Bounds check: truncate to safe summary (max 300 chars)
     if ($clean.Length -gt 300) {
         $clean = $clean.Substring(0, 300).Trim()
     }
@@ -294,11 +391,56 @@ function Sanitize-TaskObjective {
     return $clean
 }
 
+function Sanitize-MetadataSymbol {
+    [CmdletBinding()]
+    param([Parameter()][string]$Symbol)
+
+    if ([string]::IsNullOrWhiteSpace($Symbol)) {
+        return ''
+    }
+
+    $raw = $Symbol.Trim()
+
+    # Reject if containing newlines or control characters
+    if ($raw -match '[\r\n\x00-\x1f\x7f]') {
+        return ''
+    }
+
+    # Reject if containing backticks or code block markers
+    if ($raw -match '[`]') {
+        return ''
+    }
+
+    # Reject prompt-like instructions or injection keywords
+    if ($raw -match '(?i)\b(?:ignore|system prompt|previous instructions|assistant|human:|user:|reveal|disregard|you are|instructions)\b') {
+        return ''
+    }
+
+    # Reject authorization headers, bearer tokens, API keys, secrets
+    if ($raw -match '(?i)(?:bearer\s+|authorization|proxy-authorization|sk-|ghp_|AKIA|apikey_|password|secret)') {
+        return ''
+    }
+
+    # Bound length (structural identifiers: max 120 chars)
+    if ($raw.Length -gt 120) {
+        return ''
+    }
+
+    # Allowlist structural symbol identifier patterns:
+    # identifiers, namespace qualifiers (., ::, /), method calls (()), generic syntax (<T>, [T])
+    # Reject spaces or prose
+    if ($raw -notmatch '^[a-zA-Z0-9_.:\$#\-\(\)]+(?:<[a-zA-Z0-9_.,:\$#\- ]+>|\[[a-zA-Z0-9_.,:\$#\- ]+\])?(?:\(\))?$') {
+        return ''
+    }
+
+    return $raw
+}
+
 function Test-ContextCandidateFreshness {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][object]$Candidate,
-        [Parameter(Mandatory)][string]$RepoPath
+        [Parameter()][string]$RepoPath = ''
     )
 
     if (-not (Test-ContextCandidate -Candidate $Candidate)) {
@@ -306,6 +448,21 @@ function Test-ContextCandidateFreshness {
     }
 
     $ref = [string]$Candidate.source_ref
+    $source = if ($Candidate.source) { [string]$Candidate.source } else { '' }
+    $representation = if ($Candidate.representation) { [string]$Candidate.representation } else { '' }
+
+    # Check whether freshness is applicable:
+    # Applies to local file-backed snippets where RepoPath is present
+    $isLocalFile = ($representation -eq 'snippet' -or $source -in @('rg', 'file', 'codebase')) -and ($source -notin @('memory', 'api', 'context7', 'prompt', 'manual', 'synthetic', 'custom'))
+    if (-not $isLocalFile -or [string]::IsNullOrWhiteSpace($RepoPath)) {
+        return [ordered]@{
+            Status      = 'not_applicable'
+            Reason      = 'Candidate is not a local file-backed snippet'
+            Fresh       = $true
+            CurrentHash = $null
+        }
+    }
+
     $lineStart = if ($null -ne $Candidate.line_start) { [int]$Candidate.line_start } else { $null }
     $lineEnd = if ($null -ne $Candidate.line_end) { [int]$Candidate.line_end } else { $null }
     $recordedHash = if ($Candidate -is [System.Collections.IDictionary]) {
@@ -487,6 +644,9 @@ function Invoke-JevRerankBatch {
         [Parameter()][int]$BatchSize = 20,
         [Parameter()][int]$TimeoutSeconds = 15,
         [Parameter()][ValidateSet('metadata_only', 'snippets_allowed')][string]$PrivacyScope = 'snippets_allowed',
+        [Parameter(Mandatory = $false)][ValidateRange(1, 1000)][int]$MaxCandidatesToEvaluate = 100,
+        [Parameter(Mandatory = $false)][ValidateRange(1, 50)][int]$MaxJevCalls = 5,
+        [Parameter(Mandatory = $false)][ValidateRange(1024, 10485760)][int]$MaxTotalPayloadBytes = 262144,
         [Parameter()][hashtable]$MockResponses = $null,
         [Parameter()][scriptblock]$HttpTransportMock = $null
     )
@@ -496,23 +656,64 @@ function Invoke-JevRerankBatch {
     $totalPayloadBytes = 0
     $actualModel = $Model
     $batchError = $null
+    $costLimitReason = $null
+    $totalCandidates = $Candidates.Count
 
-    if ($Candidates.Count -eq 0) {
+    if ($totalCandidates -eq 0) {
         return [ordered]@{
-            Scores             = $scores
-            RequestCount       = 0
-            PayloadBytes       = 0
-            Model              = $actualModel
-            ServiceUnavailable = $false
-            ErrorMessage       = $null
+            Scores                 = $scores
+            RequestCount           = 0
+            PayloadBytes           = 0
+            Model                  = $actualModel
+            ServiceUnavailable     = $false
+            GlobalStatus           = 'ok'
+            ValidCount             = 0
+            InvalidCount           = 0
+            MissingCount           = 0
+            CandidatesConsidered   = 0
+            CandidatesEvaluated    = 0
+            CandidatesNotEvaluated = 0
+            CostLimitReason        = $null
+            ErrorMessage           = $null
         }
     }
 
+    # 1. Candidate count circuit breaker
+    $candListToProcess = $Candidates
+    if ($totalCandidates -gt $MaxCandidatesToEvaluate) {
+        $candListToProcess = $Candidates[0..($MaxCandidatesToEvaluate - 1)]
+        for ($e = $MaxCandidatesToEvaluate; $e -lt $totalCandidates; $e++) {
+            $excessCand = $Candidates[$e]
+            $scores[[string]$excessCand.id] = [ordered]@{
+                Score   = $null
+                Status  = 'unevaluated'
+                Message = 'jev_candidate_limit'
+            }
+        }
+        $costLimitReason = 'jev_candidate_limit'
+    }
+
     # Split candidates into batches
-    $candList = [System.Collections.Generic.List[object]]@($Candidates)
+    $candList = [System.Collections.Generic.List[object]]@($candListToProcess)
     for ($i = 0; $i -lt $candList.Count; $i += $BatchSize) {
         $count = [Math]::Min($BatchSize, $candList.Count - $i)
         $batch = $candList.GetRange($i, $count)
+
+        # Check call limit circuit breaker
+        if ($requestCount -ge $MaxJevCalls) {
+            for ($remIdx = $i; $remIdx -lt $candList.Count; $remIdx++) {
+                $remCand = $candList[$remIdx]
+                $scores[[string]$remCand.id] = [ordered]@{
+                    Score   = $null
+                    Status  = 'unevaluated'
+                    Message = 'jev_call_limit'
+                }
+            }
+            if ($null -eq $costLimitReason) {
+                $costLimitReason = 'jev_call_limit'
+            }
+            break
+        }
 
         # 1. Check direct mock responses
         if ($null -ne $MockResponses) {
@@ -580,12 +781,19 @@ function Invoke-JevRerankBatch {
 
             $symbolInfo = ""
             if ($cand.metadata) {
+                $rawSym = $null
                 if ($cand.metadata -is [System.Collections.IDictionary]) {
-                    if ($cand.metadata.Contains('symbol')) { $symbolInfo = " (symbol: '$($cand.metadata['symbol'])')" }
-                    elseif ($cand.metadata.Contains('symbol_name')) { $symbolInfo = " (symbol: '$($cand.metadata['symbol_name'])')" }
+                    if ($cand.metadata.Contains('symbol')) { $rawSym = [string]$cand.metadata['symbol'] }
+                    elseif ($cand.metadata.Contains('symbol_name')) { $rawSym = [string]$cand.metadata['symbol_name'] }
                 }
                 elseif ($cand.metadata.PSObject.Properties.Name -contains 'symbol') {
-                    $symbolInfo = " (symbol: '$($cand.metadata.symbol)')"
+                    $rawSym = [string]$cand.metadata.symbol
+                }
+                if (-not [string]::IsNullOrWhiteSpace($rawSym)) {
+                    $cleanSym = Sanitize-MetadataSymbol -Symbol $rawSym
+                    if (-not [string]::IsNullOrWhiteSpace($cleanSym)) {
+                        $symbolInfo = " (symbol: '$cleanSym')"
+                    }
                 }
             }
 
@@ -593,9 +801,12 @@ function Invoke-JevRerankBatch {
             $critTrue = $null
             $critFalse = $null
 
+            # Opaque candidate item label: keeps user-supplied candidate IDs local to avoid prompt injection
+            $itemLabel = "Item #$($qIdx + 1)"
+
             if ($PrivacyScope -eq 'metadata_only') {
                 # STRICT PRIVACY: ZERO content or code snippets are transmitted!
-                $inst = "Candidate ID: '$($cand.id)' from '$ref'$linesInfo$symbolInfo ($rep). [Note: Content omitted under metadata-only privacy scope].`nBased solely on these metadata references and file location, does this candidate appear likely relevant or materially useful for the task?"
+                $inst = "$itemLabel from '$ref'$linesInfo$symbolInfo ($rep). [Note: Content omitted under metadata-only privacy scope].`nBased solely on these metadata references and file location, does this candidate appear likely relevant or materially useful for the task?"
                 $critTrue = "The file path, symbol, location, or metadata indicates this candidate is likely relevant or materially useful for the task."
                 $critFalse = "The file path or metadata indicates this candidate is likely unrelated, tangential, or lacks utility."
             }
@@ -605,7 +816,7 @@ function Invoke-JevRerankBatch {
                     $contentSnippet = $contentSnippet.Substring(0, 1200) + "... [truncated]"
                 }
 
-                $inst = "Candidate ID: '$($cand.id)' from '$ref'$linesInfo$symbolInfo ($rep):`n`"$contentSnippet`"`nDoes this candidate contain materially useful information to investigate or execute the task, including evidence that contradicts hypotheses?"
+                $inst = "$itemLabel from '$ref'$linesInfo$symbolInfo ($rep):`n`"$contentSnippet`"`nDoes this candidate contain materially useful information to investigate or execute the task, including evidence that contradicts hypotheses?"
                 $critTrue = "The candidate contains directly relevant code, contract, configuration, test, or contradictory evidence materially useful for the task."
                 $critFalse = "The candidate is merely superficially related, tangential, or lacks actionable utility."
             }
@@ -636,6 +847,22 @@ function Invoke-JevRerankBatch {
 
         $bodyJson = $bodyObj | ConvertTo-Json -Depth 6
         $bodyBytes = [System.Text.Encoding]::UTF8.GetByteCount($bodyJson)
+
+        # Check total payload byte limit circuit breaker
+        if (($totalPayloadBytes + $bodyBytes) -gt $MaxTotalPayloadBytes) {
+            for ($remIdx = $i; $remIdx -lt $candList.Count; $remIdx++) {
+                $remCand = $candList[$remIdx]
+                $scores[[string]$remCand.id] = [ordered]@{
+                    Score   = $null
+                    Status  = 'unevaluated'
+                    Message = 'jev_payload_limit'
+                }
+            }
+            if ($null -eq $costLimitReason) {
+                $costLimitReason = 'jev_payload_limit'
+            }
+            break
+        }
         $totalPayloadBytes += $bodyBytes
 
         # 3. Execute request via HttpTransportMock or live REST API
@@ -772,6 +999,7 @@ function Invoke-JevRerankBatch {
     $missingEvalCount = @($scores.Values | Where-Object { $_.Status -eq 'missing_answer' }).Count
     $invalidEvalCount = @($scores.Values | Where-Object { $_.Status -in @('invalid_score', 'out_of_range', 'null_answer', 'error') }).Count
     $serviceErrorCount = @($scores.Values | Where-Object { $_.Status -in @('service_unavailable', 'malformed_response') }).Count
+    $unevaluatedCount = @($scores.Values | Where-Object { $_.Status -eq 'unevaluated' }).Count
 
     $calcGlobalStatus = if ($scores.Count -eq 0) {
         'ok'
@@ -790,16 +1018,20 @@ function Invoke-JevRerankBatch {
     }
 
     return [ordered]@{
-        Scores             = $scores
-        RequestCount       = $requestCount
-        PayloadBytes       = $totalPayloadBytes
-        Model              = $actualModel
-        ServiceUnavailable = ($serviceErrorCount -gt 0)
-        GlobalStatus       = $calcGlobalStatus
-        ValidCount         = $validEvalCount
-        InvalidCount       = $invalidEvalCount
-        MissingCount       = $missingEvalCount
-        ErrorMessage       = $batchError
+        Scores                 = $scores
+        RequestCount           = $requestCount
+        PayloadBytes           = $totalPayloadBytes
+        Model                  = $actualModel
+        ServiceUnavailable     = ($serviceErrorCount -gt 0)
+        GlobalStatus           = $calcGlobalStatus
+        ValidCount             = $validEvalCount
+        InvalidCount           = $invalidEvalCount
+        MissingCount           = $missingEvalCount
+        CandidatesConsidered   = $totalCandidates
+        CandidatesEvaluated    = $validEvalCount
+        CandidatesNotEvaluated = $unevaluatedCount
+        CostLimitReason        = $costLimitReason
+        ErrorMessage           = $batchError
     }
 }
 
@@ -923,7 +1155,32 @@ function Select-ContextPackage {
     $selected = [System.Collections.Generic.List[object]]::new()
     $manifest = [System.Collections.Generic.List[object]]::new()
 
-    # Pre-check: verify if PINNED candidates alone exceed MaxBudgetBytes
+    # Pre-check 1: verify if PINNED candidate count alone exceeds MaxSelectedCandidates
+    if ($pinnedList.Count -gt $MaxSelectedCandidates) {
+        return [ordered]@{
+            version         = 1
+            status          = 'count_exceeded'
+            policy          = $Policy
+            message         = "Pinned candidate count ($($pinnedList.Count)) exceeds MaxSelectedCandidates ($MaxSelectedCandidates). Sharding required."
+            selected        = @()
+            manifest        = @($classified | ForEach-Object {
+                [ordered]@{
+                    id               = $_.Id
+                    source_ref       = $_.Candidate.source_ref
+                    line_start       = $_.Candidate.line_start
+                    line_end         = $_.Candidate.line_end
+                    score            = $_.Score
+                    decision         = $_.Decision
+                    exclusion_reason = 'count_exceeded_by_pinned'
+                }
+            })
+            delivered_bytes = 0
+            selected_count  = 0
+            deferred_count  = $classified.Count
+        }
+    }
+
+    # Pre-check 2: verify if PINNED candidates alone exceed MaxBudgetBytes
     $pinnedObjects = [System.Collections.Generic.List[object]]::new()
     foreach ($p in $pinnedList) {
         $pinnedObjects.Add((New-SelectedCandidateObject -Item $p -DecisionOverride 'PINNED'))
@@ -1040,7 +1297,9 @@ Export-ModuleMember -Function `
     Assert-CandidatePathContainment, `
     Test-CandidateSafety, `
     Sanitize-TaskObjective, `
+    Sanitize-MetadataSymbol, `
     Test-ContextCandidateFreshness, `
+    Format-WindowsProcessArgument, `
     Resolve-CanonicalDirectoryRoot, `
     Resolve-CanonicalReparsePath, `
     Optimize-CandidateSet, `

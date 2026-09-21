@@ -35,14 +35,15 @@ O contrato único e detalhado é skills/workflows/SKILL.md (ciclo de vida,
 semântica das ferramentas MCP/nativas, modos pela tripla capacidades | permissão |
 gate de pronto e auditoria final); skills/workflows/references/ contém apenas
 referências especializadas abertas sob demanda (delegation, delivery-review, research, observability,
-validation, commit e quality-ratchet).
+validation, commit, quality-ratchet, skill-routing e context-reranking).
 
 ## Requisitos
 
 - Windows 10 ou 11;
-- PowerShell 5.1+ ou PowerShell 7+;
+- PowerShell 5.1+ ou PowerShell 7+ (totalmente suportado em ambas as versões de runtime para workflows, skill routing e context reranking);
 - Codex (o perfil safe gerencia o seletor `subagent_backend` — `native` com `gpt-5.6-luna` ou `deepseek` via SubAgents MCP);
-- opcionalmente, AutoHotkey v2 para o prompt pad.
+- opcionalmente, AutoHotkey v2 para o prompt pad;
+- opcionalmente, chave `TYPESAFE_API_KEY` para otimização semântica via TypeSafe/Jev (skill routing e context reranking com fallbacks locais seguros).
 
 Se a política de execução exigir, permita apenas o escopo do usuário depois de
 revisar o conteúdo. Nunca use bypass nem pipelines remotos.

@@ -53,6 +53,26 @@ param(
     [int]$MaxBudgetBytes = 16384,
 
     [Parameter(Mandatory = $false)]
+    [ValidateRange(1, 1000)]
+    [int]$MinCandidates = 8,
+
+    [Parameter(Mandatory = $false)]
+    [ValidateRange(256, 10485760)]
+    [int]$ContextBudgetTriggerBytes = 12000,
+
+    [Parameter(Mandatory = $false)]
+    [ValidateRange(1, 1000)]
+    [int]$MaxCandidatesToEvaluate = 100,
+
+    [Parameter(Mandatory = $false)]
+    [ValidateRange(1, 50)]
+    [int]$MaxJevCalls = 5,
+
+    [Parameter(Mandatory = $false)]
+    [ValidateRange(1024, 10485760)]
+    [int]$MaxTotalPayloadBytes = 262144,
+
+    [Parameter(Mandatory = $false)]
     [ValidateRange(1, 100)]
     [int]$BatchSize = 20,
 
@@ -118,6 +138,23 @@ begin {
         'none'
     }
 
+    # Environment overrides for trigger & cost limits
+    if (-not [string]::IsNullOrWhiteSpace($env:CODEX_CONTEXT_RERANK_MIN_CANDIDATES)) {
+        $MinCandidates = [int]$env:CODEX_CONTEXT_RERANK_MIN_CANDIDATES
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:CODEX_CONTEXT_RERANK_TRIGGER_BYTES)) {
+        $ContextBudgetTriggerBytes = [int]$env:CODEX_CONTEXT_RERANK_TRIGGER_BYTES
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:CODEX_CONTEXT_MAX_CANDIDATES_EVAL)) {
+        $MaxCandidatesToEvaluate = [int]$env:CODEX_CONTEXT_MAX_CANDIDATES_EVAL
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:CODEX_CONTEXT_MAX_JEV_CALLS)) {
+        $MaxJevCalls = [int]$env:CODEX_CONTEXT_MAX_JEV_CALLS
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:CODEX_CONTEXT_MAX_PAYLOAD_BYTES)) {
+        $MaxTotalPayloadBytes = [int]$env:CODEX_CONTEXT_MAX_PAYLOAD_BYTES
+    }
+
     # WorkingDir resolution
     $resolvedWorkingDir = if ([string]::IsNullOrWhiteSpace($WorkingDir)) {
         [IO.Path]::GetFullPath($PWD.Path)
@@ -131,7 +168,7 @@ begin {
     if (-not (Test-Path -LiteralPath $modulePath)) {
         throw "Required module not found at: $modulePath"
     }
-    Import-Module -Name $modulePath -Force
+    Import-Module -Name $modulePath -Force -DisableNameChecking
 
     $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     $collectedRaw = [System.Collections.Generic.List[object]]::new()
@@ -240,7 +277,84 @@ end {
     $optimizedCandidates = @($optResult.UniqueCandidates)
     $duplicatesCount = $optResult.DuplicatesCount
 
-    # 4. Routing Decision & Jev Batch Execution
+    # 4. Freshness Evaluation
+    # Local file-backed snippets are evaluated for on-disk drift or deletion.
+    # Stale, drifted, or missing candidates are excluded from Jev evaluation and delivered selection.
+    $activeCandidates = [System.Collections.Generic.List[object]]::new()
+    $rejectedFreshness = [System.Collections.Generic.List[object]]::new()
+    $freshCount = 0
+    $driftedCount = 0
+    $missingCount = 0
+    $freshnessErrorCount = 0
+    $notApplicableCount = 0
+
+    foreach ($cand in $optimizedCandidates) {
+        $freshResult = Test-ContextCandidateFreshness -Candidate $cand -RepoPath $resolvedWorkingDir
+        switch ($freshResult.Status) {
+            'fresh' {
+                $freshCount++
+                $activeCandidates.Add($cand)
+            }
+            'not_applicable' {
+                $notApplicableCount++
+                $activeCandidates.Add($cand)
+            }
+            'drifted' {
+                $driftedCount++
+                $rejectedFreshness.Add([ordered]@{
+                    id               = [string]$cand.id
+                    source_ref       = [string]$cand.source_ref
+                    line_start       = $cand.line_start
+                    line_end         = $cand.line_end
+                    exclusion_reason = 'source_drifted'
+                })
+            }
+            'missing' {
+                $missingCount++
+                $rejectedFreshness.Add([ordered]@{
+                    id               = [string]$cand.id
+                    source_ref       = [string]$cand.source_ref
+                    line_start       = $cand.line_start
+                    line_end         = $cand.line_end
+                    exclusion_reason = 'source_missing'
+                })
+            }
+            default {
+                $freshnessErrorCount++
+                $rejectedFreshness.Add([ordered]@{
+                    id               = [string]$cand.id
+                    source_ref       = [string]$cand.source_ref
+                    line_start       = $cand.line_start
+                    line_end         = $cand.line_end
+                    exclusion_reason = 'freshness_error'
+                })
+            }
+        }
+    }
+
+    # 5. Deterministic Activation Gate
+    # Reranking runs only when candidates meet MinCandidates OR total raw content bytes exceed ContextBudgetTriggerBytes.
+    # Tiny retrieval sets comfortably fitting context budget bypass Jev and select locally.
+    $candCount = $activeCandidates.Count
+    $rawContentBytes = 0
+    foreach ($ac in $activeCandidates) {
+        $rawContentBytes += [System.Text.Encoding]::UTF8.GetByteCount([string]$ac.content)
+    }
+
+    $gateStatus = 'disabled'
+    if ($resolvedPolicy -eq 'off') {
+        $gateStatus = 'disabled'
+    }
+    else {
+        if ($candCount -ge $MinCandidates -or $rawContentBytes -ge $ContextBudgetTriggerBytes) {
+            $gateStatus = 'triggered'
+        }
+        else {
+            $gateStatus = 'skipped_below_threshold'
+        }
+    }
+
+    # 6. Routing Decision & Jev Batch Execution
     $evaluations = @{}
     $requestCount = 0
     $payloadBytes = 0
@@ -249,6 +363,9 @@ end {
     $validEvalCount = 0
     $invalidEvalCount = 0
     $missingEvalCount = 0
+    $candidatesEvaluated = 0
+    $candidatesNotEvaluated = 0
+    $costLimitReason = $null
 
     # Objective resolution: RoutingObjective (preferred) -> TaskObjective (fallback)
     $rawObjective = if (-not [string]::IsNullOrWhiteSpace($RoutingObjective)) {
@@ -266,7 +383,7 @@ end {
     if ($resolvedPolicy -eq 'off') {
         $effectiveStatus = 'skipped_policy_off'
     }
-    elseif ($optimizedCandidates.Count -eq 0) {
+    elseif ($activeCandidates.Count -eq 0) {
         $effectiveStatus = 'ok'
     }
     elseif ($resolvedPrivacyScope -eq 'none') {
@@ -276,6 +393,9 @@ end {
     elseif ($resolvedPrivacyScope -eq 'snippets_allowed' -and -not $AuthorizeContentTransmission.IsPresent) {
         # snippets_allowed without explicit authorization switch is rejected
         $effectiveStatus = 'skipped_privacy_unauthorized'
+    }
+    elseif ($gateStatus -eq 'skipped_below_threshold') {
+        $effectiveStatus = 'skipped_below_threshold'
     }
     else {
         # Transmission permitted: metadata_only OR (snippets_allowed with AuthorizeContentTransmission)
@@ -290,10 +410,13 @@ end {
             $evalResult = Invoke-JevRerankBatch `
                 -TaskObjective $sanitizedObjective `
                 -TaskMode $Mode `
-                -Candidates @($optimizedCandidates) `
+                -Candidates @($activeCandidates) `
                 -PrivacyScope $resolvedPrivacyScope `
                 -BatchSize $BatchSize `
                 -TimeoutSeconds $TimeoutSeconds `
+                -MaxCandidatesToEvaluate $MaxCandidatesToEvaluate `
+                -MaxJevCalls $MaxJevCalls `
+                -MaxTotalPayloadBytes $MaxTotalPayloadBytes `
                 -MockResponses $MockResponses `
                 -HttpTransportMock $HttpTransportMock
 
@@ -304,13 +427,16 @@ end {
             $validEvalCount = $evalResult.ValidCount
             $invalidEvalCount = $evalResult.InvalidCount
             $missingEvalCount = $evalResult.MissingCount
+            $candidatesEvaluated = $evalResult.CandidatesEvaluated
+            $candidatesNotEvaluated = $evalResult.CandidatesNotEvaluated
+            $costLimitReason = $evalResult.CostLimitReason
             $effectiveStatus = $evalResult.GlobalStatus
         }
     }
 
-    # 5. Budget-Bounded Package Selection
+    # 7. Budget-Bounded Package Selection
     $package = Select-ContextPackage `
-        -Candidates @($optimizedCandidates) `
+        -Candidates @($activeCandidates) `
         -Evaluations $evaluations `
         -PinnedIds $PinnedIds `
         -KeepThreshold $KeepThreshold `
@@ -320,7 +446,7 @@ end {
         -Policy $resolvedPolicy `
         -GlobalStatus $effectiveStatus
 
-    # Merge safety rejected candidates into manifest
+    # Merge safety and freshness rejected candidates into manifest
     $finalManifest = [System.Collections.Generic.List[object]]::new()
     foreach ($r in $rejectedSafety) {
         $finalManifest.Add([ordered]@{
@@ -333,6 +459,17 @@ end {
             exclusion_reason = $r.exclusion_reason
         })
     }
+    foreach ($rf in $rejectedFreshness) {
+        $finalManifest.Add([ordered]@{
+            id               = $rf.id
+            source_ref       = $rf.source_ref
+            line_start       = $rf.line_start
+            line_end         = $rf.line_end
+            score            = $null
+            decision         = 'EXCLUDED'
+            exclusion_reason = $rf.exclusion_reason
+        })
+    }
     foreach ($m in $package.manifest) {
         $finalManifest.Add($m)
     }
@@ -342,28 +479,38 @@ end {
     $result = [ordered]@{
         version           = 1
         status            = $package.status
+        gate_status       = $gateStatus
         policy            = $resolvedPolicy
         privacy_scope     = $resolvedPrivacyScope
         routing_objective = $sanitizedObjective
         selected          = $package.selected
         manifest          = @($finalManifest)
         metrics           = [ordered]@{
-            candidates_received  = $totalReceived
-            candidates_valid     = $validCandidates.Count
-            candidates_deduped   = $optimizedCandidates.Count
-            duplicates_coalesced = $duplicatesCount
-            rejected_safety      = $rejectedSafety.Count
-            evaluated_count      = if ($evaluations.Count -gt 0) { $evaluations.Count } else { 0 }
-            valid_evaluations    = $validEvalCount
-            invalid_evaluations  = $invalidEvalCount
-            missing_evaluations  = $missingEvalCount
-            selected_count       = $package.selected_count
-            deferred_count       = $finalManifest.Count
-            delivered_bytes      = $package.delivered_bytes
-            budget_bytes         = $MaxBudgetBytes
-            latency_ms           = $stopwatch.ElapsedMilliseconds
-            requests_made        = $requestCount
-            model                = $modelUsed
+            candidates_received      = $totalReceived
+            candidates_valid         = $validCandidates.Count
+            candidates_deduped       = $optimizedCandidates.Count
+            duplicates_coalesced     = $duplicatesCount
+            rejected_safety          = $rejectedSafety.Count
+            fresh_candidates         = $freshCount
+            drifted_candidates       = $driftedCount
+            missing_candidates       = $missingCount
+            freshness_errors         = $freshnessErrorCount
+            gate_status              = $gateStatus
+            evaluated_count          = if ($evaluations.Count -gt 0) { $evaluations.Count } else { 0 }
+            candidates_considered    = $activeCandidates.Count
+            candidates_evaluated     = $candidatesEvaluated
+            candidates_not_evaluated = $candidatesNotEvaluated
+            cost_limit_reason        = $costLimitReason
+            valid_evaluations        = $validEvalCount
+            invalid_evaluations      = $invalidEvalCount
+            missing_evaluations      = $missingEvalCount
+            selected_count           = $package.selected_count
+            deferred_count           = $finalManifest.Count
+            delivered_bytes          = $package.delivered_bytes
+            budget_bytes             = $MaxBudgetBytes
+            latency_ms               = $stopwatch.ElapsedMilliseconds
+            requests_made            = $requestCount
+            model                    = $modelUsed
         }
     }
 

@@ -61,6 +61,26 @@ param(
     [int]$MaxBudgetBytes = 16384,
 
     [Parameter(Mandatory = $false)]
+    [ValidateRange(1, 1000)]
+    [int]$MinCandidates = 8,
+
+    [Parameter(Mandatory = $false)]
+    [ValidateRange(256, 10485760)]
+    [int]$ContextBudgetTriggerBytes = 12000,
+
+    [Parameter(Mandatory = $false)]
+    [ValidateRange(1, 1000)]
+    [int]$MaxCandidatesToEvaluate = 100,
+
+    [Parameter(Mandatory = $false)]
+    [ValidateRange(1, 50)]
+    [int]$MaxJevCalls = 5,
+
+    [Parameter(Mandatory = $false)]
+    [ValidateRange(1024, 10485760)]
+    [int]$MaxTotalPayloadBytes = 262144,
+
+    [Parameter(Mandatory = $false)]
     [ValidateRange(1, 100)]
     [int]$BatchSize = 20,
 
@@ -184,17 +204,20 @@ if ($null -ne $MockRgOutput -or $MockRgExitCode -ne 0) {
     }
 }
 else {
-    $rgCommand = Get-Command -Name 'rg' -ErrorAction SilentlyContinue
+    $rgCommand = Get-Command rg -ErrorAction SilentlyContinue
     if (-not $rgCommand) {
-        throw "ripgrep ('rg') executable not found in PATH."
+        throw "ripgrep (rg) is not installed or not in PATH."
     }
 
+    # Build argument list as pure data
     $rgArgs = [System.Collections.Generic.List[string]]::new()
     $rgArgs.Add('--json')
     if ($ContextLines -gt 0) {
         $rgArgs.Add('-C')
         $rgArgs.Add([string]$ContextLines)
     }
+    # NOTE: Ripgrep's -m / --max-count limits matches PER FILE, not globally across the entire search.
+    # Global candidate limits are enforced by MaxCandidatesToEvaluate in rerank-context.ps1.
     if ($MaxMatches -gt 0) {
         $rgArgs.Add('-m')
         $rgArgs.Add([string]$MaxMatches)
@@ -220,8 +243,18 @@ else {
     $psi.CreateNoWindow = $true
     $psi.StandardOutputEncoding = [System.Text.Encoding]::UTF8
     $psi.StandardErrorEncoding = [System.Text.Encoding]::UTF8
-    foreach ($arg in $rgArgs) {
-        $psi.ArgumentList.Add($arg)
+
+    # Branch explicitly by runtime capability (PowerShell 7+ / .NET Core vs Windows PowerShell 5.1 / .NET Framework)
+    $hasArgumentList = [bool]($psi.PSObject.Properties['ArgumentList'])
+    if ($hasArgumentList) {
+        foreach ($arg in $rgArgs) {
+            $psi.ArgumentList.Add($arg)
+        }
+    }
+    else {
+        # Format arguments safely without Invoke-Expression, preserving spaces and special characters
+        $formatted = @($rgArgs | ForEach-Object { Format-WindowsProcessArgument $_ }) -join ' '
+        $psi.Arguments = $formatted
     }
 
     $proc = [System.Diagnostics.Process]::Start($psi)
@@ -312,8 +345,8 @@ foreach ($jsonLine in $rawLines) {
         $fileMatchGroups[$cleanPath] = [System.Collections.Generic.List[object]]::new()
     }
 
-    $fileMatchGroups[$cleanPath].Add([ordered]@{
-        LineNumber = $lineNum
+    $fileMatchGroups[$cleanPath].Add([pscustomobject]@{
+        LineNumber = [int]$lineNum
         LineText   = $lineText
         IsMatch    = ($type -eq 'match')
     })
@@ -324,7 +357,7 @@ $candidateList = [System.Collections.Generic.List[object]]::new()
 $rankCounter = 1
 
 foreach ($filePath in $fileMatchGroups.Keys) {
-    $lines = @($fileMatchGroups[$filePath] | Sort-Object -Property LineNumber)
+    $lines = @($fileMatchGroups[$filePath] | Sort-Object -Property @{ Expression = { [int]$_.LineNumber }; Ascending = $true })
     if ($lines.Count -eq 0) {
         continue
     }
@@ -397,6 +430,11 @@ $rerankParams = @{
     MaybeThreshold               = $MaybeThreshold
     MaxSelectedCandidates        = $MaxSelectedCandidates
     MaxBudgetBytes               = $MaxBudgetBytes
+    MinCandidates                = $MinCandidates
+    ContextBudgetTriggerBytes    = $ContextBudgetTriggerBytes
+    MaxCandidatesToEvaluate      = $MaxCandidatesToEvaluate
+    MaxJevCalls                  = $MaxJevCalls
+    MaxTotalPayloadBytes         = $MaxTotalPayloadBytes
     BatchSize                    = $BatchSize
     PinnedIds                    = $PinnedIds
     MockResponses                = $MockResponses
