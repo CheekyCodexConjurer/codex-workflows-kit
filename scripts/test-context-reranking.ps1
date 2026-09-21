@@ -466,6 +466,271 @@ finally {
     }
 }
 
+# ---------------------------------------------------------
+# 10. Candidate Freshness Tracking (Test-ContextCandidateFreshness)
+# ---------------------------------------------------------
+$freshnessTempDir = Join-Path ([IO.Path]::GetTempPath()) ("freshness-test-" + [Guid]::NewGuid().ToString('N'))
+try {
+    $null = New-Item -ItemType Directory -Path (Join-Path $freshnessTempDir 'src') -Force
+    $freshFile = Join-Path $freshnessTempDir 'src\app.js'
+    Set-Content -LiteralPath $freshFile -Value "const v = 1;`nconst v = 2;`n" -Encoding UTF8
+
+    $freshCand = New-ContextCandidate -Source 'rg' -SourceRef 'src/app.js' -Content "const v = 1;`n" -LineStart 1 -LineEnd 1
+    Assert-Test 'New-ContextCandidate computes non-empty content_sha256' (-not [string]::IsNullOrWhiteSpace($freshCand.content_sha256))
+
+    $freshStatus = Test-ContextCandidateFreshness -Candidate $freshCand -RepoPath $freshnessTempDir
+    Assert-Test 'Test-ContextCandidateFreshness reports fresh when on-disk content matches' (
+        $freshStatus.Status -eq 'fresh' -and $freshStatus.Fresh -eq $true
+    )
+
+    # Mutate line 1 in file
+    Set-Content -LiteralPath $freshFile -Value "const v = 999;`nconst v = 2;`n" -Encoding UTF8
+    $driftedStatus = Test-ContextCandidateFreshness -Candidate $freshCand -RepoPath $freshnessTempDir
+    Assert-Test 'Test-ContextCandidateFreshness reports drifted when on-disk content changes' (
+        $driftedStatus.Status -eq 'drifted' -and $driftedStatus.Fresh -eq $false
+    )
+
+    # Delete file
+    Remove-Item -LiteralPath $freshFile -Force
+    $missingStatus = Test-ContextCandidateFreshness -Candidate $freshCand -RepoPath $freshnessTempDir
+    Assert-Test 'Test-ContextCandidateFreshness reports missing when on-disk file is removed' (
+        $missingStatus.Status -eq 'missing' -and $missingStatus.Fresh -eq $false
+    )
+}
+finally {
+    if (Test-Path -LiteralPath $freshnessTempDir) {
+        Remove-Item -LiteralPath $freshnessTempDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+# ---------------------------------------------------------
+# 11. Preserving Contradictory Evidence at Same Line Span
+# ---------------------------------------------------------
+$contraCandA = New-ContextCandidate -Source 'rg' -SourceRef 'src/config.json' -Content '{"version": 1}' -LineStart 1 -LineEnd 1
+$contraCandB = New-ContextCandidate -Source 'rg' -SourceRef 'src/config.json' -Content '{"version": 2}' -LineStart 1 -LineEnd 1
+
+Assert-Test 'Contradictory candidates at same line span produce distinct candidate IDs' ($contraCandA.id -ne $contraCandB.id)
+
+$optContra = Optimize-CandidateSet -Candidates @($contraCandA, $contraCandB)
+Assert-Test 'Optimize-CandidateSet preserves contradictory candidates as distinct entries' (
+    $optContra.UniqueCandidates.Count -eq 2 -and $optContra.DuplicatesCount -eq 0
+)
+
+# ---------------------------------------------------------
+# 12. Real Serialized UTF-8 JSON Package Budgeting (delivered_bytes <= MaxBudgetBytes)
+# ---------------------------------------------------------
+$serCand1 = New-ContextCandidate -Source 'rg' -SourceRef 'a.ts' -Content ('x' * 200) -OriginalRank 1
+$serCand2 = New-ContextCandidate -Source 'rg' -SourceRef 'b.ts' -Content ('y' * 200) -OriginalRank 2
+$serCand3 = New-ContextCandidate -Source 'rg' -SourceRef 'c.ts' -Content ('z' * 200) -OriginalRank 3
+
+$serEvals = @{
+    $serCand1.id = [ordered]@{ Score = 0.95; Status = 'ok' }
+    $serCand2.id = [ordered]@{ Score = 0.85; Status = 'ok' }
+    $serCand3.id = [ordered]@{ Score = 0.75; Status = 'ok' }
+}
+
+$serPkg = Select-ContextPackage `
+    -Candidates @($serCand1, $serCand2, $serCand3) `
+    -Evaluations $serEvals `
+    -KeepThreshold 0.70 `
+    -MaxBudgetBytes 700
+
+Assert-Test 'delivered_bytes is less than or equal to MaxBudgetBytes' ($serPkg.delivered_bytes -le 700)
+Assert-Test 'delivered_bytes accurately matches serialized UTF-8 bytes of selected JSON array' (
+    $serPkg.delivered_bytes -eq [System.Text.Encoding]::UTF8.GetByteCount(($serPkg.selected | ConvertTo-Json -Depth 6 -Compress))
+)
+Assert-Test 'Candidates deferred by serialized budget are recorded in manifest with budget_deferred' (
+    @($serPkg.manifest | Where-Object { $_.exclusion_reason -eq 'budget_deferred' }).Count -ge 1
+)
+
+# ---------------------------------------------------------
+# 13. Privacy Scope: metadata_only vs snippets_allowed vs none
+# ---------------------------------------------------------
+$secIntercepted = [System.Collections.Generic.List[object]]::new()
+$secTransportMock = {
+    param($req)
+    $secIntercepted.Add($req)
+    return [ordered]@{
+        model = 'jev-sec-v1'
+        answers = [ordered]@{
+            q_0 = [ordered]@{ noul = 0.88 }
+        }
+    }
+}
+
+$secCand = New-ContextCandidate -Source 'rg' -SourceRef 'src/secret_logic.ts' -Content 'const superSecretAlgorithm = () => 42;' -LineStart 5 -LineEnd 10 -Id 'cand:sec1'
+
+# Test metadata_only: ZERO code snippets transmitted
+$metaOnlyResult = & $rerankScript `
+    -Candidates @($secCand) `
+    -RoutingObjective 'Check logic location' `
+    -Policy advisory `
+    -PrivacyScope 'metadata_only' `
+    -HttpTransportMock $secTransportMock `
+    -WorkingDir $repoRoot
+
+Assert-Test 'metadata_only executes Jev evaluation without error' ($metaOnlyResult.status -eq 'ok')
+Assert-Test 'metadata_only omits raw code snippet content from HTTP request payload' (
+    -not ($secIntercepted[0].BodyJson -match 'superSecretAlgorithm')
+)
+Assert-Test 'metadata_only includes structural metadata in prompt instructions' (
+    $secIntercepted[0].BodyJson -match 'src/secret_logic\.ts' -and
+    $secIntercepted[0].BodyJson -match 'Content omitted under metadata-only privacy scope'
+)
+
+# Test snippets_allowed without explicit -AuthorizeContentTransmission fails closed
+$unauthSnippetsResult = & $rerankScript `
+    -Candidates @($secCand) `
+    -Policy advisory `
+    -PrivacyScope 'snippets_allowed' `
+    -WorkingDir $repoRoot
+
+Assert-Test 'snippets_allowed without AuthorizeContentTransmission returns skipped_privacy_unauthorized' (
+    $unauthSnippetsResult.status -eq 'skipped_privacy_unauthorized' -and
+    $unauthSnippetsResult.metrics.requests_made -eq 0
+)
+
+# ---------------------------------------------------------
+# 14. RoutingObjective and Sanitize-TaskObjective
+# ---------------------------------------------------------
+$dirtyObjective = @'
+Please check ```python
+import secrets
+``` and fix bug with key sk-1234567890123456789012 and token ghp_abcdefghijklmnopqrstuvwxyz1234
+diff --git a/foo b/foo
+--- a/foo
++++ b/foo
+@@ -1,1 +1,1 @@
+-old
++new
+at System.Security.Cryptography in C:\app\file.cs:line 99
+API_KEY=my_secret_key
+'@
+
+$sanitized = Sanitize-TaskObjective -Objective $dirtyObjective -Mode 'IMPL.AUTO'
+Assert-Test 'Sanitize-TaskObjective removes code blocks' (-not ($sanitized -match 'import secrets'))
+Assert-Test 'Sanitize-TaskObjective removes sk- API keys' (-not ($sanitized -match 'sk-1234'))
+Assert-Test 'Sanitize-TaskObjective removes ghp_ tokens' (-not ($sanitized -match 'ghp_'))
+Assert-Test 'Sanitize-TaskObjective removes diff hunks' (-not ($sanitized -match 'diff --git'))
+Assert-Test 'Sanitize-TaskObjective removes stack traces' (-not ($sanitized -match 'System\.Security'))
+Assert-Test 'Sanitize-TaskObjective produces safe summary' ($sanitized.Length -gt 0 -and $sanitized.Length -le 300)
+
+# Test empty/dangerous fallback
+$emptySanitized = Sanitize-TaskObjective -Objective '```danger```' -Mode 'REVIEW'
+Assert-Test 'Sanitize-TaskObjective falls back to safe mode string when all content stripped' (
+    $emptySanitized -eq 'Task execution context for REVIEW'
+)
+
+# Test routing_objective in rerank output
+$objResult = & $rerankScript `
+    -Candidates @($secCand) `
+    -TaskObjective 'Sanitize me ```code``` sk-1234567890123456789012' `
+    -Policy off `
+    -WorkingDir $repoRoot
+
+Assert-Test 'rerank-context exposes sanitized routing_objective in output' (
+    $objResult.routing_objective -match 'Sanitize me' -and
+    -not ($objResult.routing_objective -match 'sk-') -and
+    -not ($objResult.routing_objective -match '```')
+)
+
+# ---------------------------------------------------------
+# 15. Evaluation Quality in Global Status (ok, partial, unavailable)
+# ---------------------------------------------------------
+$qualCandidates = @(
+    (New-ContextCandidate -Source 'rg' -SourceRef 'q1.ts' -Content 'code 1' -Id 'q1'),
+    (New-ContextCandidate -Source 'rg' -SourceRef 'q2.ts' -Content 'code 2' -Id 'q2')
+)
+
+# Partial evaluation: 1 ok, 1 missing
+$partialMockTransport = {
+    param($req)
+    return [ordered]@{
+        model = 'jev-partial'
+        answers = [ordered]@{
+            q_0 = [ordered]@{ noul = 0.82 }
+            # q_1 missing
+        }
+    }
+}
+
+$partialResult = & $rerankScript `
+    -Candidates $qualCandidates `
+    -Policy advisory `
+    -AuthorizeContentTransmission `
+    -HttpTransportMock $partialMockTransport `
+    -WorkingDir $repoRoot
+
+Assert-Test 'Partial answer set yields status=partial' ($partialResult.status -eq 'partial')
+Assert-Test 'metrics exposes valid_evaluations and missing_evaluations counts' (
+    $partialResult.metrics.valid_evaluations -eq 1 -and
+    $partialResult.metrics.missing_evaluations -eq 1
+)
+
+# Unavailable evaluation: malformed response (no answers)
+$unavailMockTransport = {
+    param($req)
+    return [ordered]@{ model = 'jev-broken' }
+}
+
+$unavailResult = & $rerankScript `
+    -Candidates $qualCandidates `
+    -Policy advisory `
+    -AuthorizeContentTransmission `
+    -HttpTransportMock $unavailMockTransport `
+    -WorkingDir $repoRoot
+
+Assert-Test 'Malformed response yields status=unavailable' ($unavailResult.status -eq 'unavailable')
+Assert-Test 'unavailable status records 0 valid_evaluations' ($unavailResult.metrics.valid_evaluations -eq 0)
+
+# ---------------------------------------------------------
+# 16. Ripgrep Adapter Path Traversal and Prefix Collision Hardening
+# ---------------------------------------------------------
+Assert-Test 'select-context-from-rg rejects upward traversal .. escaping repository' (
+    Test-ScriptThrows { & $rgAdapterScript -Query 'foo' -Path '../outside' -WorkingDir $repoRoot } 'Search path'
+)
+Assert-Test 'select-context-from-rg rejects non-existent search path' (
+    Test-ScriptThrows { & $rgAdapterScript -Query 'foo' -Path 'non_existent_folder_xyz' -WorkingDir $repoRoot } 'does not exist'
+)
+
+$collisionBase = Join-Path ([IO.Path]::GetTempPath()) ("rg-prefix-test-" + [Guid]::NewGuid().ToString('N'))
+try {
+    $repoDir = Join-Path $collisionBase 'repo'
+    $repo2Dir = Join-Path $collisionBase 'repo2'
+    $null = New-Item -ItemType Directory -Path $repoDir -Force
+    $null = New-Item -ItemType Directory -Path $repo2Dir -Force
+
+    Assert-Test 'select-context-from-rg rejects sibling directory prefix collision (repo vs repo2)' (
+        Test-ScriptThrows { & $rgAdapterScript -Query 'foo' -Path $repo2Dir -WorkingDir $repoDir } 'escapes repository containment'
+    )
+}
+finally {
+    if (Test-Path -LiteralPath $collisionBase) {
+        Remove-Item -LiteralPath $collisionBase -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+# ---------------------------------------------------------
+# 17. Ripgrep Adapter Exit Code Handling (0, 1, 2)
+# ---------------------------------------------------------
+# Exit code 1: zero matches found is normal success, not an error
+$rgZeroMatch = & $rgAdapterScript `
+    -Query 'nomatch_term' `
+    -MockRgOutput @() `
+    -MockRgExitCode 1 `
+    -Policy advisory `
+    -AuthorizeContentTransmission `
+    -WorkingDir $repoRoot
+
+Assert-Test 'Ripgrep exit code 1 (zero matches) is treated as success with 0 candidates' (
+    $rgZeroMatch.selected.Count -eq 0 -and $rgZeroMatch.status -eq 'ok'
+)
+
+# Exit code 2: operational failure throws exception with error message
+Assert-Test 'Ripgrep exit code 2 (operational error) throws descriptive exception' (
+    Test-ScriptThrows { & $rgAdapterScript -Query 'bad' -MockRgOutput 'syntax error in pattern' -MockRgExitCode 2 -WorkingDir $repoRoot } 'exit code 2'
+)
+
 Write-Host ''
 Write-Host '==========================================' -ForegroundColor Cyan
 Write-Host "Total: $script:TestCount | Passed: $script:PassedCount | Failed: $script:FailedCount" -ForegroundColor $(if ($script:FailedCount -eq 0) { 'Green' } else { 'Red' })

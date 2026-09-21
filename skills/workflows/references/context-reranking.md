@@ -76,9 +76,17 @@ All search results are transformed into a standardized, versioned candidate cont
 }
 ```
 
-### Stable Candidate ID Computation
+### Stable Candidate ID Computation & Contradictory Evidence
 When an explicit ID is omitted, `New-ContextCandidate` generates a deterministic 16-character SHA-256 hash prefixed with `cand:` computed from:
-`$RepositoryScope|$cleanRef|$RevisionOrHash|$LineStart|$LineEnd|$Representation`
+`$RepositoryScope|$cleanRef|$RevisionOrHash|$LineStart|$LineEnd|$Representation|$contentSha256`
+
+By incorporating `content_sha256` into the identification seed, contradictory evidence (such as differing content at the same line range from distinct revisions or edits) produces distinct IDs with clear provenance, preventing collisions or silent overwrites.
+
+### Freshness Tracking
+Each candidate records `content_sha256` at capture time. The function `Test-ContextCandidateFreshness` inspects the on-disk file:
+- `fresh`: on-disk content matches `content_sha256`.
+- `drifted`: on-disk file has been modified since capture.
+- `missing`: source file no longer exists.
 
 ---
 
@@ -86,9 +94,10 @@ When an explicit ID is omitted, `New-ContextCandidate` generates a deterministic
 
 The context reranker enforces rigorous safety policies before any candidate is evaluated or packaged:
 
-### A. Reparse Path Containment
+### A. Reparse Path Containment & Prefix Collision Prevention
 Windows directory junctions, symlinks, and relative traversal sequences (`../`) can potentially break out of repository roots.
 - `Assert-CandidatePathContainment` resolves all path segments using `Resolve-CanonicalReparsePath` against `Resolve-CanonicalDirectoryRoot`.
+- Canonical root checks mandate a trailing directory separator (`[IO.Path]::DirectorySeparatorChar`) to prevent sibling prefix collisions (e.g. `C:\repo` vs `C:\repo2`).
 - Rooted paths, colon characters, drive leaps, or reparse targets that resolve outside the working repository boundary trigger a fail-fast rejection (`exclusion_reason = "unsafe_path"`).
 
 ### B. Secret and Credential Scanning
@@ -105,19 +114,23 @@ Windows directory junctions, symlinks, and relative traversal sequences (`../`) 
    - Bearer tokens and generic key-value credential assignments.
 Any detected secret candidate is excluded and placed in the manifest with `exclusion_reason = "secret_detected"` or specific violation reason.
 
-### C. Explicit Transmission Authorization
-The reranker enforces three privacy scopes:
-- `none` (default): Third-party transmission is strictly prohibited. If invoked, the reranker performs local original-rank selection without making external HTTP requests (`status = "skipped_privacy_unauthorized"`).
-- `metadata_only`: Only file paths, line ranges, and symbols may be evaluated. Content snippets are stripped.
-- `snippets_allowed` (or `-AuthorizeContentTransmission`): Content snippets are permitted to be transmitted to the TypeSafe/Jev evaluation endpoint.
+### C. Explicit Transmission Authorization & Privacy Scopes
+The reranker enforces three strictly isolated privacy scopes:
+- `none` (default): Third-party transmission is strictly prohibited. If invoked, the reranker performs local selection without making external HTTP requests (`status = "skipped_privacy_unauthorized"`).
+- `metadata_only`: Transmits **strictly structural metadata** (`source_ref`, `line_start`, `line_end`, `representation`, symbols). Raw code content (`content`) is **NEVER** transmitted to Jev. Question formulation is adapted to assess structural relevance without snippets.
+- `snippets_allowed`: Code snippets are permitted to be transmitted to TypeSafe/Jev **only** when accompanied by explicit user authorization (`-AuthorizeContentTransmission`).
+
+### D. Objective Sanitization & RoutingObjective
+- `-RoutingObjective`: Preferred parameter, focused purely on the search and relevance goal.
+- `-TaskObjective`: Supported as backward-compatible fallback. If provided, `Sanitize-TaskObjective` strips fenced code blocks (```), inline backticks, API keys, tokens, environment variables, git diff hunks, and stack traces. The returned object always exposes `routing_objective` (the safe sanitized string) and **never** the raw prompt.
 
 ---
 
 ## 4. Exact Deduplication vs Contradictory Evidence
 
 When multiple search queries or search tools identify the same code, redundant tokens should not be delivered twice:
-- **Exact Duplication**: Candidates sharing the exact same `source_ref`, `line_start`, `line_end`, `content`, and `revision_or_hash` are coalesced into a single candidate object. All unique discovery origins are preserved under the `provenances` array (`source`, `source_ref`, `original_rank`).
-- **Conflicting Candidates**: If two candidates share the exact same ID or location but contain differing content (e.g. from different git revisions, unstaged edits, or conflicting runtime outputs), they are strictly preserved as separate candidates. Contradictory evidence is never silently suppressed.
+- **Exact Duplication**: Candidates sharing the exact same `source_ref`, `line_start`, `line_end`, `content_sha256`, and `revision_or_hash` are coalesced into a single candidate object. All unique discovery origins are preserved under the `provenances` array (`source`, `source_ref`, `original_rank`).
+- **Conflicting Candidates**: If two candidates share the same location but contain differing content (different `content_sha256`), they produce distinct IDs and are preserved as separate candidates. Contradictory evidence is never silently suppressed.
 
 ---
 
@@ -129,24 +142,18 @@ When multiple search queries or search tools identify the same code, redundant t
 - **Latency Profile**: 80ms – 400ms per parallel batch.
 
 ### Parallel Question Formulation
-Candidates are evaluated using the `noul` primitive (non-autoregressive boolean probability). Up to `BatchSize` (default 20) candidate questions are packed into a single request body against the shared task state:
+Candidates are evaluated using the `noul` primitive (non-autoregressive boolean probability). Up to `BatchSize` (default 20) candidate questions are packed into a single request body against the shared task state. Under `metadata_only`, instructions assess file path, symbol, and location utility without including snippets.
 
-```json
-{
-  "model": "jev-latest",
-  "state": "{\"task\":{\"mode\":\"IMPL.AUTO\",\"objective\":\"Fix authentication regression\"}}",
-  "questions": {
-    "q_0": {
-      "type": "noul",
-      "instructions": "Candidate ID: 'cand:c02412c40e2767c9' from 'auth/service.go' (lines 40-55) (snippet):\n\"...\"\nDoes this candidate contain materially useful information to investigate or execute the task, including evidence that contradicts hypotheses?",
-      "criteria": {
-        "true": "The candidate contains directly relevant code, contract, configuration, test, or contradictory evidence materially useful for the task.",
-        "false": "The candidate is merely superficially related, tangential, or lacks actionable utility."
-      }
-    }
-  }
-}
-```
+### Global Status Semantics
+- `ok`: All candidate evaluations completed with valid numeric scores.
+- `partial`: At least one candidate evaluated successfully, but others failed, returned null, or timed out.
+- `unavailable`: Communication failure, malformed response, or zero valid evaluations when evaluation was required.
+- `skipped_policy_off`: Reranking disabled by policy (`Policy = 'off'`).
+- `skipped_privacy_unauthorized`: Execution blocked due to privacy restrictions (`PrivacyScope = 'none'` or unauthorized snippets).
+- `skipped_no_api_key`: `TYPESAFE_API_KEY` missing and no mock provided.
+- `budget_exceeded`: PINNED candidate set alone exceeds `MaxBudgetBytes`.
+
+Metrics expose: `valid_evaluations`, `invalid_evaluations`, and `missing_evaluations`.
 
 ### Threshold Classification
 - `score >= KeepThreshold` (default 0.70): Classified as `KEEP`.
@@ -157,18 +164,20 @@ Candidates are evaluated using the `noul` primitive (non-autoregressive boolean 
 
 ---
 
-## 6. Budget Allocation and Manifest Output
+## 6. Real Serialized Budget Allocation and Manifest Output
 
 The local budget engine enforces deterministic token/byte containment:
 
-1. **Pre-Check (Pinned Overflow)**:
-   If the cumulative content size of `PINNED` items alone exceeds `MaxBudgetBytes`, the reranker terminates immediately with `status = "budget_exceeded"`, returning an empty `selected` array and the complete candidate list in `manifest`. This alerts the parent orchestrator that task sharding is required.
-2. **Selection Ordering**:
-   - `PINNED` candidates admitted first (ordered by `original_rank` ascending).
+1. **Real Serialized JSON Measurement**:
+   `MaxBudgetBytes` applies to the **actual UTF-8 byte count of the serialized JSON payload** of `selected`. `delivered_bytes <= MaxBudgetBytes` is guaranteed.
+2. **Pre-Check (Pinned Overflow)**:
+   If the serialized JSON size of `PINNED` items alone exceeds `MaxBudgetBytes`, the reranker terminates immediately with `status = "budget_exceeded"`, returning an empty `selected` array and candidate manifest with `exclusion_reason = "budget_exceeded_by_pinned"`. Sharding is required before execution.
+3. **Selection Ordering**:
+   - `PINNED` candidates admitted first.
    - `KEEP` candidates admitted second (ordered by `score` descending, then `original_rank` ascending).
    - `MAYBE` candidates admitted third (ordered by `score` descending, then `original_rank` ascending).
-   - Candidates are appended until adding the next item would exceed `MaxBudgetBytes` or `MaxSelectedCandidates`.
-3. **Manifest of Deferred / Dropped Evidence**:
+   - Each addition tentatively verifies that `Measure-SelectedPackageBytes` does not exceed `MaxBudgetBytes`. Excess candidates are deferred (`budget_deferred` or `count_limit_exceeded`).
+4. **Manifest of Deferred / Dropped Evidence**:
    Candidates not admitted into `selected` are recorded in `manifest` without their heavy `content` property:
    ```json
    {

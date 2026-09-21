@@ -11,6 +11,9 @@ param(
     [string]$CandidatesJson = '',
 
     [Parameter(Mandatory = $false)]
+    [string]$RoutingObjective = '',
+
+    [Parameter(Mandatory = $false)]
     [string]$TaskObjective = '',
 
     [Parameter(Mandatory = $false)]
@@ -97,9 +100,12 @@ begin {
         'advisory'
     }
 
-    # PrivacyScope resolution: Parameter -> Env -> Default ('none')
+    # PrivacyScope resolution: Parameter -> AuthorizeContentTransmission -> Env -> Default ('none')
     $resolvedPrivacyScope = if (-not [string]::IsNullOrWhiteSpace($PrivacyScope)) {
         $PrivacyScope.ToLowerInvariant()
+    }
+    elseif ($AuthorizeContentTransmission.IsPresent) {
+        'snippets_allowed'
     }
     elseif (-not [string]::IsNullOrWhiteSpace($env:CODEX_CONTEXT_PRIVACY_SCOPE)) {
         $envPrivacy = $env:CODEX_CONTEXT_PRIVACY_SCOPE.Trim().ToLowerInvariant()
@@ -240,19 +246,39 @@ end {
     $payloadBytes = 0
     $modelUsed = 'none'
     $effectiveStatus = 'ok'
+    $validEvalCount = 0
+    $invalidEvalCount = 0
+    $missingEvalCount = 0
 
-    # Check transmission authorization: explicit switch OR snippets_allowed scope
-    $transmissionAuthorized = ($AuthorizeContentTransmission.IsPresent -or ($resolvedPrivacyScope -eq 'snippets_allowed'))
+    # Objective resolution: RoutingObjective (preferred) -> TaskObjective (fallback)
+    $rawObjective = if (-not [string]::IsNullOrWhiteSpace($RoutingObjective)) {
+        $RoutingObjective
+    }
+    elseif (-not [string]::IsNullOrWhiteSpace($TaskObjective)) {
+        $TaskObjective
+    }
+    else {
+        ''
+    }
+
+    $sanitizedObjective = Sanitize-TaskObjective -Objective $rawObjective -Mode $Mode
 
     if ($resolvedPolicy -eq 'off') {
         $effectiveStatus = 'skipped_policy_off'
     }
-    elseif (-not $transmissionAuthorized) {
-        # Privacy policy boundary: no external transmission authorized
+    elseif ($optimizedCandidates.Count -eq 0) {
+        $effectiveStatus = 'ok'
+    }
+    elseif ($resolvedPrivacyScope -eq 'none') {
+        # Privacy boundary: no external transmission authorized
+        $effectiveStatus = 'skipped_privacy_unauthorized'
+    }
+    elseif ($resolvedPrivacyScope -eq 'snippets_allowed' -and -not $AuthorizeContentTransmission.IsPresent) {
+        # snippets_allowed without explicit authorization switch is rejected
         $effectiveStatus = 'skipped_privacy_unauthorized'
     }
     else {
-        # Transmission is authorized; check if API key or mocks are present
+        # Transmission permitted: metadata_only OR (snippets_allowed with AuthorizeContentTransmission)
         $apiKey = $env:TYPESAFE_API_KEY
         $hasMock = ($null -ne $MockResponses -or $null -ne $HttpTransportMock)
 
@@ -262,9 +288,10 @@ end {
         else {
             # Execute batch reranking
             $evalResult = Invoke-JevRerankBatch `
-                -TaskObjective $TaskObjective `
+                -TaskObjective $sanitizedObjective `
                 -TaskMode $Mode `
                 -Candidates @($optimizedCandidates) `
+                -PrivacyScope $resolvedPrivacyScope `
                 -BatchSize $BatchSize `
                 -TimeoutSeconds $TimeoutSeconds `
                 -MockResponses $MockResponses `
@@ -274,13 +301,10 @@ end {
             $requestCount = $evalResult.RequestCount
             $payloadBytes = $evalResult.PayloadBytes
             $modelUsed = $evalResult.Model
-
-            if ($evalResult.ServiceUnavailable) {
-                $effectiveStatus = 'fallback_api_error'
-            }
-            else {
-                $effectiveStatus = 'ok'
-            }
+            $validEvalCount = $evalResult.ValidCount
+            $invalidEvalCount = $evalResult.InvalidCount
+            $missingEvalCount = $evalResult.MissingCount
+            $effectiveStatus = $evalResult.GlobalStatus
         }
     }
 
@@ -316,20 +340,23 @@ end {
     $stopwatch.Stop()
 
     $result = [ordered]@{
-        version          = 1
-        status           = $package.status
-        policy           = $resolvedPolicy
-        privacy_scope    = $resolvedPrivacyScope
-        task_objective   = $TaskObjective
-        selected         = $package.selected
-        manifest         = @($finalManifest)
-        metrics          = [ordered]@{
+        version           = 1
+        status            = $package.status
+        policy            = $resolvedPolicy
+        privacy_scope     = $resolvedPrivacyScope
+        routing_objective = $sanitizedObjective
+        selected          = $package.selected
+        manifest          = @($finalManifest)
+        metrics           = [ordered]@{
             candidates_received  = $totalReceived
             candidates_valid     = $validCandidates.Count
             candidates_deduped   = $optimizedCandidates.Count
             duplicates_coalesced = $duplicatesCount
             rejected_safety      = $rejectedSafety.Count
             evaluated_count      = if ($evaluations.Count -gt 0) { $evaluations.Count } else { 0 }
+            valid_evaluations    = $validEvalCount
+            invalid_evaluations  = $invalidEvalCount
+            missing_evaluations  = $missingEvalCount
             selected_count       = $package.selected_count
             deferred_count       = $finalManifest.Count
             delivered_bytes      = $package.delivered_bytes

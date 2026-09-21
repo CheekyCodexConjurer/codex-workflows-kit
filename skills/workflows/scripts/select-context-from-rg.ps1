@@ -22,6 +22,9 @@ param(
     [int]$ContextLines = 2,
 
     [Parameter(Mandatory = $false)]
+    [string]$RoutingObjective = '',
+
+    [Parameter(Mandatory = $false)]
     [string]$TaskObjective = '',
 
     [Parameter(Mandatory = $false)]
@@ -68,6 +71,9 @@ param(
     [object]$MockRgOutput = $null,
 
     [Parameter(Mandatory = $false)]
+    [int]$MockRgExitCode = 0,
+
+    [Parameter(Mandatory = $false)]
     [hashtable]$MockResponses = $null,
 
     [Parameter(Mandatory = $false)]
@@ -91,32 +97,90 @@ else {
     [IO.Path]::GetFullPath($WorkingDir)
 }
 
-$effectiveObjective = if (-not [string]::IsNullOrWhiteSpace($TaskObjective)) {
-    $TaskObjective
-}
-else {
-    $Query
-}
-
 $modulePath = Join-Path $PSScriptRoot 'context-reranking.psm1'
 if (-not (Test-Path -LiteralPath $modulePath)) {
     throw "Required module not found at: $modulePath"
 }
 Import-Module -Name $modulePath -Force
 
+$canonicalRepoRoot = Resolve-CanonicalDirectoryRoot -Path $resolvedWorkingDir
+$canonicalRepoPrefix = $canonicalRepoRoot.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+
+# Objective resolution: RoutingObjective (preferred) -> TaskObjective -> Query
+$effectiveObjective = if (-not [string]::IsNullOrWhiteSpace($RoutingObjective)) {
+    $RoutingObjective
+}
+elseif (-not [string]::IsNullOrWhiteSpace($TaskObjective)) {
+    $TaskObjective
+}
+else {
+    $Query
+}
+
+# Validate requested -Path containment BEFORE executing ripgrep
+if ([string]::IsNullOrWhiteSpace($Path)) {
+    throw "Search path cannot be empty or whitespace."
+}
+
+$rawPath = $Path.Trim()
+$fullSearchPath = $null
+if ([IO.Path]::IsPathRooted($rawPath)) {
+    $fullSearchPath = [IO.Path]::GetFullPath($rawPath)
+}
+else {
+    $normSearch = $rawPath.Replace('\', '/') -replace '^\./', ''
+    $searchSegments = @($normSearch -split '/')
+    if ($searchSegments -contains '..') {
+        throw "Search path contains upward directory traversal ('..') escaping repository scope: '$Path'."
+    }
+    $fullSearchPath = [IO.Path]::GetFullPath([IO.Path]::Combine($canonicalRepoRoot, $rawPath))
+}
+
+if (-not (Test-Path -LiteralPath $fullSearchPath)) {
+    throw "Search path does not exist: '$Path'."
+}
+
+# Canonical check for repo containment and prefix collision avoidance
+$canonicalSearchPath = Resolve-CanonicalDirectoryRoot -Path $fullSearchPath
+$canonicalSearchCheck = if (Test-Path -LiteralPath $canonicalSearchPath -PathType Container) {
+    $canonicalSearchPath.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+}
+else {
+    $canonicalSearchPath
+}
+
+if (-not $canonicalSearchCheck.StartsWith($canonicalRepoPrefix, [StringComparison]::OrdinalIgnoreCase) -and
+    -not $canonicalSearchPath.Equals($canonicalRepoRoot, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Search path escapes repository containment: '$Path' resolves to '$canonicalSearchPath'."
+}
+
 # 2. Ripgrep Execution or Mock Ingestion
 $rawLines = [System.Collections.Generic.List[string]]::new()
 
-if ($null -ne $MockRgOutput) {
-    if ($MockRgOutput -is [System.Collections.IEnumerable] -and -not ($MockRgOutput -is [string])) {
-        foreach ($line in $MockRgOutput) {
-            if ($null -ne $line) {
-                $rawLines.Add([string]$line)
+if ($null -ne $MockRgOutput -or $MockRgExitCode -ne 0) {
+    if ($MockRgExitCode -eq 1) {
+        # Normal zero-matches exit code: empty rawLines, successful execution
+    }
+    elseif ($MockRgExitCode -ge 2) {
+        $errMsg = if ($null -ne $MockRgOutput -and -not ($MockRgOutput -is [System.Collections.IEnumerable])) {
+            [string]$MockRgOutput
+        }
+        else {
+            "Simulated ripgrep execution error (exit code $MockRgExitCode)"
+        }
+        throw "ripgrep process failed with exit code $($MockRgExitCode): $errMsg"
+    }
+    elseif ($null -ne $MockRgOutput) {
+        if ($MockRgOutput -is [System.Collections.IEnumerable] -and -not ($MockRgOutput -is [string])) {
+            foreach ($line in $MockRgOutput) {
+                if ($null -ne $line) {
+                    $rawLines.Add([string]$line)
+                }
             }
         }
-    }
-    else {
-        $rawLines.Add([string]$MockRgOutput)
+        else {
+            $rawLines.Add([string]$MockRgOutput)
+        }
     }
 }
 else {
@@ -142,43 +206,52 @@ else {
         }
     }
 
-    $resolvedSearchPath = if ([IO.Path]::IsPathRooted($Path)) {
-        [IO.Path]::GetFullPath($Path)
-    }
-    else {
-        [IO.Path]::GetFullPath([IO.Path]::Combine($resolvedWorkingDir, $Path))
-    }
-
-    # Pass query and path as data arguments
+    # Pass query and search path
     $rgArgs.Add('-e')
     $rgArgs.Add($Query)
-    $rgArgs.Add($resolvedSearchPath)
+    $rgArgs.Add($canonicalSearchPath)
 
-    # Execute rg safely
-    $oldEap = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    try {
-        $output = & $rgCommand.Source @rgArgs
-        if ($null -ne $output) {
-            if ($output -is [System.Collections.IEnumerable] -and -not ($output -is [string])) {
-                foreach ($o in $output) {
-                    $rawLines.Add([string]$o)
+    # Execute ripgrep via ProcessStartInfo to accurately capture stdout, stderr and exit code
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $rgCommand.Source
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.CreateNoWindow = $true
+    $psi.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+    $psi.StandardErrorEncoding = [System.Text.Encoding]::UTF8
+    foreach ($arg in $rgArgs) {
+        $psi.ArgumentList.Add($arg)
+    }
+
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
+    $stderrTask = $proc.StandardError.ReadToEndAsync()
+    $proc.WaitForExit()
+    $stdoutText = $stdoutTask.GetAwaiter().GetResult()
+    $stderrText = $stderrTask.GetAwaiter().GetResult()
+    $exitCode = $proc.ExitCode
+
+    if ($exitCode -eq 0) {
+        if (-not [string]::IsNullOrWhiteSpace($stdoutText)) {
+            $stdoutLines = $stdoutText -split "\r?\n"
+            foreach ($l in $stdoutLines) {
+                if (-not [string]::IsNullOrWhiteSpace($l)) {
+                    $rawLines.Add($l)
                 }
-            }
-            else {
-                $rawLines.Add([string]$output)
             }
         }
     }
-    finally {
-        $ErrorActionPreference = $oldEap
+    elseif ($exitCode -eq 1) {
+        # Normal termination: 0 matches found. No candidates, not an error.
+    }
+    else {
+        $errSummary = if (-not [string]::IsNullOrWhiteSpace($stderrText)) { $stderrText.Trim() } else { "Unknown ripgrep execution error" }
+        throw "ripgrep process failed with exit code $($exitCode): $errSummary"
     }
 }
 
 # 3. Parse JSON Objects and Group by File
-# In rg --json, matches and context lines come in stream order.
-# We group contiguous/adjacent lines into candidate chunks.
-
 $fileMatchGroups = [ordered]@{}
 
 foreach ($jsonLine in $rawLines) {
@@ -212,19 +285,27 @@ foreach ($jsonLine in $rawLines) {
     $lineNum = [int]$data.line_number
     $lineText = [string]$data.lines.text
 
-    # Make relative path canonical to working dir
+    # Make relative path canonical to working dir and prevent prefix collisions
     $fullFilePath = if ([IO.Path]::IsPathRooted($filePath)) {
         [IO.Path]::GetFullPath($filePath)
     }
     else {
-        [IO.Path]::GetFullPath([IO.Path]::Combine($resolvedWorkingDir, $filePath))
+        [IO.Path]::GetFullPath([IO.Path]::Combine($canonicalRepoRoot, $filePath))
     }
 
-    $cleanPath = if ($fullFilePath.StartsWith($resolvedWorkingDir, [StringComparison]::OrdinalIgnoreCase)) {
-        $fullFilePath.Substring($resolvedWorkingDir.Length).TrimStart('\', '/').Replace('\', '/')
+    $cleanPath = if ($fullFilePath.StartsWith($canonicalRepoPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        $fullFilePath.Substring($canonicalRepoPrefix.Length).Replace('\', '/')
     }
     else {
         $filePath.Replace('\', '/') -replace '^\./', ''
+    }
+
+    # Verify repository containment of match path
+    try {
+        $cleanPath = Assert-CandidatePathContainment -RepoPath $canonicalRepoRoot -RelativePath $cleanPath
+    }
+    catch {
+        continue
     }
 
     if (-not $fileMatchGroups.Contains($cleanPath)) {
@@ -308,9 +389,10 @@ foreach ($filePath in $fileMatchGroups.Keys) {
 $rerankScript = Join-Path $PSScriptRoot 'rerank-context.ps1'
 $rerankParams = @{
     Candidates                   = @($candidateList)
+    RoutingObjective             = $RoutingObjective
     TaskObjective                = $effectiveObjective
     Mode                         = $Mode
-    WorkingDir                   = $resolvedWorkingDir
+    WorkingDir                   = $canonicalRepoRoot
     KeepThreshold                = $KeepThreshold
     MaybeThreshold               = $MaybeThreshold
     MaxSelectedCandidates        = $MaxSelectedCandidates

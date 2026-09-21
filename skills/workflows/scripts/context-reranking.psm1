@@ -24,20 +24,31 @@ function New-ContextCandidate {
     $cleanRef = $SourceRef.Trim().Replace('\', '/') -replace '^\./', ''
     $cleanContent = $Content
 
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    $contentSha256 = try {
+        $contentBytes = [System.Text.Encoding]::UTF8.GetBytes($cleanContent)
+        $hashBytes = $sha.ComputeHash($contentBytes)
+        -join ($hashBytes | ForEach-Object { $_.ToString('x2') })
+    }
+    finally {
+        $sha.Dispose()
+    }
+
     $computedId = if (-not [string]::IsNullOrWhiteSpace($Id)) {
         $Id.Trim()
     }
     else {
-        $seed = "$RepositoryScope|$cleanRef|$RevisionOrHash|$LineStart|$LineEnd|$Representation"
-        $sha = [System.Security.Cryptography.SHA256]::Create()
+        # Seed includes $contentSha256 so contradictory content at same line range gets distinct IDs
+        $seed = "$RepositoryScope|$cleanRef|$RevisionOrHash|$LineStart|$LineEnd|$Representation|$contentSha256"
+        $shaId = [System.Security.Cryptography.SHA256]::Create()
         try {
             $bytes = [System.Text.Encoding]::UTF8.GetBytes($seed)
-            $hashBytes = $sha.ComputeHash($bytes)
+            $hashBytes = $shaId.ComputeHash($bytes)
             $hex = -join ($hashBytes | ForEach-Object { $_.ToString('x2') })
             "cand:$($hex.Substring(0, 16))"
         }
         finally {
-            $sha.Dispose()
+            $shaId.Dispose()
         }
     }
 
@@ -48,6 +59,7 @@ function New-ContextCandidate {
         source_ref         = $cleanRef
         repository_scope   = $RepositoryScope.Trim()
         revision_or_hash   = $RevisionOrHash.Trim()
+        content_sha256     = $contentSha256
         line_start         = $LineStart
         line_end           = $LineEnd
         original_rank      = $OriginalRank
@@ -228,6 +240,152 @@ function Test-CandidateSafety {
     }
 }
 
+function Sanitize-TaskObjective {
+    [CmdletBinding()]
+    param(
+        [Parameter()][string]$Objective = '',
+        [Parameter()][string]$Mode = ''
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Objective)) {
+        if (-not [string]::IsNullOrWhiteSpace($Mode)) {
+            return "Task execution context for $Mode"
+        }
+        return "Task execution context"
+    }
+
+    $clean = $Objective
+
+    # 1. Remove fenced code blocks (```...```)
+    $clean = [regex]::Replace($clean, '(?s)```.*?```', ' ')
+
+    # 2. Remove inline backtick code snippets
+    $clean = [regex]::Replace($clean, '`[^`\r\n]+`', ' ')
+
+    # 3. Strip git diff hunks and headers
+    $clean = [regex]::Replace($clean, '(?m)^(?:diff --git|index [0-9a-f]+\.\.[0-9a-f]+|--- [^\r\n]+|\+\+\+ [^\r\n]+|@@ [^@]+ @@|[+-][^\r\n]*).*$', ' ')
+
+    # 4. Strip stack traces and exceptions
+    $clean = [regex]::Replace($clean, '(?i)(?:at\s+[a-zA-Z0-9_.]+(?:\([^)]*\))?\s+in\s+[^\r\n]+|Exception:\s+[^\r\n]+|at\s+[^\r\n]+:line\s+\d+)', ' ')
+
+    # 5. Strip secrets, API keys, tokens, and credentials
+    $clean = [regex]::Replace($clean, '(?i)\b(?:sk-[a-zA-Z0-9_\-]{15,}|ghp_[a-zA-Z0-9]{20,}|AKIA[0-9A-Z]{16}|apikey_[a-zA-Z0-9_]{20,})\b', ' ')
+    $clean = [regex]::Replace($clean, '(?i)(?:api[_-]?key|secret|token|password|auth_token)\s*[:=]\s*["'']?[^\s"'',;]+["'']?', ' ')
+
+    # 6. Strip env assignments and shell variables
+    $clean = [regex]::Replace($clean, '(?m)^\s*[A-Za-z_][A-Za-z0-9_]*=[^\r\n]+', ' ')
+    $clean = [regex]::Replace($clean, '\$[A-Za-z_][A-Za-z0-9_]*', ' ')
+
+    # 7. Collapse spaces / newlines
+    $clean = [regex]::Replace($clean, '\s+', ' ').Trim()
+
+    # 8. Bounds check: truncate to safe summary (max 300 chars)
+    if ($clean.Length -gt 300) {
+        $clean = $clean.Substring(0, 300).Trim()
+    }
+
+    if ([string]::IsNullOrWhiteSpace($clean) -or $clean.Length -lt 3) {
+        if (-not [string]::IsNullOrWhiteSpace($Mode)) {
+            return "Task execution context for $Mode"
+        }
+        return "Task execution context"
+    }
+
+    return $clean
+}
+
+function Test-ContextCandidateFreshness {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][object]$Candidate,
+        [Parameter(Mandatory)][string]$RepoPath
+    )
+
+    if (-not (Test-ContextCandidate -Candidate $Candidate)) {
+        throw "Invalid candidate passed to Test-ContextCandidateFreshness."
+    }
+
+    $ref = [string]$Candidate.source_ref
+    $lineStart = if ($null -ne $Candidate.line_start) { [int]$Candidate.line_start } else { $null }
+    $lineEnd = if ($null -ne $Candidate.line_end) { [int]$Candidate.line_end } else { $null }
+    $recordedHash = if ($Candidate -is [System.Collections.IDictionary]) {
+        if ($Candidate.Contains('content_sha256')) { [string]$Candidate['content_sha256'] } else { $null }
+    }
+    elseif ($Candidate.PSObject.Properties.Name -contains 'content_sha256') {
+        [string]$Candidate.content_sha256
+    }
+    else {
+        $null
+    }
+
+    $fullPath = [IO.Path]::Combine([IO.Path]::GetFullPath($RepoPath), ($ref -replace '/', [IO.Path]::DirectorySeparatorChar))
+    if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf)) {
+        return [ordered]@{
+            Status      = 'missing'
+            Reason      = "Source file does not exist: $ref"
+            Fresh       = $false
+            CurrentHash = $null
+        }
+    }
+
+    $currentContent = $null
+    try {
+        if ($null -ne $lineStart -and $null -ne $lineEnd -and $lineStart -gt 0 -and $lineEnd -ge $lineStart) {
+            $allLines = [IO.File]::ReadAllLines($fullPath, [System.Text.Encoding]::UTF8)
+            if ($lineStart -le $allLines.Length) {
+                $actualEnd = [Math]::Min($lineEnd, $allLines.Length)
+                $sliceLines = $allLines[($lineStart - 1)..($actualEnd - 1)]
+                $currentContent = ($sliceLines -join "`n") + "`n"
+            }
+            else {
+                $currentContent = ""
+            }
+        }
+        else {
+            $currentContent = [IO.File]::ReadAllText($fullPath, [System.Text.Encoding]::UTF8)
+        }
+    }
+    catch {
+        return [ordered]@{
+            Status      = 'error'
+            Reason      = "Could not read source file: $($_.Exception.Message)"
+            Fresh       = $false
+            CurrentHash = $null
+        }
+    }
+
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    $currentHash = try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($currentContent)
+        $hBytes = $sha.ComputeHash($bytes)
+        -join ($hBytes | ForEach-Object { $_.ToString('x2') })
+    }
+    finally {
+        $sha.Dispose()
+    }
+
+    $candContentClean = ([string]$Candidate.content).Replace("`r`n", "`n")
+    $currContentClean = $currentContent.Replace("`r`n", "`n")
+
+    $isMatch = ($currContentClean -eq $candContentClean) -or ($null -ne $recordedHash -and $currentHash -eq $recordedHash)
+    if ($isMatch) {
+        return [ordered]@{
+            Status      = 'fresh'
+            Reason      = 'Candidate content matches source file'
+            Fresh       = $true
+            CurrentHash = $currentHash
+        }
+    }
+    else {
+        return [ordered]@{
+            Status      = 'drifted'
+            Reason      = 'Source file content has drifted since candidate retrieval'
+            Fresh       = $false
+            CurrentHash = $currentHash
+        }
+    }
+}
+
 function Optimize-CandidateSet {
     [CmdletBinding()]
     param(
@@ -293,6 +451,7 @@ function Optimize-CandidateSet {
             source_ref       = $cRef
             repository_scope = $cScope
             revision_or_hash = $cRev
+            content_sha256   = if ($cand.content_sha256) { [string]$cand.content_sha256 } else { $null }
             line_start       = $cStart
             line_end         = $cEnd
             original_rank    = $cRank
@@ -327,6 +486,7 @@ function Invoke-JevRerankBatch {
         [Parameter()][string]$Model = 'jev-latest',
         [Parameter()][int]$BatchSize = 20,
         [Parameter()][int]$TimeoutSeconds = 15,
+        [Parameter()][ValidateSet('metadata_only', 'snippets_allowed')][string]$PrivacyScope = 'snippets_allowed',
         [Parameter()][hashtable]$MockResponses = $null,
         [Parameter()][scriptblock]$HttpTransportMock = $null
     )
@@ -359,8 +519,19 @@ function Invoke-JevRerankBatch {
             $requestCount++
             foreach ($cand in $batch) {
                 $cId = [string]$cand.id
-                if ($MockResponses.ContainsKey($cId)) {
-                    $mVal = $MockResponses[$cId]
+                $cRef = [string]$cand.source_ref
+                $refRangeKey = if ($null -ne $cand.line_start -and $null -ne $cand.line_end) { "$cRef`:$($cand.line_start):$($cand.line_end)" } else { $cRef }
+                $candRefKey = "cand:$refRangeKey"
+
+                $matchedKey = if ($MockResponses.ContainsKey($cId)) { $cId }
+                    elseif ($MockResponses.ContainsKey($candRefKey)) { $candRefKey }
+                    elseif ($MockResponses.ContainsKey($refRangeKey)) { $refRangeKey }
+                    elseif ($MockResponses.ContainsKey($cRef)) { $cRef }
+                    elseif ($MockResponses.ContainsKey('*')) { '*' }
+                    else { $null }
+
+                if ($null -ne $matchedKey) {
+                    $mVal = $MockResponses[$matchedKey]
                     if ($mVal -is [hashtable] -and $mVal.ContainsKey('error')) {
                         $scores[$cId] = [ordered]@{
                             Score = $null
@@ -406,19 +577,45 @@ function Invoke-JevRerankBatch {
             $ref = [string]$cand.source_ref
             $rep = [string]$cand.representation
             $linesInfo = if ($null -ne $cand.line_start -and $null -ne $cand.line_end) { " (lines $($cand.line_start)-$($cand.line_end))" } else { "" }
-            $contentSnippet = [string]$cand.content
-            if ($contentSnippet.Length -gt 1200) {
-                $contentSnippet = $contentSnippet.Substring(0, 1200) + "... [truncated]"
+
+            $symbolInfo = ""
+            if ($cand.metadata) {
+                if ($cand.metadata -is [System.Collections.IDictionary]) {
+                    if ($cand.metadata.Contains('symbol')) { $symbolInfo = " (symbol: '$($cand.metadata['symbol'])')" }
+                    elseif ($cand.metadata.Contains('symbol_name')) { $symbolInfo = " (symbol: '$($cand.metadata['symbol_name'])')" }
+                }
+                elseif ($cand.metadata.PSObject.Properties.Name -contains 'symbol') {
+                    $symbolInfo = " (symbol: '$($cand.metadata.symbol)')"
+                }
             }
 
-            $inst = "Candidate ID: '$($cand.id)' from '$ref'$linesInfo ($rep):`n`"$contentSnippet`"`nDoes this candidate contain materially useful information to investigate or execute the task, including evidence that contradicts hypotheses?"
+            $inst = $null
+            $critTrue = $null
+            $critFalse = $null
+
+            if ($PrivacyScope -eq 'metadata_only') {
+                # STRICT PRIVACY: ZERO content or code snippets are transmitted!
+                $inst = "Candidate ID: '$($cand.id)' from '$ref'$linesInfo$symbolInfo ($rep). [Note: Content omitted under metadata-only privacy scope].`nBased solely on these metadata references and file location, does this candidate appear likely relevant or materially useful for the task?"
+                $critTrue = "The file path, symbol, location, or metadata indicates this candidate is likely relevant or materially useful for the task."
+                $critFalse = "The file path or metadata indicates this candidate is likely unrelated, tangential, or lacks utility."
+            }
+            else {
+                $contentSnippet = [string]$cand.content
+                if ($contentSnippet.Length -gt 1200) {
+                    $contentSnippet = $contentSnippet.Substring(0, 1200) + "... [truncated]"
+                }
+
+                $inst = "Candidate ID: '$($cand.id)' from '$ref'$linesInfo$symbolInfo ($rep):`n`"$contentSnippet`"`nDoes this candidate contain materially useful information to investigate or execute the task, including evidence that contradicts hypotheses?"
+                $critTrue = "The candidate contains directly relevant code, contract, configuration, test, or contradictory evidence materially useful for the task."
+                $critFalse = "The candidate is merely superficially related, tangential, or lacks actionable utility."
+            }
 
             $questions[$qKey] = [ordered]@{
-                type = 'noul'
+                type         = 'noul'
                 instructions = $inst
-                criteria = [ordered]@{
-                    true  = "The candidate contains directly relevant code, contract, configuration, test, or contradictory evidence materially useful for the task."
-                    false = "The candidate is merely superficially related, tangential, or lacks actionable utility."
+                criteria     = [ordered]@{
+                    true  = $critTrue
+                    false = $critFalse
                 }
             }
             $qIdx++
@@ -571,14 +768,37 @@ function Invoke-JevRerankBatch {
         }
     }
 
-    $isUnavailable = @($scores.Values | Where-Object { $_.Status -in @('service_unavailable', 'malformed_response') }).Count -gt 0
+    $validEvalCount = @($scores.Values | Where-Object { $_.Status -eq 'ok' }).Count
+    $missingEvalCount = @($scores.Values | Where-Object { $_.Status -eq 'missing_answer' }).Count
+    $invalidEvalCount = @($scores.Values | Where-Object { $_.Status -in @('invalid_score', 'out_of_range', 'null_answer', 'error') }).Count
+    $serviceErrorCount = @($scores.Values | Where-Object { $_.Status -in @('service_unavailable', 'malformed_response') }).Count
+
+    $calcGlobalStatus = if ($scores.Count -eq 0) {
+        'ok'
+    }
+    elseif ($serviceErrorCount -gt 0 -and $validEvalCount -eq 0) {
+        'unavailable'
+    }
+    elseif ($validEvalCount -eq $scores.Count) {
+        'ok'
+    }
+    elseif ($validEvalCount -gt 0) {
+        'partial'
+    }
+    else {
+        'unavailable'
+    }
 
     return [ordered]@{
         Scores             = $scores
         RequestCount       = $requestCount
         PayloadBytes       = $totalPayloadBytes
         Model              = $actualModel
-        ServiceUnavailable = $isUnavailable
+        ServiceUnavailable = ($serviceErrorCount -gt 0)
+        GlobalStatus       = $calcGlobalStatus
+        ValidCount         = $validEvalCount
+        InvalidCount       = $invalidEvalCount
+        MissingCount       = $missingEvalCount
         ErrorMessage       = $batchError
     }
 }
@@ -672,20 +892,50 @@ function Select-ContextPackage {
     $maybeList  = @($classified | Where-Object { -not $_.IsPinned -and ($_.Decision -in @('MAYBE', 'UNROUTED')) } | Sort-Object -Property @{ Expression = { if ($null -ne $_.Score) { $_.Score } else { -1.0 } }; Descending = $true }, @{ Expression = { $_.Candidate.original_rank }; Ascending = $true }, @{ Expression = { $_.Id }; Ascending = $true })
     $dropList   = @($classified | Where-Object { -not $_.IsPinned -and $_.Decision -eq 'DROP' })
 
+    function Measure-SelectedPackageBytes {
+        param([object[]]$Items)
+        if ($null -eq $Items -or $Items.Count -eq 0) { return 0 }
+        $json = @($Items) | ConvertTo-Json -Depth 6 -Compress
+        return [System.Text.Encoding]::UTF8.GetByteCount($json)
+    }
+
+    function New-SelectedCandidateObject {
+        param([object]$Item, [string]$DecisionOverride)
+        $cand = $Item.Candidate
+        $dec = if (-not [string]::IsNullOrWhiteSpace($DecisionOverride)) { $DecisionOverride } else { $Item.Decision }
+        return [ordered]@{
+            id               = $Item.Id
+            source           = $cand.source
+            source_ref       = $cand.source_ref
+            repository_scope = $cand.repository_scope
+            revision_or_hash = $cand.revision_or_hash
+            line_start       = $cand.line_start
+            line_end         = $cand.line_end
+            original_rank    = $cand.original_rank
+            representation   = $cand.representation
+            content          = $cand.content
+            score            = $Item.Score
+            decision         = $dec
+            provenances      = $cand.provenances
+        }
+    }
+
     $selected = [System.Collections.Generic.List[object]]::new()
     $manifest = [System.Collections.Generic.List[object]]::new()
 
-    # Pre-check: verify if PINNED alone exceed MaxBudgetBytes
-    $pinnedTotalBytes = 0
+    # Pre-check: verify if PINNED candidates alone exceed MaxBudgetBytes
+    $pinnedObjects = [System.Collections.Generic.List[object]]::new()
     foreach ($p in $pinnedList) {
-        $pinnedTotalBytes += [System.Text.Encoding]::UTF8.GetByteCount([string]$p.Candidate.content)
+        $pinnedObjects.Add((New-SelectedCandidateObject -Item $p -DecisionOverride 'PINNED'))
     }
+
+    $pinnedTotalBytes = Measure-SelectedPackageBytes -Items @($pinnedObjects.ToArray())
     if ($pinnedTotalBytes -gt $MaxBudgetBytes) {
         return [ordered]@{
             version      = 1
             status       = 'budget_exceeded'
             policy       = $Policy
-            message      = "Pinned candidate content ($pinnedTotalBytes bytes) exceeds MaxBudgetBytes ($MaxBudgetBytes). Sharding required."
+            message      = "Pinned candidate package ($pinnedTotalBytes bytes) exceeds MaxBudgetBytes ($MaxBudgetBytes). Sharding required."
             selected     = @()
             manifest     = @($classified | ForEach-Object {
                 [ordered]@{
@@ -704,11 +954,12 @@ function Select-ContextPackage {
         }
     }
 
-    $tracker = [ordered]@{
-        DeliveredBytes = 0
+    # 1. Add Pinned items
+    foreach ($po in $pinnedObjects) {
+        $selected.Add($po)
     }
 
-    # Helper to measure addition of candidate
+    # Helper to measure tentative addition of candidate against MaxBudgetBytes
     function Try-AddCandidate {
         param([object]$Item, [string]$ExclusionDefaultReason)
 
@@ -725,8 +976,11 @@ function Select-ContextPackage {
             return $false
         }
 
-        $candBytes = [System.Text.Encoding]::UTF8.GetByteCount([string]$Item.Candidate.content)
-        if (($tracker.DeliveredBytes + $candBytes) -gt $MaxBudgetBytes) {
+        $selectedObj = New-SelectedCandidateObject -Item $Item
+        $tentativeItems = @($selected.ToArray()) + @($selectedObj)
+        $tentativeBytes = Measure-SelectedPackageBytes -Items $tentativeItems
+
+        if ($tentativeBytes -gt $MaxBudgetBytes) {
             $manifest.Add([ordered]@{
                 id               = $Item.Id
                 source_ref       = $Item.Candidate.source_ref
@@ -739,48 +993,8 @@ function Select-ContextPackage {
             return $false
         }
 
-        # Add to selected
-        $selectedObj = [ordered]@{
-            id               = $Item.Id
-            source           = $Item.Candidate.source
-            source_ref       = $Item.Candidate.source_ref
-            repository_scope = $Item.Candidate.repository_scope
-            revision_or_hash = $Item.Candidate.revision_or_hash
-            line_start       = $Item.Candidate.line_start
-            line_end         = $Item.Candidate.line_end
-            original_rank    = $Item.Candidate.original_rank
-            representation   = $Item.Candidate.representation
-            content          = $Item.Candidate.content
-            score            = $Item.Score
-            decision         = $Item.Decision
-            provenances      = $Item.Candidate.provenances
-        }
-
         $selected.Add($selectedObj)
-        $tracker.DeliveredBytes += $candBytes
         return $true
-    }
-
-    # 1. Add Pinned
-    foreach ($p in $pinnedList) {
-        $candBytes = [System.Text.Encoding]::UTF8.GetByteCount([string]$p.Candidate.content)
-        $selectedObj = [ordered]@{
-            id               = $p.Id
-            source           = $p.Candidate.source
-            source_ref       = $p.Candidate.source_ref
-            repository_scope = $p.Candidate.repository_scope
-            revision_or_hash = $p.Candidate.revision_or_hash
-            line_start       = $p.Candidate.line_start
-            line_end         = $p.Candidate.line_end
-            original_rank    = $p.Candidate.original_rank
-            representation   = $p.Candidate.representation
-            content          = $p.Candidate.content
-            score            = $p.Score
-            decision         = 'PINNED'
-            provenances      = $p.Candidate.provenances
-        }
-        $selected.Add($selectedObj)
-        $tracker.DeliveredBytes += $candBytes
     }
 
     # 2. Add KEEP
@@ -806,13 +1020,7 @@ function Select-ContextPackage {
         })
     }
 
-    $deliveredPackageBytes = if ($selected.Count -gt 0) {
-        $jsonStr = $selected | ConvertTo-Json -Depth 6 -Compress
-        [System.Text.Encoding]::UTF8.GetByteCount($jsonStr)
-    }
-    else {
-        0
-    }
+    $deliveredPackageBytes = Measure-SelectedPackageBytes -Items @($selected.ToArray())
 
     return [ordered]@{
         version         = 1
@@ -831,6 +1039,10 @@ Export-ModuleMember -Function `
     Test-ContextCandidate, `
     Assert-CandidatePathContainment, `
     Test-CandidateSafety, `
+    Sanitize-TaskObjective, `
+    Test-ContextCandidateFreshness, `
+    Resolve-CanonicalDirectoryRoot, `
+    Resolve-CanonicalReparsePath, `
     Optimize-CandidateSet, `
     Invoke-JevRerankBatch, `
     Select-ContextPackage
