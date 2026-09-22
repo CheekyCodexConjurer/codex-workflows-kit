@@ -33,7 +33,7 @@ function Assert-Test {
     }
 }
 
-Write-Host "Running Doctor Installed Contract & Swarm Delegation Tests..." -ForegroundColor Cyan
+Write-Host "Running Doctor Installed Contract Tests..." -ForegroundColor Cyan
 
 # ---------------------------------------------------------
 # 1. AST Fixture & Production Function Extraction
@@ -184,9 +184,30 @@ foreach ($item in $obsoleteReadOnlyContracts) {
 # ---------------------------------------------------------
 Write-Host "`n-- 6. End-to-End Doctor Execution Verification --" -ForegroundColor Yellow
 
-$doctorRun = & powershell -NoProfile -NonInteractive -File $doctorPath 2>&1
-$doctorExit = $LASTEXITCODE
-$doctorOutput = $doctorRun -join "`n"
+$fixtureRoot = Join-Path ([IO.Path]::GetTempPath()) ('codex-doctor-contract-' + [Guid]::NewGuid().ToString('N'))
+$fixtureParameters = [ordered]@{
+    CodexHome = Join-Path $fixtureRoot 'codex'
+    AgentsHome = Join-Path $fixtureRoot 'agents'
+    AntigravityHome = Join-Path $fixtureRoot 'gemini'
+}
+$safeHelper = Join-Path $repoRoot 'scripts\invoke-safe-powershell.ps1'
+try {
+    $installed = & $safeHelper -File (Join-Path $repoRoot 'scripts\install.ps1') -WorkingDirectory $repoRoot -Parameters $fixtureParameters -PassThru
+    Assert-Test 'Disposable safe fixture installs' ([int]$installed.ExitCode -eq 0) $installed.StdErr
+    $nativeSwitch = & $safeHelper -File (Join-Path $repoRoot 'scripts\switch-subagent-backend.ps1') -WorkingDirectory $repoRoot -Parameters @{ Backend = 'native'; CodexHome = $fixtureParameters.CodexHome } -PassThru
+    Assert-Test 'Disposable fixture selects native backend' ([int]$nativeSwitch.ExitCode -eq 0) $nativeSwitch.StdErr
+    $doctorRun = & $safeHelper -File $doctorPath -WorkingDirectory $repoRoot -Parameters $fixtureParameters -PassThru
+    $doctorExit = [int]$doctorRun.ExitCode
+    $doctorOutput = @($doctorRun.StdOut, $doctorRun.StdErr) -join "`n"
+}
+finally {
+    $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') + '\'
+    $resolvedFixtureRoot = [IO.Path]::GetFullPath($fixtureRoot)
+    if ($resolvedFixtureRoot.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase) -and
+        (Test-Path -LiteralPath $resolvedFixtureRoot -PathType Container)) {
+        Remove-Item -LiteralPath $resolvedFixtureRoot -Recurse -Force
+    }
+}
 
 Assert-Test "Doctor executes with exit code 0" ($doctorExit -eq 0)
 Assert-Test "Doctor reports Installed contract OK" ($doctorOutput -match '(?m)\[OK\]\s+Installed contract: No legacy contract markers')
@@ -205,6 +226,6 @@ if ($script:Failures.Count -gt 0) {
     exit 1
 }
 else {
-    Write-Host "All swarm doctor contract tests passed successfully!" -ForegroundColor Green
+    Write-Host "All doctor contract tests passed successfully!" -ForegroundColor Green
     exit 0
 }

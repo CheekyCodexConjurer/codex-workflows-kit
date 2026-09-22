@@ -72,7 +72,7 @@ function Read-ExistingInstallState {
     if ([string]$state.product -cne 'codex-workflows-kit') {
         throw 'Install state belongs to another product; switching is blocked.'
     }
-    if ([string]$state.schemaVersion -notin @('1', '2', '3', '4', '5')) {
+    if ([string]$state.schemaVersion -notin @('1', '2', '3', '4', '5', '6')) {
         throw "Install state has unsupported schema $($state.schemaVersion); switching is blocked."
     }
     if ([int]$state.schemaVersion -ge 3 -and (-not ($state.PSObject.Properties.Name -contains 'pendingFiles'))) {
@@ -84,13 +84,13 @@ function Read-ExistingInstallState {
         }
         Assert-CodexBackendState -BackendState $state.codexBackend
     }
-    if ($state.PSObject.Properties.Name -contains 'codexDelegation') {
+    if ([int]$state.schemaVersion -le 5 -and $state.PSObject.Properties.Name -contains 'codexDelegation') {
         if ($null -eq $state.codexDelegation) {
             throw "Install state contains invalid codexDelegation property; switching is blocked."
         }
         Assert-CodexDelegationState -DelegationState $state.codexDelegation
     }
-    if ($state.PSObject.Properties.Name -contains 'codexStrategy') {
+    if ([int]$state.schemaVersion -le 5 -and $state.PSObject.Properties.Name -contains 'codexStrategy') {
         if ($null -eq $state.codexStrategy) {
             throw "Install state contains invalid codexStrategy property; switching is blocked."
         }
@@ -111,6 +111,16 @@ function Read-ExistingInstallState {
             throw "Schema 5 install state is missing required codexDelegation; switching is blocked."
         }
         Assert-CodexDelegationState -DelegationState $state.codexDelegation
+    }
+    if ([string]$state.schemaVersion -eq '6') {
+        foreach ($property in @('codexBackend', 'codexContinuation')) {
+            if (-not ($state.PSObject.Properties.Name -contains $property) -or $null -eq $state.$property) {
+                throw "Schema 6 install state is missing required $property; switching is blocked."
+            }
+        }
+        if (($state.PSObject.Properties.Name -contains 'codexDelegation') -or ($state.PSObject.Properties.Name -contains 'codexStrategy')) {
+            throw 'Schema 6 install state contains retired orchestration selectors; switching is blocked.'
+        }
     }
     return $state
 }
@@ -162,6 +172,39 @@ function Get-ExistingPendingFiles {
     return @($pending.ToArray())
 }
 
+function Assert-ExistingRuntimeMatchesState {
+    param([object]$State, [Parameter(Mandatory)][AllowEmptyString()][string]$Text)
+
+    if ($null -eq $State) { return }
+    $runtime = Get-CodexRuntimeBlockInfo -Text $Text
+    if (-not $runtime.Present) {
+        throw 'Install state exists but AGENTS.md has no managed runtime block; switching is blocked.'
+    }
+    if ($State.PSObject.Properties.Name -contains 'codexBackend' -and
+        $runtime.Backend -cne [string]$State.codexBackend.selected) {
+        throw 'Configuration drift detected: codexBackend differs between install state and AGENTS.md.'
+    }
+    if ($State.PSObject.Properties.Name -contains 'codexContinuation' -and
+        $runtime.Continuation -cne [string]$State.codexContinuation.selected) {
+        throw 'Configuration drift detected: codexContinuation differs between install state and AGENTS.md.'
+    }
+
+    if ([string]$State.schemaVersion -eq '5') {
+        if (-not ($State.PSObject.Properties.Name -contains 'codexDelegation') -or
+            $runtime.Policy -cne [string]$State.codexDelegation.selected) {
+            throw 'Configuration drift detected: legacy delegation selector differs between install state and AGENTS.md.'
+        }
+        $hasStrategyState = $State.PSObject.Properties.Name -contains 'codexStrategy'
+        if ($hasStrategyState -ne [bool]$runtime.HasStrategyKey -or
+            ($hasStrategyState -and $runtime.Strategy -cne [string]$State.codexStrategy.selected)) {
+            throw 'Configuration drift detected: legacy strategy selector differs between install state and AGENTS.md.'
+        }
+    }
+    elseif ([string]$State.schemaVersion -eq '6') {
+        Assert-CodexAgentsRuntimeBlock -Text $Text -Backend ([string]$State.codexBackend.selected) -Continuation ([string]$State.codexContinuation.selected)
+    }
+}
+
 $existingState = Read-ExistingInstallState
 
 if ($Status) {
@@ -181,18 +224,6 @@ if ($Status) {
     else {
         throw 'Install state is missing codexBackend.'
     }
-    $statePolicy = if ($existingState.PSObject.Properties.Name -contains 'codexDelegation') {
-        [string]$existingState.codexDelegation.selected
-    }
-    else {
-        throw 'Install state is missing codexDelegation.'
-    }
-    $stateStrategy = if ($existingState.PSObject.Properties.Name -contains 'codexStrategy') {
-        [string]$existingState.codexStrategy.selected
-    }
-    else {
-        'worker'
-    }
     $stateContinuation = if ($existingState.PSObject.Properties.Name -contains 'codexContinuation') {
         [string]$existingState.codexContinuation.selected
     }
@@ -203,41 +234,30 @@ if ($Status) {
     if ($stateBackend -notin @('native', 'deepseek')) {
         throw "Install state has invalid selected backend: $stateBackend"
     }
-    if ($statePolicy -notin @('balanced', 'aggressive', 'swarm')) {
-        throw "Install state has invalid selected policy: $statePolicy"
-    }
-    if ($stateStrategy -notin @('worker', 'critical')) {
-        throw "Install state has invalid selected strategy: $stateStrategy"
-    }
     if ($stateContinuation -notin @('active_follow', 'park_and_wake')) {
         throw "Install state has invalid selected continuation: $stateContinuation"
     }
 
     $agentsText = Get-Content -LiteralPath $agentsMdPath -Raw -Encoding UTF8
     $rtInfo = Get-CodexRuntimeBlockInfo -Text $agentsText
+    Assert-ExistingRuntimeMatchesState -State $existingState -Text $agentsText
     if (-not $rtInfo.Present) {
         throw 'Installed AGENTS.md is missing the managed runtime block (# BEGIN CODEX-WORKFLOWS-KIT: runtime).'
     }
     if ($rtInfo.Backend -cne $stateBackend) {
         throw "Active backend mismatch: state has '$stateBackend', but AGENTS.md runtime block has '$($rtInfo.Backend)'."
     }
-    if ($rtInfo.Policy -cne $statePolicy) {
-        throw "Active delegation policy mismatch: state has '$statePolicy', but AGENTS.md runtime block has '$($rtInfo.Policy)'."
-    }
-    if ($rtInfo.Strategy -cne $stateStrategy) {
-        throw "Active subagent strategy mismatch: state has '$stateStrategy', but AGENTS.md runtime block has '$($rtInfo.Strategy)'."
-    }
     if ($rtInfo.Continuation -cne $stateContinuation) {
         throw "Active subagent continuation mismatch: state has '$stateContinuation', but AGENTS.md runtime block has '$($rtInfo.Continuation)'."
     }
-
     $configText = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8
     Assert-CodexBackendMatrix -Text $configText -Backend $stateBackend -BackendState $existingState.codexBackend | Out-Null
 
     Write-Host "Active subagent backend: $stateBackend"
-    Write-Host "Active delegation policy: $statePolicy"
-    Write-Host "Active subagent strategy: $stateStrategy"
     Write-Host "Active subagent continuation: $stateContinuation"
+    if ([string]$existingState.schemaVersion -eq '5') {
+        Write-Host 'Migration required: the next backend or continuation switch will remove retired selectors.'
+    }
     Write-Host "Codex home: $CodexHome"
     return
 }
@@ -280,51 +300,7 @@ else {
 if ($currentBackend -notin @('native', 'deepseek')) {
     throw "Invalid subagent backend '$currentBackend'; switching is blocked."
 }
-
-# Determine active policy
-$currentPolicy = if ($null -ne $existingState -and ($existingState.PSObject.Properties.Name -contains 'codexDelegation')) {
-    Assert-CodexDelegationState -DelegationState $existingState.codexDelegation
-    [string]$existingState.codexDelegation.selected
-}
-else {
-    $rtInfo = Get-CodexRuntimeBlockInfo -Text $existingAgentsText
-    if ($rtInfo.Present -and -not [string]::IsNullOrWhiteSpace($rtInfo.Policy)) {
-        if ($rtInfo.Policy -notin @('balanced', 'aggressive', 'swarm')) {
-            throw "Invalid delegation policy '$($rtInfo.Policy)' in AGENTS.md runtime block."
-        }
-        $rtInfo.Policy
-    }
-    elseif ($null -eq $existingState -or [int]$existingState.schemaVersion -lt 5) {
-        'balanced'
-    }
-    else {
-        throw 'Install state is missing delegation policy.'
-    }
-}
-if ($currentPolicy -notin @('balanced', 'aggressive', 'swarm')) {
-    throw "Invalid delegation policy '$currentPolicy'; switching is blocked."
-}
-
-# Determine active strategy
-$currentStrategy = if ($null -ne $existingState -and ($existingState.PSObject.Properties.Name -contains 'codexStrategy')) {
-    Assert-CodexStrategyState -StrategyState $existingState.codexStrategy
-    [string]$existingState.codexStrategy.selected
-}
-else {
-    $rtInfo = Get-CodexRuntimeBlockInfo -Text $existingAgentsText
-    if ($rtInfo.Present -and -not [string]::IsNullOrWhiteSpace($rtInfo.Strategy)) {
-        if ($rtInfo.Strategy -notin @('worker', 'critical')) {
-            throw "Invalid subagent strategy '$($rtInfo.Strategy)' in AGENTS.md runtime block."
-        }
-        $rtInfo.Strategy
-    }
-    else {
-        'worker'
-    }
-}
-if ($currentStrategy -notin @('worker', 'critical')) {
-    throw "Invalid subagent strategy '$currentStrategy'; switching is blocked."
-}
+Assert-ExistingRuntimeMatchesState -State $existingState -Text $existingAgentsText
 
 $configText = if (Test-Path -LiteralPath $configPath -PathType Leaf) {
     Get-Content -LiteralPath $configPath -Raw -Encoding UTF8
@@ -343,7 +319,7 @@ else {
 Assert-CodexBackendState -BackendState $backendState
 Assert-CodexBackendMatrix -Text $configText -Backend $currentBackend -BackendState $backendState | Out-Null
 
-$nextAgentsText = Set-CodexAgentsManagedBlockText -ExistingAgentsText $existingAgentsText -TemplateText $templateText -Backend $currentBackend -Policy $currentPolicy -Strategy $currentStrategy -Continuation $Continuation
+$nextAgentsText = Set-CodexAgentsManagedBlockText -ExistingAgentsText $existingAgentsText -TemplateText $templateText -Backend $currentBackend -Continuation $Continuation
 $agentsChanged = $nextAgentsText -cne $existingAgentsText
 
 $nextAgentsHash = if ($agentsChanged) {
@@ -367,8 +343,11 @@ $nextContinuationState = [ordered]@{
 Assert-CodexContinuationState -ContinuationState $nextContinuationState
 
 $stateNeedsWrite = $null -eq $existingState -or
+    -not ($existingState.PSObject.Properties.Name -contains 'codexBackend') -or
     -not ($existingState.PSObject.Properties.Name -contains 'codexContinuation') -or
-    [string]$existingState.schemaVersion -ne '5' -or
+    ($existingState.PSObject.Properties.Name -contains 'codexDelegation') -or
+    ($existingState.PSObject.Properties.Name -contains 'codexStrategy') -or
+    [string]$existingState.schemaVersion -ne '6' -or
     [string]$existingState.codexContinuation.selected -cne $Continuation -or
     $null -eq $trackedAgents -or
     [string]$trackedAgents.sha256 -cne [string]$nextAgentsHash
@@ -395,10 +374,11 @@ try {
         $nextState = [ordered]@{}
         if ($null -ne $existingState) {
             foreach ($prop in $existingState.PSObject.Properties) {
+                if ($prop.Name -in @('codexDelegation', 'codexStrategy')) { continue }
                 $nextState[$prop.Name] = $prop.Value
             }
         }
-        $nextState.schemaVersion = 5
+        $nextState.schemaVersion = 6
         $nextState.product = 'codex-workflows-kit'
         if (-not $nextState.Contains('profile')) {
             $nextState.profile = 'safe'
@@ -414,18 +394,6 @@ try {
             }
         }
         $nextState.codexBackend = $backendState
-        $nextState.codexDelegation = if ($null -ne $existingState -and ($existingState.PSObject.Properties.Name -contains 'codexDelegation')) {
-            $existingState.codexDelegation
-        }
-        else {
-            New-CodexDelegationState -ExistingInstallState $existingState
-        }
-        $nextState.codexStrategy = if ($null -ne $existingState -and ($existingState.PSObject.Properties.Name -contains 'codexStrategy')) {
-            $existingState.codexStrategy
-        }
-        else {
-            New-CodexStrategyState -ExistingInstallState $existingState
-        }
         $nextState.codexContinuation = $nextContinuationState
 
         if ($preExisting[$statePath]) {
@@ -440,32 +408,46 @@ try {
 
     # Verify written runtime block
     if (Test-Path -LiteralPath $agentsMdPath -PathType Leaf) {
-        Assert-CodexAgentsRuntimeBlock -Text (Get-Content -LiteralPath $agentsMdPath -Raw -Encoding UTF8) -Backend $currentBackend -Policy $currentPolicy -Strategy $currentStrategy -Continuation $Continuation
+        Assert-CodexAgentsRuntimeBlock -Text (Get-Content -LiteralPath $agentsMdPath -Raw -Encoding UTF8) -Backend $currentBackend -Continuation $Continuation
+    }
+    if ($stateNeedsWrite) {
+        $writtenState = Get-Content -LiteralPath $statePath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ([string]$writtenState.schemaVersion -cne '6' -or
+            ($writtenState.PSObject.Properties.Name -contains 'codexDelegation') -or
+            ($writtenState.PSObject.Properties.Name -contains 'codexStrategy')) {
+            throw 'Written install state did not satisfy the schema 6 selector contract.'
+        }
     }
 }
 catch {
     $switchError = $_.Exception.Message
+    $rollbackFailed = $false
     foreach ($entry in $backedUpFiles.GetEnumerator()) {
         try {
-            Copy-Item -LiteralPath $entry.Value -Destination $entry.Key -Force -ErrorAction SilentlyContinue
+            Copy-Item -LiteralPath $entry.Value -Destination $entry.Key -Force -ErrorAction Stop
         }
         catch {
+            $rollbackFailed = $true
+            Write-Warning "Rollback failed for $($entry.Key): $($_.Exception.Message)"
         }
     }
     foreach ($createdPath in $newlyCreatedFiles) {
         try {
             if (Test-Path -LiteralPath $createdPath -PathType Leaf) {
-                Remove-Item -LiteralPath $createdPath -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $createdPath -Force -ErrorAction Stop
             }
         }
         catch {
+            $rollbackFailed = $true
+            Write-Warning "Rollback failed removing newly-created file ${createdPath}: $($_.Exception.Message)"
         }
+    }
+    if ($rollbackFailed) {
+        throw "Continuation switch failed and rollback was incomplete: $switchError"
     }
     throw "Failed to switch subagent continuation to '$Continuation': $switchError"
 }
 
 Write-Host "Switched subagent continuation to '$Continuation' for Codex home: $CodexHome"
 Write-Host "Active subagent backend: $currentBackend"
-Write-Host "Active delegation policy: $currentPolicy"
-Write-Host "Active subagent strategy: $currentStrategy"
 Write-Host "Active subagent continuation: $Continuation"

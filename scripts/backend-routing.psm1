@@ -527,26 +527,6 @@ function Assert-CodexDelegationState {
     }
 }
 
-function New-CodexDelegationState {
-    param([object]$ExistingInstallState)
-
-    if ($null -ne $ExistingInstallState -and (Test-ObjectProperty -Object $ExistingInstallState -Name 'codexDelegation')) {
-        $existingDelegation = Get-ObjectPropertyValue -Object $ExistingInstallState -Name 'codexDelegation'
-        Assert-CodexDelegationState -DelegationState $existingDelegation
-        return [ordered]@{
-            version = 1
-            selected = [string](Get-ObjectPropertyValue -Object $existingDelegation -Name 'selected')
-        }
-    }
-
-    $state = [ordered]@{
-        version = 1
-        selected = 'balanced'
-    }
-    Assert-CodexDelegationState -DelegationState $state
-    return $state
-}
-
 function Assert-CodexStrategyState {
     param([Parameter(Mandatory)][object]$StrategyState)
 
@@ -557,26 +537,6 @@ function Assert-CodexStrategyState {
     if ($selected -notin @('worker', 'critical')) {
         throw "Strategy state has unsupported selected strategy: $selected"
     }
-}
-
-function New-CodexStrategyState {
-    param([object]$ExistingInstallState)
-
-    if ($null -ne $ExistingInstallState -and (Test-ObjectProperty -Object $ExistingInstallState -Name 'codexStrategy')) {
-        $existingStrategy = Get-ObjectPropertyValue -Object $ExistingInstallState -Name 'codexStrategy'
-        Assert-CodexStrategyState -StrategyState $existingStrategy
-        return [ordered]@{
-            version = 1
-            selected = [string](Get-ObjectPropertyValue -Object $existingStrategy -Name 'selected')
-        }
-    }
-
-    $state = [ordered]@{
-        version = 1
-        selected = 'worker'
-    }
-    Assert-CodexStrategyState -StrategyState $state
-    return $state
 }
 
 function Assert-CodexContinuationState {
@@ -669,19 +629,15 @@ function Get-CodexRuntimeBlockInfo {
     if ($backendMatches.Count -eq 0) {
         throw "Managed runtime block is missing 'subagent_backend' key."
     }
-    if ($policyMatches.Count -eq 0) {
-        throw "Managed runtime block is missing 'delegation_policy' key."
-    }
-
     $backendVal = $backendMatches[0].Groups[1].Value.Trim()
-    $policyVal = $policyMatches[0].Groups[1].Value.Trim()
+    $policyVal = if ($policyMatches.Count -eq 1) { $policyMatches[0].Groups[1].Value.Trim() } else { $null }
     $strategyVal = if ($strategyMatches.Count -eq 1) { $strategyMatches[0].Groups[1].Value.Trim() } else { 'worker' }
     $continuationVal = if ($continuationMatches.Count -eq 1) { $continuationMatches[0].Groups[1].Value.Trim() } else { 'active_follow' }
 
     if ($backendVal -notin @('native', 'deepseek')) {
         throw "Managed runtime block contains unsupported subagent_backend: '$backendVal'"
     }
-    if ($policyVal -notin @('balanced', 'aggressive', 'swarm')) {
+    if ($null -ne $policyVal -and $policyVal -notin @('balanced', 'aggressive', 'swarm')) {
         throw "Managed runtime block contains unsupported delegation_policy: '$policyVal'"
     }
     if ($strategyVal -notin @('worker', 'critical')) {
@@ -706,16 +662,12 @@ function Get-CodexRuntimeBlockInfo {
 function Format-CodexRuntimeBlock {
     param(
         [Parameter(Mandatory)][ValidateSet('native', 'deepseek')][string]$Backend,
-        [Parameter(Mandatory)][ValidateSet('balanced', 'aggressive', 'swarm')][string]$Policy,
-        [Parameter()][ValidateSet('worker', 'critical')][string]$Strategy = 'worker',
         [Parameter()][ValidateSet('active_follow', 'park_and_wake')][string]$Continuation = 'active_follow'
     )
 
     $nl = [Environment]::NewLine
     return '# BEGIN CODEX-WORKFLOWS-KIT: runtime' + $nl +
         'subagent_backend = ' + $Backend + $nl +
-        'delegation_policy = ' + $Policy + $nl +
-        'subagent_strategy = ' + $Strategy + $nl +
         'subagent_continuation = ' + $Continuation + $nl +
         '# END CODEX-WORKFLOWS-KIT: runtime'
 }
@@ -725,13 +677,11 @@ function Set-CodexAgentsManagedBlockText {
         [Parameter(Mandatory)][AllowEmptyString()][string]$ExistingAgentsText,
         [Parameter(Mandatory)][string]$TemplateText,
         [Parameter(Mandatory)][ValidateSet('native', 'deepseek')][string]$Backend,
-        [Parameter(Mandatory)][ValidateSet('balanced', 'aggressive', 'swarm')][string]$Policy,
-        [Parameter()][ValidateSet('worker', 'critical')][string]$Strategy = 'worker',
         [Parameter()][ValidateSet('active_follow', 'park_and_wake')][string]$Continuation = 'active_follow'
     )
 
     $nl = [Environment]::NewLine
-    $runtimeBlock = Format-CodexRuntimeBlock -Backend $Backend -Policy $Policy -Strategy $Strategy -Continuation $Continuation
+    $runtimeBlock = Format-CodexRuntimeBlock -Backend $Backend -Continuation $Continuation
     $begin = '# BEGIN CODEX-WORKFLOWS-KIT'
     $end = '# END CODEX-WORKFLOWS-KIT'
     $normalizedTemplate = ($TemplateText.Trim() -replace "`r?`n", $nl)
@@ -842,8 +792,6 @@ function Assert-CodexAgentsRuntimeBlock {
     param(
         [Parameter(Mandatory)][AllowEmptyString()][string]$Text,
         [Parameter(Mandatory)][ValidateSet('native', 'deepseek')][string]$Backend,
-        [Parameter(Mandatory)][ValidateSet('balanced', 'aggressive', 'swarm')][string]$Policy,
-        [Parameter()][ValidateSet('worker', 'critical')][string]$Strategy = 'worker',
         [Parameter()][ValidateSet('active_follow', 'park_and_wake')][string]$Continuation = 'active_follow'
     )
 
@@ -854,11 +802,9 @@ function Assert-CodexAgentsRuntimeBlock {
     if ($info.Backend -cne $Backend) {
         throw "Installed AGENTS.md runtime block has subagent_backend='$($info.Backend)', expected '$Backend'."
     }
-    if ($info.Policy -cne $Policy) {
-        throw "Installed AGENTS.md runtime block has delegation_policy='$($info.Policy)', expected '$Policy'."
-    }
-    if ($info.Strategy -cne $Strategy) {
-        throw "Installed AGENTS.md runtime block has subagent_strategy='$($info.Strategy)', expected '$Strategy'."
+    if ($info.Body -match '(?m)^\s*(?:delegation_policy|subagent_strategy)\s*=' -or
+        $null -ne $info.Policy -or $info.HasStrategyKey) {
+        throw 'Installed AGENTS.md contains retired orchestration selectors; migrate the managed block before use.'
     }
     if ($info.Continuation -cne $Continuation) {
         throw "Installed AGENTS.md runtime block has subagent_continuation='$($info.Continuation)', expected '$Continuation'."
@@ -1563,151 +1509,48 @@ function Test-CodexBatchCapabilityGate {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][ValidateSet('native', 'deepseek')][string]$Backend,
-        [Parameter(Mandatory)][ValidateSet('balanced', 'aggressive', 'swarm')][string]$Policy,
-        [Parameter()][string[]]$Capabilities = @(),
-        [Parameter()][int]$ExposedCapacity = -1,
-        [Parameter()][string[]]$CallableTools = @(),
-        [Parameter()][object]$AuthoritativeBridgeProbe = $null
+        [Parameter(Mandatory)][bool]$ParallelRequested,
+        [string[]]$Capabilities = @(),
+        [int]$ExposedCapacity = -1,
+        [string[]]$CallableTools = @(),
+        [object]$AuthoritativeBridgeProbe = $null
     )
 
-    # Preflight swarm operacionalmente inequívoco:
-    # Sob swarm+deepseek, o parent deve confirmar tanto que subagents_spawn_batch está callable
-    # quanto que a superfície autoritativa de status/health do bridge anuncia capability batch_scheduler;
-    # ausência ou inconsistência bloqueia com falha fechada, sem fallback silencioso para aggressive.
-    # O helper PowerShell isolado modela essa verificação mas não deve ser apresentado como se
-    # sozinho provasse o daemon real em runtime.
-    if ($Policy -cne 'swarm') {
-        return [pscustomobject]@{
-            Pass = $true
-            Detail = "Policy '$Policy' does not require batch scheduler preflight."
-            RequiredCapability = $null
-        }
+    if (-not $ParallelRequested) {
+        return [pscustomobject]@{ Pass = $true; Detail = 'Single-front dispatch needs no batch scheduler.'; RequiredCapability = $null }
     }
-
-    if ($Backend -ceq 'deepseek') {
-        # 1. Callable tools verification (if provided)
-        if ($CallableTools.Count -gt 0) {
-            $hasBatchTool = $false
-            foreach ($tool in $CallableTools) {
-                if ($tool -in @('subagents_spawn_batch', 'deepseek_spawn_batch')) {
-                    $hasBatchTool = $true
-                    break
-                }
-            }
-            if (-not $hasBatchTool) {
-                return [pscustomobject]@{
-                    Pass = $false
-                    Detail = "Preflight swarm blocked: deepseek backend requires subagents_spawn_batch tool to be callable. Silent demotion to aggressive is forbidden (jamais rebaixa silenciosamente para aggressive)."
-                    RequiredCapability = 'subagents_spawn_batch'
-                }
-            }
+    if ($Backend -eq 'native') {
+        if ($ExposedCapacity -lt 2) {
+            return [pscustomobject]@{ Pass = $false; Detail = 'Native parallel capacity is absent or unverified.'; RequiredCapability = 'native_capacity' }
         }
-
-        # 2. Authoritative bridge status/health probe verification (if provided)
-        if ($null -ne $AuthoritativeBridgeProbe) {
-            $probeHealthy = $true
-            if ($AuthoritativeBridgeProbe.PSObject.Properties['status']) {
-                $statusVal = [string]$AuthoritativeBridgeProbe.status
-                if ($statusVal -notin @('ok', 'healthy', 'ready')) {
-                    $probeHealthy = $false
-                }
-            }
-            elseif ($AuthoritativeBridgeProbe -is [System.Collections.IDictionary] -and $AuthoritativeBridgeProbe.Contains('status')) {
-                $statusVal = [string]$AuthoritativeBridgeProbe['status']
-                if ($statusVal -notin @('ok', 'healthy', 'ready')) {
-                    $probeHealthy = $false
-                }
-            }
-
-            if (-not $probeHealthy) {
-                return [pscustomobject]@{
-                    Pass = $false
-                    Detail = "Preflight swarm blocked: authoritative bridge status/health probe reported unhealthy status. Silent demotion to aggressive is forbidden (jamais rebaixa silenciosamente para aggressive)."
-                    RequiredCapability = 'batch_scheduler'
-                }
-            }
-
-            $probeCaps = @()
-            if ($AuthoritativeBridgeProbe.PSObject.Properties['capabilities']) {
-                $probeCaps = @($AuthoritativeBridgeProbe.capabilities)
-            }
-            elseif ($AuthoritativeBridgeProbe -is [System.Collections.IDictionary] -and $AuthoritativeBridgeProbe.Contains('capabilities')) {
-                $probeCaps = @($AuthoritativeBridgeProbe['capabilities'])
-            }
-
-            $probeHasBatch = $false
-            foreach ($cap in $probeCaps) {
-                if ($cap -in @('batch_scheduler', 'batch-scheduler', 'batch_scheduling', 'batch')) {
-                    $probeHasBatch = $true
-                    break
-                }
-            }
-            if (-not $probeHasBatch) {
-                return [pscustomobject]@{
-                    Pass = $false
-                    Detail = "Preflight swarm blocked: authoritative bridge status/health probe does not announce batch_scheduler capability. Silent demotion to aggressive is forbidden (jamais rebaixa silenciosamente para aggressive)."
-                    RequiredCapability = 'batch_scheduler'
-                }
-            }
-        }
-
-        # 3. Capabilities array verification
-        $hasBatch = $false
-        foreach ($cap in $Capabilities) {
-            if ($cap -in @('batch_scheduler', 'batch-scheduler', 'batch_scheduling', 'batch')) {
-                $hasBatch = $true
-                break
-            }
-        }
-        if ($null -ne $AuthoritativeBridgeProbe -and $probeHasBatch) {
-            $hasBatch = $true
-        }
-
-        if (-not $hasBatch) {
-            return [pscustomobject]@{
-                Pass = $false
-                Detail = "Preflight swarm blocked: deepseek backend requires batch scheduler capability from bridge, but capability is absent. Silent demotion to aggressive is forbidden (jamais rebaixa silenciosamente para aggressive)."
-                RequiredCapability = 'batch_scheduler'
-            }
-        }
-        return [pscustomobject]@{
-            Pass = $true
-            Detail = "Preflight swarm passed: deepseek backend has batch scheduler capability and subagents_spawn_batch callable."
-            RequiredCapability = 'batch_scheduler'
-        }
+        return [pscustomobject]@{ Pass = $true; Detail = 'Native parallel capacity observed.'; RequiredCapability = 'native_capacity' }
     }
-    else {
-        # native backend preserves swarm semantics and respects exposed capacity
-        if ($ExposedCapacity -eq 0) {
-            return [pscustomobject]@{
-                Pass = $false
-                Detail = "Preflight swarm blocked: native backend has zero exposed capacity."
-                RequiredCapability = 'native_capacity'
-            }
-        }
-        return [pscustomobject]@{
-            Pass = $true
-            Detail = "Preflight swarm passed: native backend preserves swarm semantics and respects exposed capacity."
-            RequiredCapability = 'native_capacity'
-        }
+    if ($CallableTools -notcontains 'subagents_spawn_batch' -and $CallableTools -notcontains 'deepseek_spawn_batch') {
+        return [pscustomobject]@{ Pass = $false; Detail = 'Parallel MCP dispatch requires a callable batch tool.'; RequiredCapability = 'subagents_spawn_batch' }
     }
+    if ($null -eq $AuthoritativeBridgeProbe) {
+        return [pscustomobject]@{ Pass = $false; Detail = 'Authoritative bridge status is required for parallel dispatch.'; RequiredCapability = 'batch_scheduler' }
+    }
+    $status = if ($AuthoritativeBridgeProbe -is [System.Collections.IDictionary]) { [string]$AuthoritativeBridgeProbe['status'] } else { [string]$AuthoritativeBridgeProbe.status }
+    $probeCaps = if ($AuthoritativeBridgeProbe -is [System.Collections.IDictionary]) { @($AuthoritativeBridgeProbe['capabilities']) } else { @($AuthoritativeBridgeProbe.capabilities) }
+    if ($status -notin @('ok','healthy','ready') -or $probeCaps -notcontains 'batch_scheduler' -or $Capabilities -notcontains 'batch_scheduler') {
+        return [pscustomobject]@{ Pass = $false; Detail = 'Bridge status or batch_scheduler capability is absent or inconsistent.'; RequiredCapability = 'batch_scheduler' }
+    }
+    return [pscustomobject]@{ Pass = $true; Detail = 'MCP batch tool and authoritative scheduler capability observed.'; RequiredCapability = 'batch_scheduler' }
 }
 
 function Assert-CodexBatchCapabilityGate {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][ValidateSet('native', 'deepseek')][string]$Backend,
-        [Parameter(Mandatory)][ValidateSet('balanced', 'aggressive', 'swarm')][string]$Policy,
-        [Parameter()][string[]]$Capabilities = @(),
-        [Parameter()][int]$ExposedCapacity = -1,
-        [Parameter()][string[]]$CallableTools = @(),
-        [Parameter()][object]$AuthoritativeBridgeProbe = $null
+        [Parameter(Mandatory)][bool]$ParallelRequested,
+        [string[]]$Capabilities = @(),
+        [int]$ExposedCapacity = -1,
+        [string[]]$CallableTools = @(),
+        [object]$AuthoritativeBridgeProbe = $null
     )
-
-    $result = Test-CodexBatchCapabilityGate -Backend $Backend -Policy $Policy -Capabilities $Capabilities -ExposedCapacity $ExposedCapacity -CallableTools $CallableTools -AuthoritativeBridgeProbe $AuthoritativeBridgeProbe
-    if (-not $result.Pass) {
-        throw $result.Detail
-    }
+    $result = Test-CodexBatchCapabilityGate -Backend $Backend -ParallelRequested $ParallelRequested -Capabilities $Capabilities -ExposedCapacity $ExposedCapacity -CallableTools $CallableTools -AuthoritativeBridgeProbe $AuthoritativeBridgeProbe
+    if (-not $result.Pass) { throw $result.Detail }
     return $result
 }
 
@@ -1726,9 +1569,7 @@ Export-ModuleMember -Function @(
     'Write-BackendUtf8NoBom',
     'Backup-BackendFile',
     'Assert-CodexDelegationState',
-    'New-CodexDelegationState',
     'Assert-CodexStrategyState',
-    'New-CodexStrategyState',
     'Assert-CodexContinuationState',
     'New-CodexContinuationState',
     'Get-CodexRuntimeBlockInfo',

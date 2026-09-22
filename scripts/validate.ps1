@@ -85,6 +85,47 @@ function Assert-Forbidden {
     }
 }
 
+function Assert-AdaptiveContract {
+    param(
+        [Parameter(Mandatory)][string]$AgentsText,
+        [Parameter(Mandatory)][string]$GeminiText,
+        [Parameter(Mandatory)][string]$SkillText,
+        [Parameter(Mandatory)][string]$DelegationText,
+        [Parameter(Mandatory)][string]$ReadmeText
+    )
+
+    foreach ($source in @($AgentsText, $GeminiText, $SkillText, $DelegationText, $ReadmeText)) {
+        if ($source -notmatch '(?i)orquestra[cç][aã]o adaptativa|adaptive orchestration') {
+            throw 'A canonical surface lacks adaptive orchestration.'
+        }
+        if ($source -match '(?m)^\s*(?:delegation_policy|subagent_strategy)\s*=') {
+            throw 'A canonical surface still activates a retired selector.'
+        }
+    }
+
+    foreach ($term in @('subagent_backend', 'subagent_continuation', 'decide-orchestration.ps1', 'Jev', 'revisor independente')) {
+        if ($AgentsText.IndexOf($term, [StringComparison]::OrdinalIgnoreCase) -lt 0) {
+            throw "AGENTS.md lacks adaptive contract term: $term"
+        }
+    }
+    foreach ($term in @('GPT direto', 'Reusar worker', 'Delegar uma frente', 'Delegar em paralelo', 'ownership', 'capacidade observada', 'ganho de tempo', 'acceptance_criteria', 'criterion_id', 'evidence_refs', 'shadow', 'off', 'noul', 'ALINHAMENTO', 'COMMIT', 'revisão independente', 'alvo congelado', 'active_follow', 'park_and_wake')) {
+        if ($DelegationText.IndexOf($term, [StringComparison]::OrdinalIgnoreCase) -lt 0) {
+            throw "Delegation reference lacks adaptive contract term: $term"
+        }
+    }
+    if ($SkillText -notmatch '(?i)decide-orchestration\.ps1' -or
+        $SkillText -notmatch '(?i)Jev cannot.*approve|Jev.*aprova.*c[oó]digo') {
+        throw 'Workflow skill lacks decision command or Jev authority boundary.'
+    }
+    if ($AgentsText -notmatch '(?i)Jev apenas auxilia' -or
+        $AgentsText -notmatch '(?i)revisor independente') {
+        throw 'AGENTS.md lacks Jev advisory or independent review boundary.'
+    }
+    if ($ReadmeText -match '(?i)delegation_policy|subagent_strategy|switch-subagent-policy|switch-subagent-strategy') {
+        throw 'README still advertises retired selectors.'
+    }
+}
+
 function Assert-CompletionPolicy {
     param(
         [Parameter(Mandatory)][string]$Label,
@@ -575,7 +616,6 @@ function Assert-DeliveryReviewContract {
         '(?i)raw_porcelain|fora do digest|outside the digest|outside digest',
         '(?i)staged path set|conjunto de (?:arquivos|caminhos) no stage',
         '(?i)staged blob|conte[uú]do.{0,60}(?:aprovado|approved).{0,60}(?:index|stage)|(?:index|stage).{0,60}conte[uú]do.{0,60}(?:aprovado|approved)',
-        '(?i)ortogonal [a\u00e0]s flags|orthogonal to flags',
         '(?i)(?:revisor independente [u\u00fa]nico|reviewer independente [u\u00fa]nico|single independent reviewer).{0,60}(?:alvo congelado|target congelado|frozen target)',
         '(?i)reparo consolidado no mesmo writer|consolidated repair in same writer',
         '(?i)closure review de delta|re-revis[a\u00e3]o de delta|delta closure review',
@@ -812,8 +852,7 @@ function Assert-AlinhamentoPolicy {
         '(?i)(?:depend[e\u00ea]ncia material|materially depends?|depender materialmente)',
         '(?i)somente leitura',
         '(?i)(?:metadados|metadata|estado|state).{0,80}(?:workspace|falha fechad|fail closed)',
-        '(?i)(?:ciclo normal de ledger|ledger de requisi[c\u00e7][o\u00f5]es|consumo e fechamento|consumo e encerramento).{0,80}(?:ledger|lifecycle|fechamento|encerramento)',
-        '(?i)(?:narrowing|estreitamento|exce[c\u00e7][a\u00e3]o|scoped).{0,80}(?:aggressive|delega[c\u00e7][a\u00e3]o agressiva)'
+        '(?i)(?:ciclo normal de ledger|ledger de requisi[c\u00e7][o\u00f5]es|consumo e fechamento|consumo e encerramento).{0,80}(?:ledger|lifecycle|fechamento|encerramento)'
     )
     foreach ($pattern in $delegationRequired) {
         if (-not [regex]::IsMatch($delegationNorm, $pattern)) {
@@ -854,148 +893,6 @@ function Assert-AlinhamentoPolicy {
     foreach ($pattern in $forbidden) {
         if ([regex]::IsMatch($agentsNorm, $pattern) -or [regex]::IsMatch($geminiNorm, $pattern) -or [regex]::IsMatch($skillNorm, $pattern) -or [regex]::IsMatch($delegationNorm, $pattern)) {
             throw "${pfx}contains forbidden ALINHAMENTO anti-pattern: $pattern"
-        }
-    }
-}
-
-function Assert-CriticalStrategyPolicy {
-    param(
-        [Parameter(Mandatory)][string]$AgentsText,
-        [Parameter(Mandatory)][string]$GeminiText,
-        [Parameter(Mandatory)][string]$SkillText,
-        [Parameter(Mandatory)][string]$DelegationText,
-        [Parameter(Mandatory)][string]$ReadmeText,
-        [string]$LabelPrefix = ''
-    )
-
-    $pfx = if ([string]::IsNullOrWhiteSpace($LabelPrefix)) { '' } else { "$LabelPrefix " }
-    $agentsNorm = [regex]::Replace($AgentsText, '\s+', ' ').Trim()
-    $geminiNorm = [regex]::Replace($GeminiText, '\s+', ' ').Trim()
-    $skillNorm = [regex]::Replace($SkillText, '\s+', ' ').Trim()
-    $delegationNorm = [regex]::Replace($DelegationText, '\s+', ' ').Trim()
-    $readmeNorm = [regex]::Replace($ReadmeText, '\s+', ' ').Trim()
-
-    $agentsRequired = @(
-        '(?i)subagent_strategy',
-        '(?i)worker',
-        '(?i)critical',
-        '(?i)an[a\u00e1]lise independente',
-        '(?i)adaptativa por profundidade',
-        '(?i)evid[e\u00ea]ncias',
-        '(?i)contradi[c\u00e7][o\u00f5]es.{0,30}lacunas',
-        '(?i)s[i\u00ed]ntese GPT',
-        '(?i)sem troca autom[a\u00e1]tica de rota|sem troca autom[a\u00e1]tica de provedor|sem fallback autom[a\u00e1]tico de rota',
-        '(?i)sem edi[c\u00e7][a\u00e3]o concorrente',
-        '(?i)estrat[e\u00e9]gia nunca concede escrita',
-        '(?i)recibo',
-        '(?i)evidence packet|pacote de evid[e\u00ea]ncia',
-        '(?i)semantic progress|progresso sem[a\u00e1]ntico',
-        '(?i)early-exit|sa[i\u00ed]da antecipada',
-        '(?i)sem prometer capacidades que o bridge ainda n[a\u00e3]o exp[o\u00f5]e'
-    )
-    foreach ($pattern in $agentsRequired) {
-        if (-not [regex]::IsMatch($agentsNorm, $pattern)) {
-            throw "${pfx}codex AGENTS.md is missing required critical strategy pattern: $pattern"
-        }
-    }
-
-    $geminiRequired = @(
-        '(?i)critical',
-        '(?i)an[a\u00e1]lise independente',
-        '(?i)adaptativa por profundidade',
-        '(?i)evid[e\u00ea]ncias',
-        '(?i)contradi[c\u00e7][o\u00f5]es',
-        '(?i)lacunas',
-        '(?i)s[i\u00ed]ntese GPT',
-        '(?i)sem edi[c\u00e7][a\u00e3]o concorrente',
-        '(?i)sem troca autom[a\u00e1]tica de rota|sem troca autom[a\u00e1]tica de provedor',
-        '(?i)estrat[e\u00e9]gia nunca concede escrita',
-        '(?i)recibo',
-        '(?i)evidence packet|pacote de evid[e\u00ea]ncia',
-        '(?i)semantic progress|progresso sem[a\u00e1]ntico',
-        '(?i)early-exit|sa[i\u00ed]da antecipada',
-        '(?i)sem prometer capacidades que o bridge ainda n[a\u00e3]o exp[o\u00f5]e'
-    )
-    foreach ($pattern in $geminiRequired) {
-        if (-not [regex]::IsMatch($geminiNorm, $pattern)) {
-            throw "${pfx}antigravity GEMINI.md is missing required critical strategy pattern: $pattern"
-        }
-    }
-
-    $skillRequired = @(
-        '(?i)subagent_strategy',
-        '(?i)worker',
-        '(?i)critical',
-        '(?i)an[a\u00e1]lise independente|independent analysis',
-        '(?i)adaptativa por profundidade|adaptive.?by.?depth',
-        '(?i)evid[e\u00ea]ncias|evidence',
-        '(?i)contradi[c\u00e7][o\u00f5]es|contradictions',
-        '(?i)lacunas|gaps',
-        '(?i)s[i\u00ed]ntese GPT|GPT synthesis',
-        '(?i)sem edi[c\u00e7][a\u00e3]o concorrente|no concurrent edit',
-        '(?i)sem troca autom[a\u00e1]tica de rota|no automatic route|sem troca autom[a\u00e1]tica de provedor',
-        '(?i)estrat[e\u00e9]gia nunca concede escrita|strategy never grants write',
-        '(?i)recibo|receipt',
-        '(?i)evidence packet',
-        '(?i)semantic progress',
-        '(?i)early-exit',
-        '(?i)sem prometer capacidades que o bridge ainda n[a\u00e3]o exp[o\u00f5]e|capabilities that the bridge does not yet expose'
-    )
-    foreach ($pattern in $skillRequired) {
-        if (-not [regex]::IsMatch($skillNorm, $pattern)) {
-            throw "${pfx}skills/workflows/SKILL.md is missing required critical strategy pattern: $pattern"
-        }
-    }
-
-    $delegationRequired = @(
-        '(?i)subagent_strategy',
-        '(?i)worker',
-        '(?i)critical',
-        '(?i)an[a\u00e1]lise independente|independent analysis',
-        '(?i)adaptativa por profundidade|adaptive.?by.?depth',
-        '(?i)contradi[c\u00e7][o\u00f5]es|contradictions',
-        '(?i)lacunas|gaps',
-        '(?i)s[i\u00ed]ntese GPT|GPT synthesis',
-        '(?i)sem edi[c\u00e7][a\u00e3]o concorrente|no concurrent edit',
-        '(?i)sem troca autom[a\u00e1]tica de rota|sem troca autom[a\u00e1]tica de provedor|no automatic route',
-        '(?i)estrat[e\u00e9]gia nunca concede escrita|strategy never grants write',
-        '(?i)recibo|receipt',
-        '(?i)evidence packet',
-        '(?i)semantic progress',
-        '(?i)early-exit',
-        '(?i)sem prometer capacidades que o bridge ainda n[a\u00e3]o exp[o\u00f5]e|capabilities that the bridge does not yet expose'
-    )
-    foreach ($pattern in $delegationRequired) {
-        if (-not [regex]::IsMatch($delegationNorm, $pattern)) {
-            throw "${pfx}skills/workflows/references/delegation.md is missing required critical strategy pattern: $pattern"
-        }
-    }
-
-    $readmeRequired = @(
-        '(?i)subagent_strategy',
-        '(?i)worker',
-        '(?i)critical',
-        '(?i)adaptativa por profundidade|adaptive.?by.?depth'
-    )
-    foreach ($pattern in $readmeRequired) {
-        if (-not [regex]::IsMatch($readmeNorm, $pattern)) {
-            throw "${pfx}README.md is missing required critical strategy pattern: $pattern"
-        }
-    }
-
-    $forbidden = @(
-        '(?i)\b(?:estrat[e\u00e9]gia|critical)\b[^.;]*\b(?:concede|autoriza|permite|grants?)\b[^.;]*\bescrita\b[^.;]*(?:no ALINHAMENTO|em ALINHAMENTO|under ALINHAMENTO)',
-        '(?i)(?:no ALINHAMENTO|em ALINHAMENTO|under ALINHAMENTO)[^.;]*\b(?:estrat[e\u00e9]gia|critical)\b[^.;]*\b(?:concede|autoriza|permite|grants?)\b[^.;]*\bescrita',
-        '(?i)\b(?:permite|autoriza|allows?)\b[^.;]*\bedi[c\u00e7][a\u00e3]o concorrente\b',
-        '(?i)subagent_strategy\s*=\s*adaptive',
-        '(?i)\bsubagent_strategy\b[^.;]*\badaptive\b[^.;]*(?:p[u\u00fa]blica|public|flag)',
-        '(?i)worker\s*\|\s*critical\s*\|\s*adaptive',
-        '(?i)\b(?:critical|estrat[e\u00e9]gia)\b[^.;]*\b(?:pode|autoriza|permite)\b[^.;]*(?:trocar de rota|trocar de provedor|fallback autom[a\u00e1]tico)\b',
-        '(?i)\b(?:bridge|subagents?)\b[^.;]*\b(?:exp[o\u00f5]e|promete|suporta)\b[^.;]*(?:websocket|streaming push|push notifications?)\b'
-    )
-    foreach ($pattern in $forbidden) {
-        if ([regex]::IsMatch($agentsNorm, $pattern) -or [regex]::IsMatch($geminiNorm, $pattern) -or [regex]::IsMatch($skillNorm, $pattern) -or [regex]::IsMatch($delegationNorm, $pattern)) {
-            throw "${pfx}contains forbidden critical strategy anti-pattern: $pattern"
         }
     }
 }
@@ -1166,278 +1063,6 @@ function Assert-SubagentAutonomyPolicy {
     }
 }
 
-function Assert-AdaptiveSwarmPolicy {
-    param(
-        [Parameter(Mandatory)][string]$AgentsText,
-        [Parameter(Mandatory)][string]$GeminiText,
-        [Parameter(Mandatory)][string]$SkillText,
-        [Parameter(Mandatory)][string]$DelegationText,
-        [Parameter(Mandatory)][string]$ReadmeText,
-        [string]$LabelPrefix = ''
-    )
-
-    $pfx = if ([string]::IsNullOrWhiteSpace($LabelPrefix)) { '' } else { "$LabelPrefix " }
-    $agentsNorm = [regex]::Replace($AgentsText, '\s+', ' ').Trim()
-    $geminiNorm = [regex]::Replace($GeminiText, '\s+', ' ').Trim()
-    $skillNorm = [regex]::Replace($SkillText, '\s+', ' ').Trim()
-    $delegationNorm = [regex]::Replace($DelegationText, '\s+', ' ').Trim()
-    $readmeNorm = [regex]::Replace($ReadmeText, '\s+', ' ').Trim()
-
-    # 1. Delegation reference checks
-    $delegationRequired = @(
-        '(?i)delegation_policy.*swarm',
-        '(?i)GPT parent [e\u00e9] o [u\u00fa]nico orquestrador,\s*decisor,\s*integrador\s+e\s+gatekeeper|sole orchestrator,\s*decider,\s*integrator,\s*and\s*gatekeeper',
-        '(?i)ondas do DAG|DAG waves',
-        '(?i)pulveriza apenas fatias materialmente independentes|pulverizes only materially independent',
-        '(?i)trabalho coeso(?:/|\s+e\s+)sequencial fica na mesma trilha|cohesive/sequential work stays on the same track',
-        '(?i)fan-out l[o\u00f3]gico el[a\u00e1]stico|elastic logical fan-out',
-        '(?i)sem m[i\u00ed]nimo(?:/|\s+nem\s+)m[a\u00e1]ximo de agentes na pol[i\u00ed]tica|no min/max agents in policy',
-        '(?i)custo,\s*depend[e\u00ea]ncias,\s*exclusividade de recursos,\s*risco de integra[c\u00e7][a\u00e3]o\s+e\s+lat[e\u00ea]ncia',
-        '(?i)readers podem fan-out|readers can fan out',
-        '(?i)writers (?:s[o\u00f3]|apenas) com ownership disjunto(?:/|,\s*)worktrees(?:/|,\s*|\s+ou\s+)recursos exclusivos',
-        '(?i)backpressure (?:e|\/) cr[e\u00e9]ditos f[i\u00ed]sicos pertencem ao bridge|backpressure/credits belong to bridge',
-        '(?i)preflight swarm exige capability do batch scheduler|batch scheduler capability|preflight swarm operacionalmente inequ[i\u00ed]voco',
-        '(?i)falha fechado se ausente|fails closed if absent|falha fechada',
-        '(?i)(?:jamais|nunca|sem).{0,40}(?:rebaixa|fallback).{0,40}aggressive',
-        '(?i)native.*respeita capacidade exposta|native.*respects exposed capacity',
-        '(?i)REQUIRED.*QUORUM.*ALL.*ANY',
-        '(?i)jobs que n[a\u00e3]o acordam continuam obriga[c\u00e7][o\u00f5]es|unawakened jobs remain obligations',
-        '(?i)rollback seguro.*antes de instalar/downgrade.*trocar explicitamente para aggressive|safe rollback.*explicitly switch to aggressive',
-        '(?i)n[a\u00e3]o aumente schemaVersion|no schemaVersion bump',
-        '(?i)subagents_spawn_batch.*(?:tool can[o\u00f4]nica|canonical.*swarm|ondas do DAG)',
-        '(?i)deepseek_spawn_batch',
-        '(?i)spawn unit[a\u00e1]rio.*(?:fora de ondas|uma [u\u00fa]nica frente)|unitary.*outside waves',
-        '(?i)subagents_spawn_batch.*(?:callable|invoc[a\u00e1]vel)',
-        '(?i)(?:superf[i\u00ed]cie autoritativa de status/health|status/health).*batch_scheduler|batch_scheduler.*(?:superf[i\u00ed]cie autoritativa|status/health)',
-        '(?i)helper PowerShell isolado.*(?:n[a\u00e3]o|alone).*prov.*daemon',
-        '(?i)(?:estreitamento|exce[c\u00e7][a\u00e3]o).{0,250}balanced.{0,30}aggressive.{0,30}swarm',
-        '(?i)pulveriza todas as fatias ready e independentes [u\u00fa]teis para menor wall-clock|pulverizes all ready and useful independent slices',
-        '(?i)sem n[u\u00fa]mero fixo|no fixed number',
-        '(?i)(?:remo[c\u00e7][a\u00e3]o de timeout r[i\u00ed]gido|remove rigid completion timeout|sem timeout r[i\u00ed]gido)',
-        '(?i)job aceito e saud[a\u00e1]vel pode rodar indefinidamente|accepted and healthy jobs? (?:can )?run indefinitely',
-        '(?i)nenhuma janela de 900s(?:[,\/]\s*|\s+ou\s+)20m(?:[,\/]\s*|\s+ou\s+)25m prova falha|no (?:900s|20m|25m|900s\/20m\/25m) window proves failure',
-        '(?i)(?:graceful finalize|abort)',
-        '(?i)sem deadline de modelo|no model deadline',
-        '(?i)lease expirada sozinha n[a\u00e3]o prova morte|expired lease alone does not prove death',
-        '(?i)(?:takeover|terminaliza[c\u00e7][a\u00e3]o).*(?:PID|heartbeat|fence|quiesc[e\u00ea]ncia)',
-        '(?i)timeouts bounded de transporte,\s*handshake,\s*health\s+e\s+connect|bounded transport,\s*handshake,\s*health,\s*and\s*connect timeouts',
-        '(?i)(?:diferenci(?:ad[oa]s|e-os)\s+explicitamente|explicitamente\s+diferenci(?:ad[oa]s|e-os))\s+do\s+execution\s+timeout|explicitly differentiat(?:ed)? from execution timeout',
-        '(?i)(?:maximizar|maximize)\s+(?:o\s+)?(?:paralelismo [u\u00fa]til|useful parallelism)\b[^.;\r\n]*(?:sharding|estilha[c\u00e7]a|pulveriz).*(?:tarefas.*(?:fases|testes|revis)|tasks AND phases/tests/reviews)',
-        '(?i)agentes\s+(?:s[a\u00e3]o\s+)?tratados como efetivamente gratuitos|agents are treated as effectively free',
-        '(?i)(?:n[a\u00e3]o\s+(?:economiz[a-z]*|conserve\s+contagem\s+de\s+agentes)|do not conserve agent count)',
-        '(?i)fan-out l[o\u00f3]gico\s+(?:n[a\u00e3]o\s+tem|sem)\s+(?:m[i\u00ed]nimo,\s*m[a\u00e1]ximo\s+nem\s+faixa|min/max/range)|logical fanout has no fixed min/max/range',
-        '(?i)(?:dispara[r]?|lan[c\u00e7]a[r]?|spawn)\s+todas as frentes prontas e independentes em (?:uma\s+)?onda antes de esperar|spawn all ready independent fronts in a wave before waiting',
-        '(?i)(?:precis[a\u00e3]o|precision).*(?:atomic ownership|propriedade at[o\u00f4]mica).*(?:restri[c\u00e7][o\u00f5]es.*depend[e\u00ea]ncia|dependency/resource constraints).*(?:s[i\u00ed]ntese exclusiva.*GPT|GPT-only synthesis).*(?:valida[c\u00e7][a\u00e3]o.*revis[a\u00e3]o|validation and independent review)',
-        '(?i)(?:n[a\u00e3]o\s+dispara[r]?|proibid[oa]\s+disparar|do not spawn)\s+(?:trabalho duplicado|duplicate.*work).*(?:n[a\u00e3]o-acion[a\u00e1]vel|non-actionable)',
-        '(?i)(?:n[a\u00e3]o\s+paralelizar|proibid[oa]\s+paralelizar|do not parallelize)\s+(?:depend[e\u00ea]ncias verdadeiras|depend[e\u00ea]ncias causais|true dependencies)',
-        '(?i)(?:n[a\u00e3]o\s+(?:autorizar|permitir|realizar)|proibid[oa]\s+(?:permitir|autorizar|realizar)?|do not parallelize)\s+(?:escritas concorrentes|concurrent writes).*(?:mesm[oa] (?:propriedade|ownership|arquivo)|same ownership)'
-    )
-    foreach ($pattern in $delegationRequired) {
-        if (-not [regex]::IsMatch($delegationNorm, $pattern)) {
-            throw "${pfx}skills/workflows/references/delegation.md is missing required adaptive swarm pattern: $pattern"
-        }
-    }
-
-    # 2. SKILL.md checks
-    $skillRequired = @(
-        '(?i)swarm',
-        '(?i)ondas do DAG|DAG waves',
-        '(?i)fan-out l[o\u00f3]gico el[a\u00e1]stico|elastic logical fan-out',
-        '(?i)batch scheduler',
-        '(?i)falha fechado se ausente|fails closed if absent',
-        '(?i)REQUIRED.*QUORUM.*ALL.*ANY',
-        '(?i)subagents_spawn_batch',
-        '(?i)deepseek_spawn_batch',
-        '(?i)subagents_spawn_batch.*callable|callable.*subagents_spawn_batch',
-        '(?i)pulverizes all ready and useful independent slices|pulveriza todas as fatias ready e independentes',
-        '(?i)sem n[u\u00fa]mero fixo|no fixed number',
-        '(?i)remo[c\u00e7][a\u00e3]o de timeout r[i\u00ed]gido|accepted and healthy jobs can run indefinitely',
-        '(?i)nenhuma janela de 900s(?:/|,|\s+ou\s+)20m(?:/|,|\s+ou\s+)25m prova falha|no 900s/20m/25m window proves failure',
-        '(?i)lease expirada sozinha n[a\u00e3]o prova morte',
-        '(?i)diferenciando-se explicitamente do execution timeout|explicitly differentiated from execution timeout',
-        '(?i)sharding tasks AND phases/tests/reviews|tarefas quanto fases,\s*testes e revis[o\u00f5]es',
-        '(?i)agents are treated as effectively free|agentes tratados como efetivamente gratuitos',
-        '(?i)do not conserve agent count|n[a\u00e3]o conservar contagem de agentes',
-        '(?i)logical fan-out has no fixed min/max/range|fan-out l[o\u00f3]gico sem m[i\u00ed]nimo,\s*m[a\u00e1]ximo nem faixa fixa',
-        '(?i)spawn all ready independent fronts in a wave before waiting|dispara todas as frentes prontas e independentes em uma onda antes de esperar',
-        '(?i)atomic ownership.*GPT-only synthesis|propriedade at[o\u00f4]mica.*s[i\u00ed]ntese exclusiva GPT-only',
-        '(?i)do not spawn duplicate/non-actionable work|sem trabalho duplicado/n[a\u00e3]o-acion[a\u00e1]vel',
-        '(?i)do not parallelize true dependencies|sem paralelizar depend[e\u00ea]ncias verdadeiras',
-        '(?i)do not parallelize concurrent writes to same ownership|sem escritas concorrentes sob o mesmo ownership'
-    )
-    foreach ($pattern in $skillRequired) {
-        if (-not [regex]::IsMatch($skillNorm, $pattern)) {
-            throw "${pfx}skills/workflows/SKILL.md is missing required adaptive swarm pattern: $pattern"
-        }
-    }
-
-    # 3. AGENTS.md checks
-    $agentsRequired = @(
-        '(?i)delegation_policy.*swarm',
-        '(?i)ondas do DAG',
-        '(?i)fan-out l[o\u00f3]gico el[a\u00e1]stico',
-        '(?i)batch scheduler',
-        '(?i)falha fechado se ausente|falha fechado bloqueando',
-        '(?i)REQUIRED.*QUORUM.*ALL.*ANY',
-        '(?i)subagents_spawn_batch',
-        '(?i)deepseek_spawn_batch',
-        '(?i)subagents_spawn_batch.*callable|callable.*subagents_spawn_batch',
-        '(?i)status/health.*batch_scheduler',
-        '(?i)pulveriza todas as fatias ready e independentes [u\u00fa]teis para menor wall-clock',
-        '(?i)sem n[u\u00fa]mero fixo',
-        '(?i)remo[c\u00e7][a\u00e3]o de timeout r[i\u00ed]gido de conclus[a\u00e3]o',
-        '(?i)job aceito e saud[a\u00e1]vel pode rodar indefinidamente',
-        '(?i)nenhuma janela de 900s/20m/25m prova falha ou dispara graceful finalize/abort',
-        '(?i)lease expirada sozinha n[a\u00e3]o prova morte',
-        '(?i)diferenciando-os explicitamente do execution timeout',
-        '(?i)sharding tasks AND phases/tests/reviews|tanto tarefas quanto fases,\s*testes e revis[o\u00f5]es',
-        '(?i)agentes s[a\u00e3]o tratados como efetivamente gratuitos|agents are treated as effectively free',
-        '(?i)n[a\u00e3]o conserva contagem de agentes|do not conserve agent count',
-        '(?i)sem m[i\u00ed]nimo,\s*m[a\u00e1]ximo nem faixa/range fixo|logical fanout has no fixed min/max/range',
-        '(?i)dispara todas as frentes prontas e independentes em uma onda antes de esperar|spawn all ready independent fronts in a wave before waiting',
-        '(?i)atomic ownership.*s[i\u00ed]ntese exclusiva GPT-only|atomic ownership.*GPT-only synthesis',
-        '(?i)n[a\u00e3]o dispara trabalho duplicado|do not spawn duplicate/non-actionable work',
-        '(?i)n[a\u00e3]o paraleliza depend[e\u00ea]ncias verdadeiras|do not parallelize true dependencies',
-        '(?i)n[a\u00e3]o permite escritas concorrentes na mesma propriedade/ownership|do not parallelize concurrent writes to same ownership'
-    )
-    foreach ($pattern in $agentsRequired) {
-        if (-not [regex]::IsMatch($agentsNorm, $pattern)) {
-            throw "${pfx}codex AGENTS.md is missing required adaptive swarm pattern: $pattern"
-        }
-    }
-
-    # 4. GEMINI.md checks
-    $geminiRequired = @(
-        '(?i)swarm',
-        '(?i)ondas do DAG',
-        '(?i)batch scheduler',
-        '(?i)pulveriza todas as fatias ready e independentes [u\u00fa]teis para menor wall-clock',
-        '(?i)sem n[u\u00fa]mero fixo',
-        '(?i)remo[c\u00e7][a\u00e3]o de timeout r[i\u00ed]gido de conclus[a\u00e3]o',
-        '(?i)job aceito e saud[a\u00e1]vel pode rodar indefinidamente',
-        '(?i)nenhuma janela de 900s/20m/25m prova falha ou dispara graceful finalize/abort',
-        '(?i)lease expirada sozinha n[a\u00e3]o prova morte',
-        '(?i)diferenciando-os explicitamente do execution timeout',
-        '(?i)tarefas E fases/testes/revis[o\u00f5]es|tarefas quanto fases,\s*testes e revis[o\u00f5]es',
-        '(?i)efetivamente gratuitos sem conservar contagem|agents are treated as effectively free',
-        '(?i)dispara todas as frentes prontas e independentes em onda antes de esperar|spawn all ready independent fronts in a wave before waiting',
-        '(?i)pro[i\u00ed]be trabalho duplicado/n[a\u00e3]o-acion[a\u00e1]vel|proibido disparar trabalho duplicado',
-        '(?i)pro[i\u00ed]be paralelizar depend[e\u00ea]ncias verdadeiras|proibido paralelizar depend[e\u00ea]ncias verdadeiras',
-        '(?i)pro[i\u00ed]be escritas concorrentes sob mesmo ownership|proibido escritas concorrentes sob mesmo ownership'
-    )
-    foreach ($pattern in $geminiRequired) {
-        if (-not [regex]::IsMatch($geminiNorm, $pattern)) {
-            throw "${pfx}antigravity GEMINI.md is missing required adaptive swarm pattern: $pattern"
-        }
-    }
-
-    # 5. README.md checks
-    $readmeRequired = @(
-        '(?i)delegation_policy.*swarm',
-        '(?i)switch-subagent-policy\.ps1 -Policy swarm',
-        '(?i)\^Numpad6',
-        '(?i)`?delegation_policy`?\s*\(`balanced`\s*\|\s*`aggressive`\s*\|\s*`swarm`\)',
-        '(?i)equil[i\u00ed]brio operacional.*(?:balanced|aggressive|swarm).*(?:ondas do DAG|pulveriza[c\u00e7][a\u00e3]o|swarm)',
-        '(?i)pulveriza[c\u00e7][a\u00e3]o din[a\u00e2]mica em ondas do DAG de todas as fatias ready e independentes [u\u00fa]teis para menor wall-clock',
-        '(?i)sem n[u\u00fa]mero fixo de agentes',
-        '(?i)remove-se o timeout r[i\u00ed]gido de conclus[a\u00e3]o',
-        '(?i)nenhuma janela de 900s/20m/25m prova falha ou dispara graceful finalize/abort',
-        '(?i)lease expirada sozinha n[a\u00e3]o prova morte',
-        '(?i)diferenciados do execution timeout',
-        '(?i)sharding tasks AND phases/tests/reviews|estilha[c\u00e7]amento de tarefas E fases/testes/revis[o\u00f5]es',
-        '(?i)efetivamente gratuitos sem conservar contagem|agents are treated as effectively free',
-        '(?i)disparando todas as frentes prontas e independentes em onda antes de esperar|disparando ondas antes de esperar',
-        '(?i)proibindo trabalho duplicado/n[a\u00e3]o-acion[a\u00e1]vel|sem trabalho duplicado',
-        '(?i)proibindo paralelizar depend[e\u00ea]ncias verdadeiras|proibindo paralelizar depend[e\u00ea]ncias',
-        '(?i)proibindo escritas concorrentes sob o mesmo ownership|escritas concorrentes no mesmo ownership'
-    )
-    foreach ($pattern in $readmeRequired) {
-        if (-not [regex]::IsMatch($readmeNorm, $pattern)) {
-            throw "${pfx}README.md is missing required adaptive swarm pattern: $pattern"
-        }
-    }
-
-    # 6. Forbiddens / Anti-patterns
-    $forbidden = @(
-        '(?i)\b(?:pool fixo|fixed pool|m[i\u00ed]nimo de \d+|m[a\u00e1]ximo de \d+)\b[^.;]*(?:agentes|workers|subagents)',
-        '(?i)(?<!jamais\s|nunca\s|sem\s|proibid[oa]\s)\b(?:rebaixa|rebaixar|fallback)\s+silencioso\s+para\s+aggressive\b',
-        '(?i)\bwriters\b[^.;]*(?:concorrente|mesmo arquivo|shared files)[^.;]*(?:sem worktree|sem exclusividade)',
-        '(?i)\b(?:subagente|worker)\b[^.;]*(?:faz o commit|decide aprova[c\u00e7][a\u00e3]o|dispensa o parent)',
-        '(?i)\$workflows mode=SWARM\b',
-        '(?i)\b(?:downgrade|vers[a\u00e3]o legada)\b[^.;]*(?:suporta swarm diretamente|sem trocar para aggressive)',
-        '(?i)(?<!nenhum[a-z]*\s+(?:janela\s+de\s+)?[^.;\r\n]*)\b(?:900s|20m|25m)\b[^.;\r\n]*(?:prova falha|dispara graceful finalize|dispara abort|finaliza o job)',
-        '(?i)\blease expirada\b[^.;]*(?:sozinha prova morte|autoriza takeover sem checar PID)',
-        '(?i)\b(?:timeout r[i\u00ed]gido de conclus[a\u00e3]o|rigid completion timeout)\b\s+(?:de \d+|obrigat[o\u00f3]rio)',
-        '(?i)\b(?:economizar agentes|conservar contagem de agentes|conserve agent count)\b[^.;]*(?:mesmo com|mesmo havendo|quando houver|artificialmente|por parcim[o\u00f4]nia)',
-        '(?i)(?<!(?:n[a\u00e3]o|sem|nunca|jamais|proibid[oa]|never|do not)\s+)\b(?:pode|deve|autoriza|permite|allows?|is allowed to)\s+(?:disparar|criar|spawn)\s+(?:trabalho duplicado|tarefas duplicadas|duplicate work|non-actionable work|trabalho n[a\u00e3]o-acion[a\u00e1]vel)\b',
-        '(?i)(?<!(?:n[a\u00e3]o|sem|nunca|jamais|proibid[oa]|never|do not)\s+)\b(?:pode|deve|autoriza|permite|allows?|is allowed to)\s+(?:paraleliz(?:ar|e)|iniciar juntos?|run in parallel)[^.;\r\n]*(?:depend[e\u00ea]ncias verdadeiras|depend[e\u00ea]ncias reais|true dependencies)\b',
-        '(?i)(?<!(?:n[a\u00e3]o|sem|nunca|jamais|proibid[oa]|never|do not)\s+)\b(?:pode|deve|autoriza|permite|allows?|is allowed to)\s+(?:escritas concorrentes|concurrent writes)[^.;\r\n]*(?:mesm[oa] (?:ownership|propriedade|arquivo)|same ownership)\b'
-    )
-    foreach ($pattern in $forbidden) {
-        if ([regex]::IsMatch($delegationNorm, $pattern) -or [regex]::IsMatch($skillNorm, $pattern) -or [regex]::IsMatch($agentsNorm, $pattern) -or [regex]::IsMatch($geminiNorm, $pattern) -or [regex]::IsMatch($readmeNorm, $pattern)) {
-            throw "${pfx}contains forbidden adaptive swarm anti-pattern: $pattern"
-        }
-    }
-}
-
-function Assert-DelegationContract {
-    param(
-        [Parameter(Mandatory)][string]$Label,
-        [Parameter(Mandatory)][string]$Text
-    )
-
-    $normalized = [regex]::Replace($Text, '\s+', ' ').Trim()
-
-    $requiredPatterns = @(
-        '(?i)subagent_backend',
-        '(?i)delegation_policy',
-        '(?i)balanced',
-        '(?i)aggressive',
-        '(?i)swarm',
-        '(?i)ondas do DAG|DAG waves',
-        '(?i)fan-out l[o\u00f3]gico el[a\u00e1]stico|elastic logical fan-out',
-        '(?i)batch scheduler',
-        '(?i)wall-clock|wall time',
-        '(?i)token offload|desonera[c\u00e7][a\u00e3]o de tokens',
-        '(?i)(?:subagents_continue|deepseek_continue)',
-        '(?i)allow_respawn\s*=\s*true',
-        '(?i)terminal result|resultado terminal',
-        '(?i)aggressive.{0,80}(?:parent|orquestrador).{0,60}(?:arquiteto|decisor|integrador|gatekeeper|architect|decider|integrator|gatekeeper)',
-        '(?i)pacote pequeno de evid[e\u00ea]ncia decis[o\u00f3]ria|decision evidence packet',
-        '(?i)sem refazer bulk delegado|never redo delegated bulk|sem refazer trabalho delegado',
-        '(?i)uma trilha persistente por frente coesa|trilha persistente por frente coesa|one persistent track per cohesive front',
-        '(?i)sem microdelega[c\u00e7][a\u00e3]o|proibida microdelega[c\u00e7][a\u00e3]o|no microdelegation',
-        '(?i)nova trilha apenas para deliverable independentemente aceit[a\u00e1]vel|new track only for independently acceptable deliverable',
-        '(?i)instala[c\u00e7][a\u00e3]o global preserva/instala a flag selecionada como aggressive|global installation preserves/installs selected flag as aggressive',
-        '(?i)n[a\u00e3]o injeta flags em repos consumidores|never inject flags into consumer repos|sem inje[c\u00e7][a\u00e3]o de flags em reposit[oó]rios consumidores',
-        '(?i)sharding tasks AND phases/tests/reviews|estilha[c\u00e7]amento.*tarefas.*(?:fases|testes|revis)',
-        '(?i)agents are treated as effectively free|agentes.*efetivamente gratuitos',
-        '(?i)spawn all ready independent fronts in a wave before waiting|disparar todas as frentes prontas e independentes em (?:uma )?onda antes de esperar'
-    )
-    foreach ($pattern in $requiredPatterns) {
-        if (-not [regex]::IsMatch($normalized, $pattern)) {
-            throw "$Label is missing required delegation contract pattern: $pattern"
-        }
-    }
-
-    $forbiddenPatterns = @(
-        '(?i)Review-And-Fix-Vigorously',
-        '(?i)\b(?:not the repository workforce|n[a\u00e3]o a for[c\u00e7]a de trabalho)\b',
-        '(?i)allow_respawn\s*=\s*true[^.;]*(?:rotineir|rotina|normalmente|routine|habitual)',
-        '(?i)\b(?:pode|deve|autorizado a|is allowed to|may)\b[^.;]*\b(?:refazer bulk|refazer trabalho delegado|redo delegated bulk)\b',
-        '(?i)\b(?:pode|deve|autorizado a|is allowed to|may)\b[^.;]*\b(?:microdelegar|micro-delegar|microdelegation)\b',
-        '(?i)\b(?:injetar flags em reposit[o\u00f3]rios|gravar flags no workspace do consumidor|inject flags into consumer repos)\b',
-        '(?i)(?<!(?:n[a\u00e3]o|sem|nunca|jamais|proibid[oa]|never|do not)\s+)\b(?:pode|deve|autoriza|permite|allows?|is allowed to)\s+(?:economizar agentes|conservar contagem de agentes|conserve agent count)\b',
-        '(?i)(?<!(?:n[a\u00e3]o|sem|nunca|jamais|proibid[oa]|never|do not)\s+)\b(?:pode|deve|autoriza|permite|allows?|is allowed to)\s+(?:paralelizar depend[e\u00ea]ncias verdadeiras|parallelize true dependencies)\b',
-        '(?i)(?<!(?:n[a\u00e3]o|sem|nunca|jamais|proibid[oa]|never|do not)\s+)\b(?:pode|deve|autoriza|permite|allows?|is allowed to)\s+(?:escritas concorrentes|concurrent writes)[^.;\r\n]*(?:mesmo ownership|same ownership|mesmo arquivo|mesma propriedade)\b'
-    )
-    foreach ($pattern in $forbiddenPatterns) {
-        if ([regex]::IsMatch($normalized, $pattern)) {
-            throw "$Label contains forbidden pattern: $pattern"
-        }
-    }
-}
-
 function Assert-DeliveryGateWiring {
     param(
         [Parameter(Mandatory)][string]$Label,
@@ -1551,45 +1176,6 @@ function Assert-PlanContract {
     }
 }
 
-function Assert-SecurityDocContract {
-    param(
-        [Parameter(Mandatory)][string]$Label,
-        [Parameter(Mandatory)][string]$Text
-    )
-
-    $normalized = [regex]::Replace($Text, '\s+', ' ').Trim()
-
-    $requiredPatterns = @(
-        '(?i)subagent_backend',
-        '(?i)delegation_policy',
-        '(?i)native',
-        '(?i)deepseek',
-        '(?i)balanced',
-        '(?i)aggressive',
-        '(?i)wall-clock|wall time',
-        '(?i)desonera[c\u00e7][a\u00e3]o de tokens|token offload',
-        '(?i)sem fallback|no fallback|fallback proibido|bloqueia.{0,40}fallback',
-        '(?i)alvo congelado|frozen target',
-        '(?i)revis[a\u00e3]o independente|independent review',
-        '(?i)APPROVED'
-    )
-    foreach ($pattern in $requiredPatterns) {
-        if (-not [regex]::IsMatch($normalized, $pattern)) {
-            throw "$Label is missing required security contract pattern: $pattern"
-        }
-    }
-
-    $forbiddenPatterns = @(
-        '(?i)executor principal [e\u00e9] o DeepSeek Sub-Agent MCP',
-        '(?i)orquestra[c\u00e7][a\u00e3]o (?:passa a ser )?exclusivamente via DeepSeek'
-    )
-    foreach ($pattern in $forbiddenPatterns) {
-        if ([regex]::IsMatch($normalized, $pattern)) {
-            throw "$Label contains outdated architecture claim: $pattern"
-        }
-    }
-}
-
 function Assert-OpenAiAgentContract {
     param(
         [Parameter(Mandatory)][string]$Label,
@@ -1618,53 +1204,6 @@ function Assert-OpenAiAgentContract {
     }
 }
 
-function Assert-InstallerOutputContract {
-    param(
-        [Parameter(Mandatory)][string]$Label,
-        [Parameter(Mandatory)][string]$Text
-    )
-
-    $normalized = [regex]::Replace($Text, '\s+', ' ').Trim()
-
-    $requiredPatterns = @(
-        '(?i)Subagent backend:',
-        '(?i)Delegation policy:',
-        '(?i)Backend matrix:'
-    )
-    foreach ($pattern in $requiredPatterns) {
-        if (-not [regex]::IsMatch($normalized, $pattern)) {
-            throw "$Label is missing required selector-aware output pattern: $pattern"
-        }
-    }
-
-    if ($Text -match '(?i)Multi-agent route:\s*disabled via\s*\[features\]\s*multi_agent\s*=\s*false') {
-        throw "$Label contains unconditional multi_agent disabled output message"
-    }
-}
-
-function Assert-DoctorOutputContract {
-    param(
-        [Parameter(Mandatory)][string]$Label,
-        [Parameter(Mandatory)][string]$Text
-    )
-
-    $normalized = [regex]::Replace($Text, '\s+', ' ').Trim()
-
-    $requiredPatterns = @(
-        '(?i)Active subagent backend:',
-        '(?i)Active delegation policy:'
-    )
-    foreach ($pattern in $requiredPatterns) {
-        if (-not [regex]::IsMatch($normalized, $pattern)) {
-            throw "$Label detailed output is missing selector-aware pattern: $pattern"
-        }
-    }
-
-    if ($Text -match '(?i)safe profile requires\s+(?:\[features\]\s+)?multi_agent\s*=\s*false') {
-        throw "$Label detailed output contains obsolete unconditional multi_agent=false requirement"
-    }
-}
-
 function Assert-SupersededSpecContract {
     param(
         [Parameter(Mandatory)][string]$Label,
@@ -1682,316 +1221,6 @@ function Assert-SupersededSpecContract {
             throw "$Label is missing required superseded marker pattern: $pattern"
         }
     }
-}
-
-function Assert-ReadmeContract {
-    param(
-        [Parameter(Mandatory)][string]$Label,
-        [Parameter(Mandatory)][string]$Text
-    )
-
-    $normalized = [regex]::Replace($Text, '\s+', ' ').Trim()
-
-    $required = @(
-        '(?i)\^Numpad1|Ctrl\s*\+\s*Numpad1',
-        '(?i)\^Numpad2|Ctrl\s*\+\s*Numpad2',
-        '(?i)\^Numpad4|Ctrl\s*\+\s*Numpad4',
-        '(?i)\^Numpad5|Ctrl\s*\+\s*Numpad5',
-        '(?i)\^Numpad0|Ctrl\s*\+\s*Numpad0',
-        '(?i)checkout root|raiz do checkout|diret[o\u00f3]rio raiz do reposit[o\u00f3]rio',
-        '(?i)subagent_backend',
-        '(?i)delegation_policy',
-        '(?i)controle de seletores',
-        '(?i)drift.{0,100}proje[c\u00e7][a\u00e3]o gerenciada.{0,80}falham fechado',
-        '(?i)n[a\u00e3]o relacionados.{0,120}preservados e reconciliados'
-    )
-    foreach ($pattern in $required) {
-        if (-not [regex]::IsMatch($normalized, $pattern)) {
-            throw "$Label is missing required documentation pattern: $pattern"
-        }
-    }
-
-    $forbiddenPatterns = @(
-        '(?i)orquestra[c\u00e7][a\u00e3]o (?:passa a ser )?exclusivamente via DeepSeek',
-        '(?i)executor principal [e\u00e9] o DeepSeek Sub-Agent MCP'
-    )
-    foreach ($pattern in $forbiddenPatterns) {
-        if ([regex]::IsMatch($normalized, $pattern)) {
-            throw "$Label contains outdated DeepSeek-only architecture text: $pattern"
-        }
-    }
-}
-
-function Test-OrchestrationPolicy {
-    param([Parameter(Mandatory)][string]$Text)
-
-    $normalized = [regex]::Replace($Text, '\s+', ' ').Trim()
-
-    $requiredPatterns = @(
-        '(?i)seletor global de backend.{0,120}autorit(?:[a\u00e1]rio|ativa|ativo)',
-        '(?i)matriz ausente,? inv[a\u00e1]lida ou inconsistente bloqueia.{0,80}fallback silencioso',
-        '(?i)native.{0,180}gpt-6-luna.{0,100}reasoning_effort.{0,80}normal/default',
-        '(?i)deepseek.{0,120}(?:subagents_spawn|deepseek_spawn).{0,100}(?:subagents_continue|deepseek_continue).{0,100}(?:subagents_follow|deepseek_follow)',
-        '(?i)delegation_policy',
-        '(?i)balanced',
-        '(?i)aggressive',
-        '(?i)nunca refazer localmente uma frente material delegada',
-        '(?i)consuma todo job aceito antes de um gate dependente ou da resposta final',
-        '(?i)feche explicitamente todo agente terminado',
-        '(?i)sem obriga[c\u00e7][o\u00f5]es pendentes ou em aberto',
-        '(?i)o writer fica aberto.{0,80}at[\u00e9e] a revis[\u00e3a]o independente',
-        '(?i)defeitos provados voltam [a\u00e1\u00e0] mesma frente',
-        '(?i)feche s[o\u00f3] depois',
-        '(?i)n[\u00e3a]o est[\u00e1a] terminado antes de revis[\u00e3a]o e corre[c\u00e7][o\u00f5]es conclu[\u00ed\u00ec]das',
-        '(?i)falha fechado',
-        '(?i)visual_context',
-        '(?i)antes de esperar,? mapeie frentes independentes,? depend[e\u00ea]ncias e recursos exclusivos ou compartilhados',
-        '(?i)(?:quando a pol[i\u00ed]tica eleger delega[c\u00e7][a\u00e3]o|se a pol[i\u00ed]tica eleger delega[c\u00e7][a\u00e3]o|ap[o\u00f3]s a pol[i\u00ed]tica eleger delega[c\u00e7][a\u00e3]o|ap[o\u00f3]s eleger delega[c\u00e7][a\u00e3]o),? lance em lote todas as frentes materiais independentes antes do primeiro follow',
-        '(?i)apenas trilhas com depend[e\u00ea]ncia real ou recurso compartilhado ficam seriais',
-        '(?i)enquanto aguarda,? fa[c\u00e7]a orquestra[c\u00e7][\u00e3a]o independente [u\u00fa]til',
-        '(?i)ledger est[a\u00e1]vel de request_id.{0,60}frente,? agente,? job,? estado,? consumido e fechado',
-        '(?i)consuma cada job e feche cada agente ap[o\u00f3]s a integra[c\u00e7][\u00e3a]o',
-        '(?i)(?:subagents_continue|deepseek_continue).{0,80}allow_respawn',
-        '(?i)sem pedir nova permiss[\u00e3a]o',
-        '(?i)cria sess[\u00e3a]o.{0,60}lineage',
-        '(?i)nunca recupere job running',
-        '(?i)abortad[oa] explicitamente',
-        '(?i)sem fallback',
-        '(?i)fora do pedido original',
-        '(?i)aggressive.{0,100}(?:parent|orquestrador).{0,60}(?:arquiteto|decisor|integrador|gatekeeper)',
-        '(?i)pacote pequeno de evid[e\u00ea]ncia decis[o\u00f3]ria|evid[e\u00ea]ncia decis[o\u00f3]ria',
-        '(?i)sem refazer bulk delegado|nunca refazer bulk delegado',
-        '(?i)uma trilha persistente por frente coesa|trilha persistente por frente coesa',
-        '(?i)sem microdelega[c\u00e7][a\u00e3]o',
-        '(?i)nova trilha apenas para deliverable independentemente aceit[a\u00e1]vel',
-        '(?i)mesma trilha.{0,40}invent[a\u00e1]rio m[i\u00ed]nimo.{0,40}closure slices pequenos',
-        '(?i)proibido repetir integralmente',
-        '(?i)proibido abrir novo agente'
-    )
-
-    foreach ($pattern in $requiredPatterns) {
-        if (-not [regex]::IsMatch($normalized, $pattern)) {
-            return "missing required orchestration policy pattern: $pattern"
-        }
-    }
-
-    $forbiddenPatterns = @(
-        '(?i)Review-And-Fix-Vigorously',
-        '(?i)\bR\.A\.F\.V\b\s*\(',
-        '(?i)pedir explicitamente sub-agentes',
-        '(?i)usu[a\u00e1]rio pedir explicitamente',
-        '(?i)n[a\u00e3]o\s+(?:[e\u00e9]\s+)?a\s+for[c\u00e7]a\s+de\s+trabalho',
-        '(?i)trabalho local do parent [e\u00e9] at[o\u00f3\u00f4]mico',
-        '(?i)\b(?:pode|poderia|poder[a\u00e1]|deve|deveria)\b[^.;]*\b(?:refazer|repetir|duplicar)\b',
-        '(?i)(?:n[a\u00e3]o precisa|sem precisar|sem a necessidade)\b[^.;]*\bdelegar\b',
-        '(?i)\b(?:pode|poderia|poder[a\u00e1]|deve|deveria)\b[^.;]*\b(?:fechar|encerrar)\b[^.;]*(?:writer|agente|frente)',
-        '(?i)\b(?=[^.;]*\b(?:pode|podem|poderia|poderiam|poder[a\u00e1]|poder[a\u00e3]o|poderao|deve|devem|deveria|deveriam|s[a\u00e3]o autorizad[ao]s? a|est[a\u00e3]o autorizad[ao]s? a|usam)\b)(?=[^.;]*\b(?:spawn_agent|wait_agent|multi_agent_v1__spawn_agent)\b)(?=[^.;]*\b(?:supervis[a\u00e3]o|guardian)\b)[^.;]+',
-        '(?i)\b(?:pode|deve|autorizado a)\b[^.;]*\b(?:refazer bulk|refazer trabalho delegado)\b',
-        '(?i)\b(?:pode|deve|autorizado a)\b[^.;]*\b(?:microdelegar|micro-delegar)\b',
-        '(?i)\b(?:pode|deve|autorizado a)\b[^.;]*\b(?:repetir integralmente|abrir novo agente ap[o\u00f3]s timeout)\b'
-    )
-
-    foreach ($pattern in $forbiddenPatterns) {
-        if ([regex]::IsMatch($normalized, $pattern)) {
-            return "forbidden direct-local-work carve-out: $pattern"
-        }
-    }
-
-    $recoveryForbiddenPatterns = @(
-        '(?i)\b(?:pode|podem|poderia|poderiam|poder[a\u00e1]|poder[a\u00e3]o|poderao|deve|devem|deveria|deveriam)\b[^.;]*\b(?:recupera[r\u00e7]|reabrir|retomar|continuar|abrir|usar)\b[^.;]*(?:job running|running|em execu[c\u00e7][a\u00e3]o|em andamento|em curso|ativos?|andamento)',
-        '(?i)\b(?:pode|podem|poderia|poderiam|poder[a\u00e1]|poder[a\u00e3]o|poderao|deve|devem|deveria|deveriam)\b[^.;]*\b(?:recupera[r\u00e7]|reabrir|retomar|continuar|abrir|usar)\b[^.;]*(?:sem resposta final|resposta final persistida|sem resultado final|resultado final persistido|sem resultado terminal)',
-        '(?i)\b(?:pode|podem|poderia|poderiam|poder[a\u00e1]|poder[a\u00e3]o|poderao|deve|devem|deveria|deveriam)\b[^.;]*\b(?:recupera[r\u00e7]|reabrir|retomar|continuar|abrir|usar)\b[^.;]*(?:abortad[oa]|abortados)',
-        '(?i)\b(?:pode|podem|poderia|poderiam|poder[a\u00e1]|poder[a\u00e3]o|poderao|deve|devem|deveria|deveriam)\b[^.;]*\b(?:recupera[r\u00e7]|reabrir|retomar|continuar|abrir|usar)\b[^.;]*(?:escopo novo|outro escopo|escopo diferente|frente nova|fora do pedido|mudan[c\u00e7]a material|pedido divergiu|pedido divergente|outro pedido|mudan[c\u00e7]a de cwd|cwd diferente|mudando de cwd|outro cwd|cwd divergente)',
-        '(?i)\b(?:pode|podem|poderia|poderiam|poder[a\u00e1]|poder[a\u00e3]o|poderao|deve|devem|deveria|deveriam)\b[^.;]*\b(?:recupera[r\u00e7]|reabrir|retomar|continuar|abrir|usar|allow_respawn)\b[^.;]*\b(?:fallback|outro provedor|outro modelo|troc\w*|substitu\w*)\b',
-        '(?i)\b(?:pode|podem|poderia|poderiam|poder[a\u00e1]|poder[a\u00e3]o|poderao|deve|devem|deveria|deveriam)\b[^.;]*\b(?:reabrir a sess[a\u00e3]o|mesma sess[a\u00e3]o|sess[a\u00e3]o antiga|continuar a sess[a\u00e3]o|abrir nova sess[a\u00e3]o|sess[a\u00e3]o nova)\b',
-        '(?i)\b(?:usa|usar|utiliza|utilizar|adota|adotar)\s+(?:rotineir\w*|normalmente|de rotina)\b[^.;]*allow_respawn|allow_respawn\b[^.;]*(?:[e\u00e9]|como|para)\s+(?:persist[e\u00ea]ncia|uso|opera[c\u00e7][\u00e3a]o)\s+(?:rotineir\w*|normal|habitual)'
-    )
-
-    foreach ($pattern in $recoveryForbiddenPatterns) {
-        if ([regex]::IsMatch($normalized, $pattern)) {
-            return "forbidden recovery-policy carve-out: $pattern"
-        }
-    }
-
-    return $null
-}
-
-function New-TamperedText {
-    param(
-        [Parameter(Mandatory)][string]$Text,
-        [Parameter(Mandatory)][string]$Old,
-        [string]$New = ''
-    )
-
-    $index = $Text.IndexOf($Old, [StringComparison]::Ordinal)
-    if ($index -lt 0) {
-        throw "Tamper fixture source text is missing: $Old"
-    }
-    return $Text.Remove($index, $Old.Length).Insert($index, $New)
-}
-
-function Assert-OrchestrationPolicySelfCheck {
-    param([Parameter(Mandatory)][string]$Canonical)
-
-    $normalized = [regex]::Replace($Canonical, '\s+', ' ').Trim()
-    $samples = @(
-        [pscustomobject]@{
-            Name = 'parent permitted to redo a delegated front locally'
-            Text = (New-TamperedText -Text $normalized -Old 'nunca refazer localmente' -New 'pode refazer localmente')
-        }
-        [pscustomobject]@{
-            Name = 'supervisory agents may use native tools to manage lifecycle'
-            Text = ($normalized + ' Os agentes de supervisao do sistema podem usar spawn_agent para gerenciar o ciclo de vida.')
-        }
-        [pscustomobject]@{
-            Name = 'supervisory agents authorized to use native tools'
-            Text = ($normalized + ' Os agentes de supervisao do sistema estao autorizados a usar wait_agent.')
-        }
-        [pscustomobject]@{
-            Name = 'supervisory agents use native tools freely'
-            Text = ($normalized + ' Os agentes de supervisao do sistema usam spawn_agent livremente.')
-        }
-        [pscustomobject]@{
-            Name = 'fail-closed behavior removed'
-            Text = $normalized.Replace('falha fechado', 'rota aberta')
-        }
-        [pscustomobject]@{
-            Name = 'user-mention default-delegation clause removed'
-            Text = (New-TamperedText -Text $normalized -Old 'O seletor global de backend' -New 'O seletor local de backend')
-        }
-        [pscustomobject]@{
-            Name = '$workflows made a condition for MCP selection'
-            Text = (New-TamperedText -Text $normalized -Old 'matriz ausente' -New 'matriz aberta')
-        }
-        [pscustomobject]@{
-            Name = 'writer close-before-review exemption added'
-            Text = ($normalized + ' O parent pode fechar o writer antes da revisao independente.')
-        }
-        [pscustomobject]@{
-            Name = 'map-before-wait removed'
-            Text = (New-TamperedText -Text $normalized -Old 'Antes de esperar' -New 'Antes de agir')
-        }
-        [pscustomobject]@{
-            Name = 'batch launch before first follow removed'
-            Text = (New-TamperedText -Text $normalized -Old 'lance em lote todas as frentes materiais independentes' -New 'lance as frentes uma a uma')
-        }
-        [pscustomobject]@{
-            Name = 'serial-only-real-dependencies removed'
-            Text = (New-TamperedText -Text $normalized -Old 'apenas trilhas com' -New 'todas as trilhas com')
-        }
-        [pscustomobject]@{
-            Name = 'useful orchestration while waiting removed'
-            Text = (New-TamperedText -Text $normalized -Old 'enquanto aguarda' -New 'enquanto dorme')
-        }
-        [pscustomobject]@{
-            Name = 'request_id ledger removed'
-            Text = (New-TamperedText -Text $normalized -Old 'ledger estável' -New 'historico estavel')
-        }
-        [pscustomobject]@{
-            Name = 'consume-and-close-after-integration removed'
-            Text = (New-TamperedText -Text $normalized -Old 'consuma cada job' -New 'ignore cada job')
-        }
-        [pscustomobject]@{
-            Name = 'recovery respawn authorized for a running job'
-            Text = ($normalized + ' O parent pode recuperar job running com allow_respawn.')
-        }
-        [pscustomobject]@{
-            Name = 'recovery respawn authorized for an explicitly aborted job'
-            Text = ($normalized + ' O parent pode reabrir job abortado com allow_respawn.')
-        }
-        [pscustomobject]@{
-            Name = 'recovery respawn authorizes scope expansion'
-            Text = ($normalized + ' O parent pode recuperar com allow_respawn em escopo novo.')
-        }
-        [pscustomobject]@{
-            Name = 'recovery respawn allows a provider fallback'
-            Text = ($normalized + ' O parent pode recuperar com allow_respawn usando fallback de provedor.')
-        }
-        [pscustomobject]@{
-            Name = 'recovery as a fake continuation of the original session'
-            Text = ($normalized + ' O parent pode reabrir a sessao antiga em vez de criar sessao nova.')
-        }
-        [pscustomobject]@{
-            Name = 'recovery via continue authorized for a job in progress'
-            Text = ($normalized + ' O parent pode continuar com allow_respawn para job em andamento.')
-        }
-        [pscustomobject]@{
-            Name = 'recovery of a job without a persisted final response'
-            Text = ($normalized + ' O parent pode recuperar job sem resposta final persistida.')
-        }
-        [pscustomobject]@{
-            Name = 'recovery authorized after the request diverged'
-            Text = ($normalized + ' O parent pode usar allow_respawn quando o pedido divergiu.')
-        }
-        [pscustomobject]@{
-            Name = 'recovery authorized while changing cwd'
-            Text = ($normalized + ' O parent pode recuperar com allow_respawn mudando de cwd.')
-        }
-        [pscustomobject]@{
-            Name = 'recovery opens a new session for a new front'
-            Text = ($normalized + ' O parent pode abrir nova sessao para frente nova.')
-        }
-        [pscustomobject]@{
-            Name = 'recovery respawn allowed while switching model/provider'
-            Text = ($normalized + ' O parent pode retomar com allow_respawn trocando de modelo/provedor.')
-        }
-        [pscustomobject]@{
-            Name = 'recovery respawn allowed while substituting the provider'
-            Text = ($normalized + ' O parent pode retomar com allow_respawn substituindo o provedor.')
-        }
-        [pscustomobject]@{
-            Name = 'routine allow_respawn persistence tamper'
-            Text = ($normalized + ' O parent usa rotineiramente allow_respawn=true como persistencia.')
-        }
-        [pscustomobject]@{
-            Name = 'legacy native prompt requirement tamper'
-            Text = ($normalized + ' O parent deve pedir explicitamente sub-agentes nativos.')
-        }
-        [pscustomobject]@{
-            Name = 'invented RAFV acronym expansion tamper'
-            Text = ($normalized + ' O modo R.A.F.V (Review-And-Fix-Vigorously) e executado.')
-        }
-        [pscustomobject]@{
-            Name = 'unconditional not workforce tamper'
-            Text = ($normalized + ' O parent nao e a forca de trabalho do repositorio.')
-        }
-        [pscustomobject]@{
-            Name = 'unconditional atomic local work tamper'
-            Text = ($normalized + ' O trabalho local do parent e atomico.')
-        }
-        [pscustomobject]@{
-            Name = 'parent permitted to redo bulk delegated work tamper'
-            Text = ($normalized + ' O parent pode refazer bulk delegado localmente.')
-        }
-        [pscustomobject]@{
-            Name = 'microdelegation allowed tamper'
-            Text = ($normalized + ' O parent pode microdelegar tarefas pequenas.')
-        }
-        [pscustomobject]@{
-            Name = 'timeout repeat integrally tamper'
-            Text = ($normalized + ' O parent pode repetir integralmente a tarefa apos timeout.')
-        }
-    )
-
-    foreach ($sample in $samples) {
-        if ($null -eq (Test-OrchestrationPolicy -Text $sample.Text)) {
-            throw "Orchestration policy self-check failed to detect tampering: $($sample.Name)"
-        }
-    }
-}
-
-function Assert-OrchestrationPolicy {
-    param(
-        [Parameter(Mandatory)][string]$Label,
-        [Parameter(Mandatory)][string]$Text
-    )
-
-    $reason = Test-OrchestrationPolicy -Text $Text
-    if ($null -ne $reason) {
-        throw "$Label fails the default-delegation orchestration policy ($reason)"
-    }
-
-    Assert-OrchestrationPolicySelfCheck -Canonical $Text
 }
 
 function Assert-ModeMatrix {
@@ -2242,7 +1471,7 @@ function Assert-InstalledState {
     }
 
     $schemaText = [string]$State.schemaVersion
-    if ($schemaText -notin @('1', '2', '3', '4', '5')) {
+    if ($schemaText -notin @('1', '2', '3', '4', '5', '6')) {
         throw "Installed state has an unsupported schema: $schemaText"
     }
     $schema = [int]$schemaText
@@ -2292,13 +1521,13 @@ function Assert-InstalledState {
         }
         Assert-CodexBackendState -BackendState $State.codexBackend
     }
-    if ($State.PSObject.Properties.Name -contains 'codexDelegation') {
+    if ($schema -le 5 -and $State.PSObject.Properties.Name -contains 'codexDelegation') {
         if ($null -eq $State.codexDelegation) {
             throw "Installed state contains an invalid codexDelegation property."
         }
         Assert-CodexDelegationState -DelegationState $State.codexDelegation
     }
-    if ($State.PSObject.Properties.Name -contains 'codexStrategy') {
+    if ($schema -le 5 -and $State.PSObject.Properties.Name -contains 'codexStrategy') {
         if ($null -eq $State.codexStrategy) {
             throw "Installed state contains an invalid codexStrategy property."
         }
@@ -2316,10 +1545,22 @@ function Assert-InstalledState {
             throw "Schema $schema installed state is missing required codexBackend."
         }
         Assert-CodexBackendState -BackendState $State.codexBackend
-        if (-not ($State.PSObject.Properties.Name -contains 'codexDelegation') -or $null -eq $State.codexDelegation) {
-            throw "Schema $schema installed state is missing required codexDelegation."
+        if ($schema -eq 5) {
+            if (-not ($State.PSObject.Properties.Name -contains 'codexDelegation') -or $null -eq $State.codexDelegation) {
+                throw "Schema $schema installed state is missing required codexDelegation."
+            }
+            Assert-CodexDelegationState -DelegationState $State.codexDelegation
         }
-        Assert-CodexDelegationState -DelegationState $State.codexDelegation
+    }
+    if ($schema -ge 6) {
+        if (($State.PSObject.Properties.Name -contains 'codexDelegation') -or
+            ($State.PSObject.Properties.Name -contains 'codexStrategy')) {
+            throw 'Schema 6 installed state retains retired orchestration selectors.'
+        }
+        if (-not ($State.PSObject.Properties.Name -contains 'codexContinuation') -or $null -eq $State.codexContinuation) {
+            throw 'Schema 6 installed state is missing codexContinuation.'
+        }
+        Assert-CodexContinuationState -ContinuationState $State.codexContinuation
     }
 
     $seenPaths = @{}
@@ -2417,7 +1658,7 @@ foreach ($mode in $allModes) {
 
 Assert-Contains -Label 'workflow skill' -Text $skill -Needles @(
     'name: workflows',
-    'FRAME -> FANOUT -> COLLECT -> ACT -> VERIFY -> REVIEW -> DONE',
+    'FRAME -> FANOUT -> [PARK -> SUSPENDED -> WAKE ->] COLLECT -> ACT -> VERIFY -> REVIEW -> DONE',
     'subagents_spawn|deepseek_spawn',
     'subagents_continue|deepseek_continue',
     'subagents_follow|deepseek_follow',
@@ -2427,15 +1668,12 @@ Assert-Contains -Label 'workflow skill' -Text $skill -Needles @(
     'subagents_recover_result|deepseek_recover_result',
     'allow_respawn',
     'capabilities | change permission | done gate',
-    'visual_context',
     'Final audit',
     'Delivery commit gate',
     'local commit series',
     'never push',
     'Git index',
     'No-edit',
-    'balanced',
-    'aggressive',
     'references/delegation.md',
     'references/delivery-review.md'
 )
@@ -2445,16 +1683,11 @@ if (-not $implAutoRow.Success -or $implAutoRow.Value -notmatch '\| write \|') {
     throw "Workflow skill does not grant IMPL.AUTO write permission"
 }
 
-$skillWithoutAutonomy = [regex]::Replace($skill, '(?i)\b(?:active writer|deferred_active_writer|idle open writer(?:s)?|integrated reviewer)\b', '')
-Assert-Forbidden -Label 'workflow skill' -Text $skillWithoutAutonomy -Tokens @(
+Assert-Forbidden -Label 'workflow skill' -Text $skill -Tokens @(
     'AGENTS.md',
     'subagents=',
     'sidecar',
     'read-only',
-    'scout',
-    'researcher',
-    'writer',
-    'reviewer',
     'Review-And-Fix-Vigorously',
     'not the repository workforce'
 )
@@ -2492,10 +1725,8 @@ Assert-Contains -Label 'codex AGENTS.md' -Text $agentsText -Needles @(
     (-join [char[]]@(110, 227, 111, 32, 233, 32, 99, 111, 110, 100, 105, 231, 227, 111)),
     'falha fechado',
     'resultado terminal',
-    'balanced',
-    'aggressive',
     'subagent_backend',
-    'delegation_policy',
+    'subagent_continuation',
     'APPROVED',
     'BLOCKED',
     'alvo congelado'
@@ -2535,19 +1766,14 @@ function Assert-AllContractRules {
 Assert-AllContractRules -Checks @(
     { Assert-CompletionPolicy -Label 'workflow skill' -Text $skill },
     { Assert-RecoveryPolicy -Label 'workflow skill' -Text $skill },
-    { Assert-OrchestrationPolicy -Label 'codex AGENTS.md' -Text $agentsText },
-    { Assert-DelegationContract -Label 'delegation reference' -Text $delegationRef },
+    { Assert-AdaptiveContract -AgentsText $agentsText -GeminiText $geminiText -SkillText $skill -DelegationText $delegationRef -ReadmeText $readmeText },
     { Assert-DeliveryReviewContract -Label 'delivery-review reference' -Text $deliveryReviewRef },
     { Assert-DeliveryGateWiring -Label 'validation reference' -Text $validationRef },
     { Assert-DeliveryGateWiring -Label 'commit reference' -Text $commitRef },
     { Assert-DesignSpecContract -Label 'design spec' -Text $designSpec },
     { Assert-CorrectionAdequacySpecContract -Label 'correction adequacy gate design spec' -Text $adequacySpec },
     { Assert-PlanContract -Label 'implementation plan' -Text $implPlan },
-    { Assert-ReadmeContract -Label 'README.md' -Text $readmeText },
-    { Assert-SecurityDocContract -Label 'docs/security.md' -Text $securityDoc },
     { Assert-OpenAiAgentContract -Label 'skills/workflows/agents/openai.yaml' -Text $openaiYaml },
-    { Assert-InstallerOutputContract -Label 'scripts/install.ps1' -Text $installer },
-    { Assert-DoctorOutputContract -Label 'scripts/doctor.ps1' -Text $doctorText },
     { Assert-SupersededSpecContract -Label 'docs/superpowers/specs/2026-08-19-promptpad-superpowers-compatibility-design.md' -Text $supersededSpec },
     { Assert-McpFoundationSkill -Label 'mcp-foundation skill' -Text $mcpSkill },
     { Assert-DeepSeekDaemonRestartPolicy -SkillText $mcpSkill -LifecycleText $mcpLifecycle -AgentsText $agentsText -GeminiText $geminiText },
@@ -2555,9 +1781,7 @@ Assert-AllContractRules -Checks @(
     { Assert-AlinhamentoPolicy -AgentsText $agentsText -GeminiText $geminiText -SkillText $skill -DelegationText $delegationRef -ReadmeText $readmeText },
     { Assert-McpTemplateRouting -Label 'codex AGENTS.md' -Text $agentsText },
     { Assert-McpTemplateRouting -Label 'antigravity GEMINI.md' -Text $geminiText },
-    { Assert-CriticalStrategyPolicy -AgentsText $agentsText -GeminiText $geminiText -SkillText $skill -DelegationText $delegationRef -ReadmeText $readmeText },
-    { Assert-SubagentAutonomyPolicy -AgentsText $agentsText -GeminiText $geminiText -SkillText $skill -DelegationText $delegationRef -DeliveryReviewText $deliveryReviewRef -ReadmeText $readmeText },
-    { Assert-AdaptiveSwarmPolicy -AgentsText $agentsText -GeminiText $geminiText -SkillText $skill -DelegationText $delegationRef -ReadmeText $readmeText }
+    { Assert-SubagentAutonomyPolicy -AgentsText $agentsText -GeminiText $geminiText -SkillText $skill -DelegationText $delegationRef -DeliveryReviewText $deliveryReviewRef -ReadmeText $readmeText }
 )
 
 $legacyPaths = @(
@@ -2741,11 +1965,6 @@ $expectedPromptMap = [ordered]@{
     '^Numpad1' = '.\scripts\switch-subagent-backend.ps1 -Backend native'
     '^Numpad2' = '.\scripts\switch-subagent-backend.ps1 -Backend deepseek'
     '^Numpad3' = '.\scripts\switch-subagent-continuation.ps1 -Continuation active_follow'
-    '^Numpad4' = '.\scripts\switch-subagent-policy.ps1 -Policy balanced'
-    '^Numpad5' = '.\scripts\switch-subagent-policy.ps1 -Policy aggressive'
-    '^Numpad6' = '.\scripts\switch-subagent-policy.ps1 -Policy swarm'
-    '^Numpad7' = '.\scripts\switch-subagent-strategy.ps1 -Strategy worker'
-    '^Numpad8' = '.\scripts\switch-subagent-strategy.ps1 -Strategy critical'
     '^Numpad9' = '.\scripts\switch-subagent-continuation.ps1 -Continuation park_and_wake'
     '^Numpad0' = '.\scripts\switch-subagent-backend.ps1 -Status'
 }
@@ -2908,15 +2127,13 @@ if (-not $SkipInstalled) {
         }
 
         $installedAgents = Read-RequiredText (Join-Path $codexHome 'AGENTS.md')
-        Assert-OrchestrationPolicy -Label 'installed AGENTS.md' -Text $installedAgents
+        Assert-AdaptiveContract -AgentsText $installedAgents -GeminiText (Read-RequiredText (Join-Path (Join-Path $antigravityHome 'config') 'GEMINI.md')) -SkillText (Read-RequiredText (Join-Path $workflowsDest 'SKILL.md')) -DelegationText (Read-RequiredText (Join-Path (Join-Path $workflowsDest 'references') 'delegation.md')) -ReadmeText $readmeText
         Assert-DeepSeekDaemonRestartAgents -Label 'installed AGENTS.md' -Text $installedAgents
         Assert-McpTemplateRouting -Label 'installed AGENTS.md' -Text $installedAgents
 
         $expectedBackend = if ($state.PSObject.Properties.Name -contains 'codexBackend') { [string]$state.codexBackend.selected } else { 'deepseek' }
-        $expectedPolicy = if ($state.PSObject.Properties.Name -contains 'codexDelegation') { [string]$state.codexDelegation.selected } else { 'balanced' }
-        $expectedStrategy = if ($state.PSObject.Properties.Name -contains 'codexStrategy') { [string]$state.codexStrategy.selected } else { 'worker' }
         $expectedContinuation = if ($state.PSObject.Properties.Name -contains 'codexContinuation') { [string]$state.codexContinuation.selected } else { 'active_follow' }
-        Assert-CodexAgentsRuntimeBlock -Text $installedAgents -Backend $expectedBackend -Policy $expectedPolicy -Strategy $expectedStrategy -Continuation $expectedContinuation
+        Assert-CodexAgentsRuntimeBlock -Text $installedAgents -Backend $expectedBackend -Continuation $expectedContinuation
 
         $installedGemini = Read-RequiredText (Join-Path (Join-Path $antigravityHome 'config') 'GEMINI.md')
         Assert-DeepSeekDaemonRestartGemini -Label 'installed GEMINI.md' -Text $installedGemini
@@ -2929,9 +2146,7 @@ if (-not $SkipInstalled) {
         $installedDelegation = if (Test-Path -LiteralPath (Join-Path (Join-Path $workflowsDest 'references') 'delegation.md')) { Read-RequiredText (Join-Path (Join-Path $workflowsDest 'references') 'delegation.md') } else { '' }
         Assert-DeliveryReviewPolicy -DeliveryReviewText $installedDeliveryAgents -SkillText (Read-RequiredText (Join-Path $workflowsDest 'SKILL.md')) -AgentsText $installedAgents -GeminiText $installedGemini -ValidationText $installedValidation -CommitText $installedCommit -QualityRatchetText $installedQuality -DelegationText $installedDelegation -ReadmeText $readmeText -LabelPrefix 'installed (safe profile)'
         Assert-AlinhamentoPolicy -AgentsText $installedAgents -GeminiText $installedGemini -SkillText (Read-RequiredText (Join-Path $workflowsDest 'SKILL.md')) -DelegationText (Read-RequiredText (Join-Path (Join-Path $workflowsDest 'references') 'delegation.md')) -ReadmeText $readmeText -LabelPrefix 'installed (safe profile)'
-        Assert-CriticalStrategyPolicy -AgentsText $installedAgents -GeminiText $installedGemini -SkillText (Read-RequiredText (Join-Path $workflowsDest 'SKILL.md')) -DelegationText (Read-RequiredText (Join-Path (Join-Path $workflowsDest 'references') 'delegation.md')) -ReadmeText $readmeText -LabelPrefix 'installed (safe profile)'
         Assert-SubagentAutonomyPolicy -AgentsText $installedAgents -GeminiText $installedGemini -SkillText (Read-RequiredText (Join-Path $workflowsDest 'SKILL.md')) -DelegationText (Read-RequiredText (Join-Path (Join-Path $workflowsDest 'references') 'delegation.md')) -DeliveryReviewText $installedDeliveryAgents -ReadmeText $readmeText -LabelPrefix 'installed (safe profile)'
-        Assert-AdaptiveSwarmPolicy -AgentsText $installedAgents -GeminiText $installedGemini -SkillText (Read-RequiredText (Join-Path $workflowsDest 'SKILL.md')) -DelegationText (Read-RequiredText (Join-Path (Join-Path $workflowsDest 'references') 'delegation.md')) -ReadmeText $readmeText -LabelPrefix 'installed (safe profile)'
     }
 
     Assert-MirrorTree -Source $workflowSource -Installed $workflowsDest -Label 'workflows skill (agents)' -CanonicalHelper $safePowerShellSource

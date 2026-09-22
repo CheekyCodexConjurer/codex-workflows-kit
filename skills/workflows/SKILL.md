@@ -54,7 +54,7 @@ selected mode or an open gate requires it.
   mode or gate requires it, avoiding blanket full-file reads for simple tasks.
 - Material current, external, or high-impact claims use the `evidence-first`
   skill.
-- All workflow modes perform an MCP maintenance preflight before acting (`skills/mcp-foundation/SKILL.md`; specialist skills `context7-mcp` and `codebase-memory-mcp` load on relevant tool trigger). Modos sem escrita apenas verificam; write modes may sync CodeGraph on stale/pending delay via status -> sync -> recheck, falling back to Serena/rg with a warning on failure/unknown. Serena runs via `--project-from-cwd` with one instance per project, read configuration check, no-onboarding/no-memories in no-write modes, and edits only in write modes. Codebase Memory (CBM gratuito): grafo de código estrutural (não memórias genéricas de projeto); auto preparação apenas quando útil em modos write autorizados (`IMPL`, `IMPL.AUTO`, `IMPL.PHASE`, `DELIVER.AUTO`, `BUG.FIX`, `DEBUG`, `R.A.F.V`) sob exclusions verificadas e owner único por raiz canônica/lock entre swarm, sem .codegraph init; sem instalações/indices/cache/monitores induzidos em PLAN/RESEARCH/ALINHAMENTO/COMMIT; Index não é autoridade: validar fonte original e freshness; preserve CodeGraph prioridade existente quando .codegraph existe e Serena LSP, escolha ferramenta por necessidade sem multiplicar todas. Context7 (gratuito): política credential-free sem plano pago, consulta atômica sanitizada em vez de pergunta completa, ID confiável estritamente retornado na tarefa ou fornecido pelo usuário (nunca inferir de versão), resolver só sem ID confiável, versão explícita, compartilhar pacote docs entre workers, 429 stop e docs oficiais com aviso sem trocar modelo/provider. Never auto-install, auto-upgrade, or auto-restart MCP servers (CodeGraph strictly manual init; authorized CBM repo prep exception in write delivery modes only).
+- All workflow modes perform an MCP maintenance preflight before acting (`skills/mcp-foundation/SKILL.md`; specialist skills `context7-mcp` and `codebase-memory-mcp` load on relevant tool trigger). Modos sem escrita apenas verificam; write modes may sync CodeGraph on stale/pending delay via status -> sync -> recheck, falling back to Serena/rg with a warning on failure/unknown. Serena runs via `--project-from-cwd` with one instance per project, read configuration check, no-onboarding/no-memories in no-write modes, and edits only in write modes. Codebase Memory (CBM gratuito): grafo de código estrutural (não memórias genéricas de projeto); auto preparação apenas quando útil em modos write autorizados (`IMPL`, `IMPL.AUTO`, `IMPL.PHASE`, `DELIVER.AUTO`, `BUG.FIX`, `DEBUG`, `R.A.F.V`) sob exclusions verificadas e owner único por raiz canônica/lock entre frentes paralelas, sem .codegraph init; sem instalações/indices/cache/monitores induzidos em PLAN/RESEARCH/ALINHAMENTO/COMMIT; Index não é autoridade: validar fonte original e freshness; preserve CodeGraph prioridade existente quando .codegraph existe e Serena LSP, escolha ferramenta por necessidade sem multiplicar todas. Context7 (gratuito): política credential-free sem plano pago, consulta atômica sanitizada em vez de pergunta completa, ID confiável estritamente retornado na tarefa ou fornecido pelo usuário (nunca inferir de versão), resolver só sem ID confiável, versão explícita, compartilhar pacote docs entre workers, 429 stop e docs oficiais com aviso sem trocar modelo/provider. Never auto-install, auto-upgrade, or auto-restart MCP servers (CodeGraph strictly manual init; authorized CBM repo prep exception in write delivery modes only).
 - MCP automatic-use contract: the parent and every sub-agent run the canonical preflight; each relevant allowlisted MCP is routed by purpose before reading or editing. The preflight checks availability, repository scope, configuration, and freshness; it applies `Get-CodexMcpMaintenanceDecision` and, in authorized write modes, performs the permitted repository preparation (`CodeGraph` sync only when an index already exists, `Serena` project activation, and `CBM` initialization/refresh after exclusion and canonical-root lock checks), then rechecks before use. No-write modes inspect and report only. Missing or unknown MCP state is fail-closed for that route, with the documented Serena/rg or official-docs fallback; never install, authenticate, upgrade, restart, or initialize a server silently. Context7 is automatically selected when the task needs current external documentation, but remains resolve -> query and has no repository index. CodeGraph prioritizes structural questions while direct textual searches (rg) serve exact errors, literals, and configuration keys; the parent shares curated task context with sub-agents to avoid redundant discovery from root.
 - Optional TypeSafe/Jev semantic optimization: skill routing (`references/skill-routing.md`) evaluates candidate skills during FRAME before FANOUT; context reranking (`references/context-reranking.md`) prioritizes search retrieval candidates (e.g. via `select-context-from-rg.ps1`) within an exact UTF-8 byte budget and privacy containment boundary before delivering context to the parent orchestrator or delegated subagents under deterministic activation gates (`MinCandidates = 8`, `ContextBudgetTriggerBytes = 12000`), hard global cost circuit breakers (`MaxCandidatesToEvaluate = 100`, `MaxJevCalls = 5`, `MaxTotalPayloadBytes = 262144`), and PINNED capacity bounds, preserving parent authority and canonical workflow lifecycle.
 - The selected global backend matrix is authoritative for new Codex tasks and
@@ -64,44 +64,75 @@ selected mode or an open gate requires it.
 
 ## Division of work
 
-- Decompose, route, prioritize, synthesize, integrate, validate, and decide.
-  Delegation is governed by the orthogonal selectors (`subagent_backend`,
-  `delegation_policy`, `subagent_strategy`, and `subagent_continuation`); see `references/delegation.md`.
-- Under `balanced` (default / Universal Orchestrator Policy; token economy & precision): the Orchestrator performs work solo by default for common tasks (diagnostics, local edits, routine features); strict delegation triggers apply (delegates only for massive read volume or strictly independent parallel fronts); subagents must return thin filtered responses (max ~5 lines, never raw code dumps, full files, or long logs); centralized editing: only the Orchestrator applies code modifications, while subagents strictly explore/research without sequential delegation chains. Bounded delegation slices: parent is forbidden from dispatching open-ended or unscoped tasks to subagents; must slice tasks into bounded targets with explicit files, atomic questions, and early-exit criteria to prevent long drift; extensive parallel pulverization routes explicitly to `swarm`.
-- Under `aggressive` (parent-token offload): parent acts as architect, decider,
-  integrator, and gatekeeper; delegates material bulk without redoing delegated
-  work locally; consumes a decision evidence packet (frozen target/diff, critical
-  regions, test/review evidence, conflicts). Maintains one persistent track per
-  cohesive front; no microdelegation; new track only for an independently
-  acceptable deliverable.
-- Under `swarm` (Adaptive Swarm; dynamic DAG fan-out): GPT parent is the sole orchestrator, decider, integrator, and gatekeeper. Builds ready DAG waves (ondas do DAG), pulverizes all ready and useful independent slices for lowest wall-clock time, with no fixed number of agents (pulveriza todas as fatias ready e independentes úteis para menor wall-clock, sem número fixo; apenas fatias materialmente independentes e terminalmente aceitáveis/rejeitáveis), keeping cohesive and sequential work on the same track. Completion is dependency-scoped with a global-ready frontier: versioned consumed dependency reuse and selective invalidation allow safe prefix advancement (A/Bprep consumed permits Btail launch while C remains unconsumed; no phase barriers except explicit IMPL.PHASE user gates; idle open writers stay open until delivery review). Elastic logical fan-out (fan-out lógico elástico) without min/max agents in policy, driven by cost, dependencies, resource exclusivity, integration risk, and latency. Non-mutating analysis can fan-out; mutations only with disjoint ownership, worktrees, or exclusive resources (frentes de mutação continuam exigindo ownership disjunto, worktrees ou recursos exclusivos). Physical backpressure and credits belong to the bridge. DeepSeek backend preflight requires confirming that `subagents_spawn_batch` is callable and that the bridge authoritative status/health announces `batch_scheduler` capability, failing closed if absent or inconsistent (falha fechado se ausente), without silent fallback to aggressive; isolated PowerShell helper does not alone prove the live daemon; native respects exposed capacity. Dynamic wake via `park_and_wake` supports deterministic predicates `REQUIRED`, `QUORUM`, `ALL`, and `ANY`; unawakened jobs remain obligations. Safe rollback: explicitly switch to `aggressive` before downgrade or installing swarm-unaware versions; do not bump schemaVersion.
-- Under `subagent_strategy`: `worker` (default) preserves the existing workflow
-  where worker subagents assist the main agent under the active delegation policy (worker mantém o fluxo atual) with punctual adequacy assessment;
-  `critical` executes independent and adaptive-by-depth analysis internally (análise independente e adaptativa por profundidade internamente)
-  where GPT and Gemini analyze independently, exchange evidence, and surface contradictions/gaps (troca de evidências, contradições e lacunas),
-  followed by mandatory parent GPT synthesis (posterior síntese GPT mandatória pelo parent),
-  with strict fencing, scope ownership, no concurrent edit across agents (sem edição concorrente),
-  and pinned routing without automatic route or provider switching (sem troca automática de rota/provedor).
-  Strategy never grants write; under ALINHAMENTO and in no-write modes, no-write rules strictly govern (vigora somente leitura).
-  Integration contract across modes: structured receipt (`recibo`) upon job consumption, decision evidence packet (`evidence packet`: frozen target/diff, critical regions, test/review evidence, contradictions, gaps), semantic progress tracking (`semantic progress`) along the track, and early-exit (`early-exit`) upon decisive proof or blocker, operating within existing SubAgents MCP tools without promising capabilities that the bridge does not yet expose (sem prometer capacidades que o bridge ainda não expõe).
-  Gate de Adequação da Correção: transversal e acionado em eventos determinísticos (`pre-first-edit`, `falha`/`failure`, `causa estrutural`/`structural-cause`, `expansão de escopo`/`scope-expansion`, `pré-revisão`/`pre-review`), nunca a cada turno, e sem trocar automaticamente de modo. Substitui a meta de "correção mínima" por correção suficiente e sustentável/delimitada, mantendo o limite de blast radius, `tn-paydown-gate`, `replan-gate` e a política de reparo orientada a evidência (reparo orientado a evidência com ledger anti-loop em `debug_ledger.md` registrando hipótese, observação discriminante, delta e próxima decisão; admissão por nova hipótese testável distinta e observação discriminante esperada sob experimento seguro autorizado antes de delta disponível, e pós-resultado registrando delta onde hipótese falsificada ou estreitamento causal conta como informação útil; ausência de delta ou informação exige direção diagnóstica diferente, proibindo retentativa idêntica ou worker swarm; subsequentes reparos úteis permitidos sob hipótese e delta; parada apenas por bloqueio genuíno de autoridade, acesso, decisão do usuário ou sem caminho seguro acionável, sem limite numérico fixo ou contadores disfarçados). Emite decisões `LOCAL_FIX`, `ROBUST_FIX`, `REWORK`, `RESEARCH`, `RESEARCH_THEN_REWORK` e `BLOCKED` com evidência, confiança, causa-raiz, contradições, validação exigida, escopo pertencente/adiado e próximo modo recomendado. O SubAgents MCP e o daemon bridge operam como transporte neutro (`neutral transport`), reutilizando `EvidenceBundle`, `ExecutionReceipt`, `ProgressSnapshot`, heartbeat, fence token, relation `correction`/`review`; nenhuma regra de workflow ou aprovação no bridge (sem regras de workflow no bridge). Integra explicitamente `PLAN`/`PLAN.AUTO` (no-write), `DEBUG`/`BUG.FIX` (write), `DELIVER`/`IMPL` (write), `REWORK` (no-write) e `RESEARCH.DEEP` (no-write), preservando `ALINHAMENTO` (no-write, sem metadados) e `COMMIT` (git-only).
-- Under `subagent_continuation`: `active_follow` (default; backward-compatible) is the only mode that waits inside the current run, maintaining synchronous tracking with `subagents_follow` until job completion without ending the turn prematurely; `park_and_wake` (Sub-agent Autonomy) removes in-turn waiting entirely: after all useful parent work ends, the parent dispatches all independent material fronts in batch and drains all useful local work before arming; `subagents_park`/`deepseek_park` arms a durable wait barrier with deterministic predicates `ANY`, `ALL` (default), `QUORUM(k)` (`1 <= k <= total parked jobs count`), or `REQUIRED(job ids)` (non-empty subset), returning immediately with an armed `ParkReceipt` (no wait inside the run); the parent emits a concise user-visible suspension message stating which condition will wake the task, and ends the current run exclusively in the nonterminal `SUSPENDED` state backed by the armed receipt; if the receipt returns `deliveryMode=none` or unarmed, the parent must remain active and resolve obligations; the proven dual CLI wake contract starts a new run via CLI (compatible CLI) in the exact same task: for a loaded Desktop session, enqueue a metadata-only marker with `codex queue` so the App automatically starts the next run; for an unloaded session, use `codex exec resume`; queue-first deterministic error routing attempts `codex queue` first and routes to `codex exec resume` if the session is unloaded or not loaded in App; zero in-turn wait, no model/status polling, and no model execution deadline (park_and_wake encerra a run e acorda por evento/predicado, sem polling e sem deadline de modelo); the bridge payload contains trusted metadata only (metadata-only marker, never worker result text or synthetic user prompt instructions); follow and close obligations occur only after wake (`subagents_follow` to consume ready/required jobs and `subagents_close` to retire agents only after wake in the new run); goal pause ownership remains separate: chat/task continuation does not require a goal and never automatically resumes a paused goal; failure states fail closed without silent fallback to active_follow (arming failure or unarmed/deliveryMode=none keeps parent active; permanent wake failure blocks; worker exceptions `failed`, `aborted`, `timed_out`, `needs_approval` wake immediately by default to prevent starvation); active writer represents durable deferred delivery (`deferred_active_writer`), never a terminal failure, fallback, or permission to auto-archive/unload, retrying wake via backoff; exactly one wake is emitted per barrier generation coalescing simultaneous completions without premature partial wake before the predicate is satisfied; generation supersession ensures a new barrier generation supersedes prior generations and stale markers from superseded generations are discarded; final `DONE` remains strictly impossible until all required jobs are terminally consumed and agents closed; suspected progress wake is not a completed job and not follow-blocking, maintaining strict separation with no new goal or provider controls (`suspectedprogresswake not completedjob/followblocking; no new goal/provider controls`); zero flags or state are injected into consumer repos.
-- Native mode uses native Codex subagents for delegated material fronts; each
-  native spawn passes `model="gpt-6-luna"` and `reasoning_effort="max"`
-  explicitly, states normal/default mode, and never selects Flash/Fast. Forbids
-  SubAgents MCP.
-- Under technical backend `deepseek`, use SubAgents MCP (`subagents_spawn`/`subagents_spawn_batch`/`subagents_continue`/`subagents_follow`; `subagents_spawn_batch` is the canonical swarm tool while unitary `subagents_spawn` remains valid outside waves or for a single front; compatibilidade com aliases `deepseek_*` including `deepseek_spawn_batch`) for
-  delegated material fronts — one agent per front, never duplicate a front, never
-  repeat a delegated front locally. DeepSeek-specific daemon recovery is allowed
-  only when this technical backend is selected and only under the MCP foundation exception.
-  Forbids native work tools.
-- The parent owns vision: inspect the image yourself and pass a concise
-  `visual_context` to the delegated agent (direct observations, visible
-  text, interpretation, uncertainty). Do not delegate blind image
-  interpretation.
-- Never redo a delegated material front locally.
+Adaptive orchestration is the default behavior. The public selectors are only
+`subagent_backend` and `subagent_continuation`; the first pins the tool family
+and the second governs waiting and wakeup. Neither changes workflow permissions.
+
+At FRAME and whenever a new front, terminal result, blocker, scope change,
+contradiction, or pre-review event changes the evidence, the parent separates:
+
+1. **Execution:** do the genuinely immediate work directly, continue a confirmed
+   compatible worker, delegate one cohesive material front, or dispatch independent
+   fronts in parallel when their expected time gain exceeds coordination cost.
+2. **Review:** enforce every mode's mandatory validation and independent delivery
+   review; add focused GPT analysis for security, concurrency, public contracts,
+   ambiguity, or contradictory evidence. The implementer's own conversation is
+   never the independent reviewer.
+
+Use `scripts/decide-orchestration.ps1` through `invoke-safe-powershell.ps1`
+with a short, sanitized request at those decision events. The script checks
+permissions, consumed dependencies, ownership, worker-session eligibility,
+backend capabilities, and available capacity; the parent supplies objectives,
+design decisions, time estimates, risk, and final judgment. A returned decision
+never authorizes a tool call by itself. Preserve the decision fingerprint while
+inputs are unchanged; re-evaluate only on the listed events.
+
+The parent GPT is architect, orchestrator, and decider. On the selected backend,
+workers investigate, implement, test, and correct within explicit ownership.
+The parent does not repeat delegated bulk. Reuse requires an idle open session,
+provider-confirmed continuity, relevant context, compatible scope, and fresh
+sources. Send a versioned compact work order with objective, scope/ownership,
+context_refs, design_decisions, invariants, acceptance_criteria with stable IDs,
+validation_commands, and escalation_conditions; omit genuinely irrelevant
+fields. A continuation names the contract version and sends the delta only
+when provider memory is confirmed. Never silently truncate requirements.
+
+Map dependencies and shared resources before dispatch. Parallel writers require
+disjoint ownership or isolation; choose the ready set that materially shortens
+the task without artificial fragmentation. Respect bridge backpressure and
+native exposed capacity. For MCP parallel dispatch, prove the callable batch
+tool and authoritative `batch_scheduler` capability. No automatic backend,
+model, or provider switch.
+
+Jev advises only on narrow ambiguous questions with a short sanitized objective,
+valid candidates, and relevant signals. Deterministic rules make no Jev call.
+Jev cannot invent dependencies, grant permission, select the backend, or approve
+code. The technical `off` and `shadow` controls affect only Jev assistance;
+shadow results never change execution. Timeout, invalid response, or missing
+Jev uses conservative rules and GPT judgment. The official TypeSafe contract
+must be verified before changing live request syntax.
+
+On return, consume criterion_id, status (met, failed, unverified), and
+evidence_refs tied to the exact result/diff version. Keep worker claims distinct
+from bridge-observed facts. Denied commands, failed or absent validation,
+stale evidence, and scope conflicts remain visible and block approval. Correct
+proven defects on the same worker track with specific guidance and fresh
+discriminating evidence; repeated attempts without information require a new
+diagnosis or escalation.
+
+For correction adequacy, apply the event-driven gate at pre-first-edit, failure,
+structural cause, scope expansion, and pre-review. Record hypothesis,
+discriminating observation, delta, and next decision in the debug ledger.
+Choose sufficient bounded repair without repeated identical attempts. Preserve
+the mode matrix, ALINHAMENTO, COMMIT, receipt/evidence/progress/early-exit
+contracts, frozen target, operational proof, independent review, and closure
+rules. See `references/delegation.md` for the detailed adaptive decision map.
 
 ## Lifecycle
+
+`active_follow` is the only mode that waits inside the run for accepted jobs.
+`park_and_wake` starts a new run via CLI in the same task after its barrier fires.
+Its wake marker carries trusted metadata, never worker result text or a synthetic user message.
 
 ```text
 FRAME -> FANOUT -> COLLECT -> ACT -> VERIFY -> REVIEW -> DONE
@@ -111,14 +142,15 @@ Under `subagent_continuation = park_and_wake`, the cycle includes autonomous sus
 FRAME -> FANOUT -> [PARK -> SUSPENDED -> WAKE ->] COLLECT -> ACT -> VERIFY -> REVIEW -> DONE
 ```
 
-- FRAME: goal, expected behavior, validation, and done gate before acting. Skill-routing is a deterministic sub-step executed during FRAME before FANOUT (`references/skill-routing.md`): if routing policy != off: execute skill-routing before FANOUT; if routing policy == off: preserve normal skill resolution without calling Jev. The parent GPT resolves the routing policy (`off`, `advisory`, `enforce`), discovers candidate skills from kit installation (`install-state.json`) and the local repository hierarchy (`.agents/skills` up to repository root), and extracts lightweight frontmatter metadata. When policy != off, the parent executes `skills/workflows/scripts/route-skills.ps1` with a minimized `-RoutingObjective` before FANOUT, evaluating candidates via TypeSafe/Jev System One (noul primitive in parallel batches) and resolving decisions (`forced`, `select`, `review`, `skip`, `unrouted`) under configurable thresholds (`SelectThreshold >= 0.70`, `ReviewThreshold 0.45-0.70`, `skip < 0.45`, `MaxSelectedSkills = 3`). The parent GPT consumes results according to policy: under `advisory`, recommendations guide selection without blocking overrides (`enforced: false`); under `enforce`, `select` and `skip` are enforced deterministically (`enforced: true`) while `review` escalates to the parent; under `off`, unforced candidates remain unrouted (`enforced: false`) and normal resolution proceeds. The parent GPT remains the sole orchestrator and final decider; DeepSeek Sub-Agent MCP remains the executor of material work; Jev serves strictly as a semantic evaluation engine.
-- FANOUT: policy-aware delegation. In `balanced`, fan out conditionally for
-  concrete independent parallelism, specialization, risk isolation, or
-  large-context compression. In `aggressive`, map all independent fronts,
-  dependencies, and exclusive/shared resources before waiting; launch every
-  independent material front in batch before the first follow. In `swarm`,
-  construct ready DAG waves (ondas do DAG), maximize useful parallelism by sharding tasks AND phases/tests/reviews whenever independent (pulveriza tanto tarefas quanto fases, testes e revisões sempre que independentes para menor wall-clock). Treat agents as effectively free so do not conserve agent count (agentes tratados como efetivamente gratuitos, sem conservar contagem de agentes). Logical fan-out has no fixed min/max/range (fan-out lógico elástico sem mínimo, máximo nem faixa fixa; sem número fixo; pulverizes all ready and useful independent slices). Spawn all ready independent fronts in a wave before waiting (dispara todas as frentes prontas e independentes em uma onda antes de esperar). Retain precision through atomic ownership, dependency/resource constraints, GPT-only synthesis, validation and independent review (propriedade atômica de arquivos, restrições reais de dependência e recursos, síntese exclusiva GPT-only, validação determinística e revisão independente). Prohibit duplicate or non-actionable work (do not spawn duplicate/non-actionable work; sem trabalho duplicado/não-acionável), prohibit parallelizing true dependencies (do not parallelize true dependencies; sem paralelizar dependências verdadeiras), and prohibit concurrent writes to same ownership (do not parallelize concurrent writes to same ownership; sem escritas concorrentes sob o mesmo ownership; frentes de mutação continuam exigindo ownership disjunto, worktrees ou recursos exclusivos), e proíbe micro-estilhaçamento de tarefas lineares/coesas (tarefas sequenciais ficam na mesma trilha persistente; revisão swarm em rodada única sem réplica subjetiva). Verify batch scheduler capability during preflight (falha fechado se ausente sem fallback silencioso para aggressive), respecting bridge physical credit and backpressure safety (backpressure/credits belong to bridge), while supporting dynamic wake predicates (`REQUIRED`, `QUORUM`, `ALL`, `ANY`). Keep a stable
-  request_id ledger (front, agent, job, state, consumed, closed).
+- FRAME: goal, expected behavior, validation, and done gate before acting. Skill-routing is a deterministic sub-step executed during FRAME before FANOUT (`references/skill-routing.md`): if routing policy != off: execute skill-routing before FANOUT; if routing policy == off: preserve normal skill resolution without calling Jev. The parent GPT resolves the routing policy (`off`, `advisory`, `enforce`), discovers candidate skills from kit installation (`install-state.json`) and the local repository hierarchy (`.agents/skills` up to repository root), and extracts lightweight frontmatter metadata. When policy != off, the parent executes `skills/workflows/scripts/route-skills.ps1` with a minimized `-RoutingObjective` before FANOUT, evaluating candidates via TypeSafe/Jev System One (noul primitive in parallel batches) and resolving decisions (`forced`, `select`, `review`, `skip`, `unrouted`) under configurable thresholds (`SelectThreshold >= 0.70`, `ReviewThreshold 0.45-0.70`, `skip < 0.45`, `MaxSelectedSkills = 3`). The parent GPT consumes results according to policy: under `advisory`, recommendations guide selection without blocking overrides (`enforced: false`); under `enforce`, `select` and `skip` are enforced deterministically (`enforced: true`) while `review` escalates to the parent; under `off`, unforced candidates remain unrouted (`enforced: false`) and normal resolution proceeds. The parent GPT remains the sole orchestrator and final decider; the selected backend executes material work; Jev serves strictly as a semantic evaluation engine.
+- FANOUT: apply the adaptive execution decision to the current ready
+  frontier. The parent maps dependencies, ownership, available workers,
+  backend capabilities, and expected time gain before dispatch. Send bounded,
+  versioned orders to all useful independent fronts before waiting. Keep
+  cohesive sequential work on one track and do not duplicate it locally.
+  Every accepted job enters the stable request_id ledger. A selected backend
+  remains pinned; an unavailable parallel capability is reported, never
+  hidden behind a silent route change.
 - PARK -> SUSPENDED -> WAKE: under `subagent_continuation = park_and_wake`, once
   accepted subagent jobs are launched and useful local work is drained (after all useful parent work ends), the parent calls `subagents_park` with predicate `ANY`, `ALL` (default), `QUORUM(k)` (`1 <= k <= total jobs`), or `REQUIRED(job ids)` (non-empty subset) to establish a durable wait barrier, then ends its run. Successful park returns immediately with `ParkReceipt` without in-turn wait. The parent emits a concise user-visible suspension message stating which condition will wake the task, and ends its current run transitioning to nonterminal `SUSPENDED` exclusively backed by an externally armed continuation (if unarmed or `deliveryMode=none`, the parent must remain active). Active writer is treated as durable deferred delivery (`deferred_active_writer`) and never permits auto-archive or auto-unload. When the predicate is satisfied, the proven dual CLI wake contract starts a new run in the exact same task: for a loaded Desktop session, enqueue a metadata-only marker with `codex queue` so the App automatically starts the next run; for an unloaded session, use `codex exec resume`; queue-first deterministic error routing attempts `codex queue` first and routes to `codex exec resume` on unloaded session errors; no in-turn wait, no polling; bridge returns trusted metadata only (metadata-only marker, never raw worker output or synthetic user text). Goal ownership remains separate (no goal required for continuation, and never auto-resume a paused goal). Follow and close obligations occur only after wake: upon wake in the new run, the parent calls `subagents_follow` to consume listed ready/required jobs and `subagents_close` to retire finished agents, integrates evidence, and resumes COLLECT or re-parks remaining jobs. A suspected progress wake is not a completed job and not follow-blocking (`suspectedprogresswake not completedjob/followblocking`); maintains strict separation with no new goal or provider controls. Failure states fail closed without silent fallback to active_follow; worker exceptions trigger immediate wake; active writer retries with backoff. Exactly one wake is emitted per barrier generation coalescing simultaneous completions without premature partial wake; generation supersession ensures a new barrier generation supersedes prior ones and discards stale markers.
 - COLLECT: consume a result when a gate depends on it or no useful work
@@ -132,7 +164,7 @@ FRAME -> FANOUT -> [PARK -> SUSPENDED -> WAKE ->] COLLECT -> ACT -> VERIFY -> RE
 
 ## Backend tool semantics
 
-- Under technical backend `deepseek` via SubAgents MCP, `subagents_spawn_batch` is the canonical tool for swarm DAG waves while unitary `subagents_spawn` opens one independent front outside waves or for a single front;
+- Under technical backend `deepseek` via SubAgents MCP, `subagents_spawn_batch` admits independent ready fronts while unitary `subagents_spawn` opens a single front;
   `subagents_continue` follows the same open front after a result, correction, or
   review; and `subagents_follow` consumes a result when a gate depends on it.
 - Under technical backend `deepseek`, `subagents_park` (or legacy `deepseek_park`) arms
@@ -277,7 +309,7 @@ commit series closed without push, and remaining risks. In no-write modes (`PLAN
 
 Open only when the mode or a gate requires it:
 
-- `references/delegation.md` — `balanced`, `aggressive`, and `swarm` delegation policies
+- `references/delegation.md` — adaptive execution and review decisions
 - `references/delivery-review.md` — delivery quality review gate and repair loop
 - `references/research.md` — `RESEARCH.DEEP`
 - `references/observability.md` — logging decisions

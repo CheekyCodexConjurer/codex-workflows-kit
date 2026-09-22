@@ -156,12 +156,8 @@ $script:PendingFiles = @{}
 $script:RemovedParents = New-Object System.Collections.Generic.List[string]
 $script:PriorFeaturesRecord = $null
 $script:PriorBackendState = $null
-$script:PriorDelegationState = $null
-$script:PriorStrategyState = $null
 $script:PriorContinuationState = $null
 $script:SelectedBackend = 'deepseek'
-$script:SelectedPolicy = 'balanced'
-$script:SelectedStrategy = 'worker'
 $script:SelectedContinuation = 'active_follow'
 $script:FeaturesGateApplied = $false
 $script:FeaturesPrior = [ordered]@{ present = $false; value = $null }
@@ -178,7 +174,7 @@ function Assert-InstallState {
     }
 
     $schemaText = [string]$State.schemaVersion
-    if ($schemaText -notin @('1', '2', '3', '4', '5')) {
+    if ($schemaText -notin @('1', '2', '3', '4', '5', '6')) {
         throw "Install state has an unsupported schema: $schemaText"
     }
     $schema = [int]$schemaText
@@ -228,13 +224,13 @@ function Assert-InstallState {
         }
         Assert-CodexBackendState -BackendState $State.codexBackend
     }
-    if ($State.PSObject.Properties.Name -contains 'codexDelegation') {
+    if ($schema -le 5 -and $State.PSObject.Properties.Name -contains 'codexDelegation') {
         if ($null -eq $State.codexDelegation) {
             throw "Install state contains an invalid codexDelegation property."
         }
         Assert-CodexDelegationState -DelegationState $State.codexDelegation
     }
-    if ($State.PSObject.Properties.Name -contains 'codexStrategy') {
+    if ($schema -le 5 -and $State.PSObject.Properties.Name -contains 'codexStrategy') {
         if ($null -eq $State.codexStrategy) {
             throw "Install state contains an invalid codexStrategy property."
         }
@@ -252,10 +248,19 @@ function Assert-InstallState {
             throw "Schema $schema install state is missing required codexBackend."
         }
         Assert-CodexBackendState -BackendState $State.codexBackend
-        if (-not ($State.PSObject.Properties.Name -contains 'codexDelegation') -or $null -eq $State.codexDelegation) {
+        if ($schema -eq 5 -and (-not ($State.PSObject.Properties.Name -contains 'codexDelegation') -or $null -eq $State.codexDelegation)) {
             throw "Schema $schema install state is missing required codexDelegation."
         }
-        Assert-CodexDelegationState -DelegationState $State.codexDelegation
+        if ($schema -eq 5) { Assert-CodexDelegationState -DelegationState $State.codexDelegation }
+    }
+    if ($schema -ge 6) {
+        if (($State.PSObject.Properties.Name -contains 'codexDelegation') -or ($State.PSObject.Properties.Name -contains 'codexStrategy')) {
+            throw 'Current install state must not contain retired orchestration selectors.'
+        }
+        if (-not ($State.PSObject.Properties.Name -contains 'codexContinuation') -or $null -eq $State.codexContinuation) {
+            throw 'Schema 6 install state is missing required codexContinuation.'
+        }
+        Assert-CodexContinuationState -ContinuationState $State.codexContinuation
     }
 
     $seenPaths = @{}
@@ -327,13 +332,9 @@ function Initialize-PriorState {
             }
             if ($state.PSObject.Properties.Name -contains 'codexDelegation') {
                 Assert-CodexDelegationState -DelegationState $state.codexDelegation
-                $script:PriorDelegationState = $state.codexDelegation
-                $script:SelectedPolicy = [string]$state.codexDelegation.selected
             }
             if ($state.PSObject.Properties.Name -contains 'codexStrategy') {
                 Assert-CodexStrategyState -StrategyState $state.codexStrategy
-                $script:PriorStrategyState = $state.codexStrategy
-                $script:SelectedStrategy = [string]$state.codexStrategy.selected
             }
             if ($state.PSObject.Properties.Name -contains 'codexContinuation') {
                 Assert-CodexContinuationState -ContinuationState $state.codexContinuation
@@ -352,16 +353,6 @@ function Initialize-PriorState {
         $snap = Get-BackendConfigSnapshot -Text $cleanedConfig
         $script:PriorBackendState = New-CodexBackendState -Snapshot $snap -ExistingInstallState $existingState
         $script:SelectedBackend = [string]$script:PriorBackendState.selected
-    }
-
-    if ($null -eq $script:PriorDelegationState) {
-        $script:PriorDelegationState = New-CodexDelegationState -ExistingInstallState $existingState
-        $script:SelectedPolicy = [string]$script:PriorDelegationState.selected
-    }
-
-    if ($null -eq $script:PriorStrategyState) {
-        $script:PriorStrategyState = New-CodexStrategyState -ExistingInstallState $existingState
-        $script:SelectedStrategy = [string]$script:PriorStrategyState.selected
     }
 
     if ($null -eq $script:PriorContinuationState) {
@@ -745,7 +736,7 @@ function Install-GlobalAgentsFile {
         throw "An unmanaged AGENTS.md already exists. Review it and use -Force to replace it: $agentsMdDest"
     }
 
-    $content = Set-CodexAgentsManagedBlockText -ExistingAgentsText $existing -TemplateText $raw -Backend $script:SelectedBackend -Policy $script:SelectedPolicy -Strategy $script:SelectedStrategy -Continuation $script:SelectedContinuation
+    $content = Set-CodexAgentsManagedBlockText -ExistingAgentsText $existing -TemplateText $raw -Backend $script:SelectedBackend -Continuation $script:SelectedContinuation
 
     Install-ManagedContent -Destination $agentsMdDest -Content $content
 }
@@ -1194,12 +1185,10 @@ function Save-InstallState {
     }
 
     $backendState = $script:PriorBackendState
-    $delegationState = $script:PriorDelegationState
-    $strategyState = $script:PriorStrategyState
     $continuationState = $script:PriorContinuationState
 
     $state = [ordered]@{
-        schemaVersion = 5
+        schemaVersion = 6
         product = 'codex-workflows-kit'
         profile = $Profile
         installedAtUtc = [datetime]::UtcNow.ToString('o')
@@ -1207,8 +1196,6 @@ function Save-InstallState {
         pendingFiles = $pendingEntries
         codexFeaturesPrior = $featuresPrior
         codexBackend = $backendState
-        codexDelegation = $delegationState
-        codexStrategy = $strategyState
         codexContinuation = $continuationState
     }
 
@@ -1359,11 +1346,7 @@ Write-Host "Antigravity home: $AntigravityHome"
 Write-Host "Skills: $skillsDest"
 if ($Profile -eq 'safe' -and -not $WhatIfPreference) {
     $backendLabel = if ($null -ne $script:PriorBackendState) { [string]$script:PriorBackendState.selected } else { $script:SelectedBackend }
-    $policyLabel = if ($null -ne $script:PriorDelegationState) { [string]$script:PriorDelegationState.selected } else { $script:SelectedPolicy }
     Write-Host "Subagent backend: $backendLabel"
-    Write-Host "Delegation policy: $policyLabel"
-    $strategyLabel = if ($null -ne $script:PriorStrategyState) { [string]$script:PriorStrategyState.selected } else { $script:SelectedStrategy }
-    Write-Host "Subagent strategy: $strategyLabel"
     $continuationLabel = if ($null -ne $script:PriorContinuationState) { [string]$script:PriorContinuationState.selected } else { $script:SelectedContinuation }
     Write-Host "Subagent continuation: $continuationLabel"
     Write-Host "Backend matrix: $backendLabel active in $configPath"

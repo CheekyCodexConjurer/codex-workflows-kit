@@ -66,14 +66,13 @@ foreach ($key in $expectedModes.Keys) {
     Assert-Test "Preserves direct mode binding $key" ($ahkContent -match $pattern)
 }
 
-# Verify existing control bindings intact
+# Verify retained backend / continuation controls
 $existingCtrlBindings = @{
     '^Numpad0' = '.\scripts\switch-subagent-backend.ps1 -Status'
     '^Numpad1' = '.\scripts\switch-subagent-backend.ps1 -Backend native'
     '^Numpad2' = '.\scripts\switch-subagent-backend.ps1 -Backend deepseek'
-    '^Numpad4' = '.\scripts\switch-subagent-policy.ps1 -Policy balanced'
-    '^Numpad5' = '.\scripts\switch-subagent-policy.ps1 -Policy aggressive'
-    '^Numpad6' = '.\scripts\switch-subagent-policy.ps1 -Policy swarm'
+    '^Numpad3' = '.\scripts\switch-subagent-continuation.ps1 -Continuation active_follow'
+    '^Numpad9' = '.\scripts\switch-subagent-continuation.ps1 -Continuation park_and_wake'
 }
 
 foreach ($key in $existingCtrlBindings.Keys) {
@@ -83,20 +82,26 @@ foreach ($key in $existingCtrlBindings.Keys) {
     Assert-Test "Preserves control binding $key" ($ahkContent -match $pattern)
 }
 
-# Verify four new strategy/continuation bindings
-$newCtrlBindings = @{
-    '^Numpad7' = '.\scripts\switch-subagent-strategy.ps1 -Strategy worker'
-    '^Numpad8' = '.\scripts\switch-subagent-strategy.ps1 -Strategy critical'
-    '^Numpad3' = '.\scripts\switch-subagent-continuation.ps1 -Continuation active_follow'
-    '^Numpad9' = '.\scripts\switch-subagent-continuation.ps1 -Continuation park_and_wake'
+# The retired policy and strategy controls have no hotkeys or switch scripts.
+foreach ($key in @('^Numpad4', '^Numpad5', '^Numpad6', '^Numpad7', '^Numpad8')) {
+    $pattern = "(?m)^$([regex]::Escape($key))::"
+    Assert-Test "Retired selector hotkey $key is absent" ($ahkContent -notmatch $pattern)
 }
+Assert-Test "PromptPad has no retired policy or strategy command" ($ahkContent -notmatch '(?i)(delegation_policy|subagent_strategy|switch-subagent-(?:policy|strategy))')
+Assert-Test "Policy switch script is retired" (-not (Test-Path -LiteralPath (Join-Path $repoRoot 'scripts\switch-subagent-policy.ps1') -PathType Leaf))
+Assert-Test "Strategy switch script is retired" (-not (Test-Path -LiteralPath (Join-Path $repoRoot 'scripts\switch-subagent-strategy.ps1') -PathType Leaf))
 
-foreach ($key in $newCtrlBindings.Keys) {
-    $escapedKey = [regex]::Escape($key)
-    $cmd = [regex]::Escape($newCtrlBindings[$key])
-    $pattern = "(?m)^$escapedKey::PastePrompt\(`"$cmd`"\)"
-    Assert-Test "Implements new control binding $key -> $($newCtrlBindings[$key])" ($ahkContent -match $pattern)
-}
+# The retained scripts expose only the backend and continuation controls.
+$backendSwitchContent = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts\switch-subagent-backend.ps1') -Raw -Encoding UTF8
+$continuationSwitchContent = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts\switch-subagent-continuation.ps1') -Raw -Encoding UTF8
+Assert-Test "Backend switcher has no policy or strategy parameter" ($backendSwitchContent -notmatch '(?im)^\s*\[string\]\$(?:Policy|Strategy)\b|-(?:Policy|Strategy)\s+\$')
+Assert-Test "Continuation switcher has no policy or strategy parameter" ($continuationSwitchContent -notmatch '(?im)^\s*\[string\]\$(?:Policy|Strategy)\b|-(?:Policy|Strategy)\s+\$')
+
+# Schema 6 is canonical and removes both legacy selector properties.
+Assert-Test "Backend switcher writes schema 6 and drops retired state properties" ($backendSwitchContent -match '(?m)\$nextState\.schemaVersion\s*=\s*6' -and $backendSwitchContent -match "codexDelegation.*codexStrategy")
+Assert-Test "Continuation switcher writes schema 6 and drops retired state properties" ($continuationSwitchContent -match '(?m)\$nextState\.schemaVersion\s*=\s*6' -and $continuationSwitchContent -match "codexDelegation.*codexStrategy")
+Assert-Test "Backend switcher calls the two-selector managed-block contract" ($backendSwitchContent -match 'Set-CodexAgentsManagedBlockText[^\r\n]*-Backend\s+\$Backend\s+-Continuation')
+Assert-Test "Continuation switcher calls the two-selector managed-block contract" ($continuationSwitchContent -match 'Set-CodexAgentsManagedBlockText[^\r\n]*-Backend\s+\$currentBackend\s+-Continuation')
 
 # Passively paste only (no Enter or automatic command execution)
 $hasAutoExecute = ($ahkContent -match '(?i)(?:Send\s*["'']?\{Enter\}|Run\s|Exec\s)')
@@ -198,16 +203,10 @@ Write-Host "`n-- 2.1 PromptPad Contract & Token Scanning Tests --" -ForegroundCo
 
 # Positive tests: canonical commands allowed
 Assert-Test "Positive: repo ahk content satisfies PromptPad contract" (Test-PromptPadContract -Text $ahkContent)
-Assert-Test "Positive: exact canonical passive switch-subagent-strategy -Strategy worker allowed" (Test-PromptPadContract -Text '^Numpad7::PastePrompt(".\scripts\switch-subagent-strategy.ps1 -Strategy worker")')
-Assert-Test "Positive: canonical switch command with slash allowed" (Test-PromptPadContract -Text '^Numpad7::PastePrompt("./scripts/switch-subagent-strategy.ps1 -Strategy worker")')
-Assert-Test "Positive: canonical switch command with single quotes allowed" (Test-PromptPadContract -Text "^Numpad7::PastePrompt('.\scripts\switch-subagent-strategy.ps1 -Strategy worker')")
-
-# Negative tests: worker role injection and active execution rejected
-Assert-Test "Negative: worker direct prompt rejected" (-not (Test-PromptPadContract -Text '^Numpad7::PastePrompt("worker do this")'))
-Assert-Test "Negative: worker role parameter injection rejected" (-not (Test-PromptPadContract -Text '^Numpad7::PastePrompt("$workflows role=worker")'))
-Assert-Test "Negative: non-passive worker execution rejected" (-not (Test-PromptPadContract -Text 'Run(".\scripts\switch-subagent-strategy.ps1 -Strategy worker")'))
-Assert-Test "Negative: worker comment rejected" (-not (Test-PromptPadContract -Text "; worker comment`n^Numpad7::PastePrompt(`".\scripts\switch-subagent-strategy.ps1 -Strategy worker`")"))
-Assert-Test "Negative: multiple worker tokens rejected" (-not (Test-PromptPadContract -Text '^Numpad7::PastePrompt(".\scripts\switch-subagent-strategy.ps1 -Strategy worker and worker")'))
+# Retired public controls and active execution are rejected.
+Assert-Test "Negative: retired policy command rejected" (-not (Test-PromptPadContract -Text '^Numpad4::PastePrompt(".\scripts\switch-subagent-policy.ps1 -Policy swarm")'))
+Assert-Test "Negative: retired strategy command rejected" (-not (Test-PromptPadContract -Text '^Numpad7::PastePrompt(".\scripts\switch-subagent-strategy.ps1 -Strategy critical")'))
+Assert-Test "PromptPad source contains no active command execution" (-not ($ahkContent -match '(?i)(?:\bRun\s*\(|\bExec\s*\()'))
 
 # Negative tests: other banned prompt tokens rejected
 Assert-Test "Negative: writer token rejected" (-not (Test-PromptPadContract -Text '^Numpad7::PastePrompt("writer")'))
@@ -224,11 +223,78 @@ Assert-Test "Negative: WorkflowPrompt rejected" (-not (Test-PromptPadContract -T
 # ---------------------------------------------------------
 Write-Host "`n-- 3. Doctor Output Contract & Read-Only Invariance --" -ForegroundColor Yellow
 
-$doctorRun = & powershell -NoProfile -ExecutionPolicy Bypass -File $doctorPath 2>&1
-$doctorExit = $LASTEXITCODE
+$doctorFixtureRoot = Join-Path ([IO.Path]::GetTempPath()) ("codex-doctor-fixture-" + [Guid]::NewGuid().ToString('N'))
+$doctorCodexHome = Join-Path $doctorFixtureRoot 'codex'
+$doctorAgentsHome = Join-Path $doctorFixtureRoot 'agents'
+$doctorAntigravityHome = Join-Path $doctorFixtureRoot 'antigravity'
+$doctorStateDir = Join-Path $doctorCodexHome 'codex-workflows-kit'
+$doctorStatePath = Join-Path $doctorStateDir 'install-state.json'
+$doctorConfigPath = Join-Path $doctorCodexHome 'config.toml'
+$doctorAgentsMdPath = Join-Path $doctorCodexHome 'AGENTS.md'
+$doctorGeminiPath = Join-Path $doctorAntigravityHome 'config\GEMINI.md'
+$safePowerShellPath = Join-Path $repoRoot 'scripts\invoke-safe-powershell.ps1'
 
-Assert-Test "Doctor executes successfully (exit code 0)" ($doctorExit -eq 0)
+try {
+    New-Item -ItemType Directory -Path $doctorStateDir, $doctorAgentsHome, (Split-Path -Parent $doctorGeminiPath) -Force | Out-Null
+    Import-Module (Join-Path $repoRoot 'scripts\backend-routing.psm1') -Force
+    $fixtureSnapshot = Get-BackendConfigSnapshot -Text ''
+    $fixtureBackendState = New-CodexBackendState -Snapshot $fixtureSnapshot -ExistingInstallState $null
+    $fixtureBackendState.selected = 'native'
+    Assert-CodexBackendState -BackendState $fixtureBackendState
+
+    $doctorConfigText = Set-CodexBackendConfigText -Text '' -Backend 'native' -BackendState $fixtureBackendState
+    Set-Content -LiteralPath $doctorConfigPath -Value $doctorConfigText -Encoding UTF8
+    $agentsTemplateText = Get-Content -LiteralPath (Join-Path $repoRoot 'codex\AGENTS.md') -Raw -Encoding UTF8
+    $agentsManagedText = Set-CodexAgentsManagedBlockText -ExistingAgentsText '' -TemplateText $agentsTemplateText -Backend 'native' -Continuation 'active_follow'
+    Set-Content -LiteralPath $doctorAgentsMdPath -Value $agentsManagedText -Encoding UTF8
+    $geminiTemplateText = Get-Content -LiteralPath (Join-Path $repoRoot 'antigravity\GEMINI.md') -Raw -Encoding UTF8
+    $geminiManagedText = '# BEGIN CODEX-WORKFLOWS-KIT' + [Environment]::NewLine + $geminiTemplateText.Trim() + [Environment]::NewLine + '# END CODEX-WORKFLOWS-KIT' + [Environment]::NewLine
+    Set-Content -LiteralPath $doctorGeminiPath -Value $geminiManagedText -Encoding UTF8
+    foreach ($skillName in @('workflows', 'evidence-first', 'mcp-foundation')) {
+        $skillDirectory = Join-Path $doctorAgentsHome ("skills\$skillName")
+        New-Item -ItemType Directory -Path $skillDirectory -Force | Out-Null
+        Copy-Item -LiteralPath (Join-Path $repoRoot ("skills\$skillName\SKILL.md")) -Destination (Join-Path $skillDirectory 'SKILL.md')
+    }
+
+    $doctorState = [ordered]@{
+        schemaVersion = 6
+        product = 'codex-workflows-kit'
+        profile = 'safe'
+        installedAtUtc = [datetime]::UtcNow.ToString('o')
+        files = @([ordered]@{
+                path = [IO.Path]::GetFullPath($ahkPath)
+                sha256 = (Get-FileHash -LiteralPath $ahkPath -Algorithm SHA256).Hash
+            })
+        pendingFiles = @()
+        codexFeaturesPrior = [ordered]@{
+            multi_agent = [ordered]@{ present = $false; value = $null }
+        }
+        codexBackend = $fixtureBackendState
+        codexContinuation = [ordered]@{ version = 1; selected = 'active_follow' }
+    }
+    Set-Content -LiteralPath $doctorStatePath -Value (($doctorState | ConvertTo-Json -Depth 8) + [Environment]::NewLine) -Encoding UTF8
+
+    $doctorParameters = [ordered]@{
+        CodexHome = $doctorCodexHome
+        AgentsHome = $doctorAgentsHome
+        AntigravityHome = $doctorAntigravityHome
+    }
+    $doctorResult = & $safePowerShellPath -File $doctorPath -WorkingDirectory $repoRoot -Parameters $doctorParameters -PassThru
+    $doctorExit = [int]$doctorResult.ExitCode
+    $doctorRun = @($doctorResult.StdOut, $doctorResult.StdErr)
+}
+finally {
+    $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') + '\'
+    $resolvedFixtureRoot = [IO.Path]::GetFullPath($doctorFixtureRoot)
+    if ($resolvedFixtureRoot.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase) -and
+        (Test-Path -LiteralPath $resolvedFixtureRoot -PathType Container)) {
+        Remove-Item -LiteralPath $resolvedFixtureRoot -Recurse -Force
+    }
+}
+
 $doctorCombined = $doctorRun -join "`n"
+$doctorFailureDetail = if ($doctorExit -eq 0) { '' } else { (($doctorCombined -split "`r?`n" | Select-Object -Last 15) -join ' | ') }
+Assert-Test "Doctor executes successfully (exit code 0)" ($doctorExit -eq 0) $doctorFailureDetail
 
 Assert-Test "Doctor output contains verified AutoHotkey v2 check" ($doctorCombined -match '(?m)\[OK\]\s+AutoHotkey v2:')
 Assert-Test "Doctor output does not emit AutoHotkey v2 warning" ($doctorCombined -notmatch '(?m)\[WARN\]\s+AutoHotkey v2:')

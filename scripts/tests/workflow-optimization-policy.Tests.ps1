@@ -3,7 +3,7 @@
 # - Circular gate resolution (independent approval allows idle open writers with consumed jobs; commit/final requires closure)
 # - Final unique integrated reviewer does not prohibit useful intermediate independent sharding
 # - Compact global instructions via explicit mandatory canonical anchors and progressive disclosure
-# - Invariant preservation: ALINHAMENTO safety, backend matrix, swarm nofixedcount, critical GPT synthesis, real park/wake, no fallback/auth/process protections
+# - Invariant preservation: ALINHAMENTO safety, pinned backend routes, adaptive orchestration with only backend/continuation selectors, no fixed agent count, parent GPT synthesis, real park/wake, no fallback/auth/process protections
 # - Elimination of arbitrary 40-line pressure in favor of explicit structure and measured bytes
 
 [CmdletBinding()]
@@ -101,22 +101,32 @@ Assert-Test "1.7 antigravity/GEMINI.md reflects circular gate resolution" (
     [regex]::IsMatch($geminiNorm, '(?i)(?:independent approval allows idle open writers|aprova[c\u00e7][a\u00e3]o.*writers?.*ocios[oa]s?|idle open writers).*commit/final requires closure|aprova[c\u00e7][a\u00e3]o.*writers?.*ocios[oa]s?.*commit.*fechamento')
 )
 
-Assert-Test "1.8 delegation.md defines versioned consumed dependency reuse with readset, source hashes, and consumed revision" (
-    [regex]::IsMatch($delegationNorm, '(?i)(?:versioned consumed dependency reuse|reutiliza[c\u00e7][a\u00e3]o versionada de depend[e\u00ea]ncias).*(?:readset|conjunto de leitura).*(?:source hashes|hashes de fontes).*(?:consumed revision|revis[a\u00e3]o consumida)')
+Assert-Test "1.8 delegation.md versions consumed-result reuse with readset, source hashes, and consumed revision" (
+    [regex]::IsMatch($delegationNorm, '(?i)resultado consumido.*revis[aã]o consumida.*readset versionado.*hashes das fontes consultadas')
 )
 
 Assert-Test "1.9 delegation.md specifies invalidation triggers including own inputs, policy, and contract changes affecting transitively affected dependents only while unchanged independent retain" (
-    [regex]::IsMatch($delegationNorm, '(?i)(?:own input changes|altera[c\u00e7][o\u00f5]es nas pr[o\u00f3]prias entradas).*(?:policy changes|altera[c\u00e7][o\u00f5]es de pol[i\u00ed]tica).*(?:contract changes|altera[c\u00e7][o\u00f5]es contratuais).*(?:transitively affected dependents only|dependentes transitivamente afetados).*(?:unchanged independent retain|independentes e inalteradas ret[e\u00ea]m)')
+    [regex]::IsMatch($delegationNorm, '(?i)mudan[cç]a nos pr[oó]prios inputs, no contrato ou na pol[ií]tica invalida apenas dependentes transitivamente afetados; frentes independentes sem mudan[cç]a conservam o resultado')
 )
 
-Assert-Test "1.10 delegation.md safe prefix distinguishes read-only preparation from dependent edits/test assertions, preserves mode gates, and forbids guessing unknown schema" (
-    [regex]::IsMatch($delegationNorm, '(?i)(?:read-only preparation|prepara[c\u00e7][a\u00e3]o somente leitura).*(?:dependent edits|edi[c\u00e7][o\u00f5]es dependentes).*(?:test assertions|asser[c\u00e7][o\u00f5]es de teste).*(?:preserve mode gates|gates de modo).*(?:never guess unknown schema|nunca adivinhar schemas desconhecidos|fail-closed)')
-)
+$safePrefixChecks = [ordered]@{
+    prefix = $delegationNorm.IndexOf('prefixo seguro de preparação somente leitura', [StringComparison]::OrdinalIgnoreCase) -ge 0
+    edits = $delegationNorm.IndexOf('dependências de edição aguardam', [StringComparison]::OrdinalIgnoreCase) -ge 0
+    tests = $delegationNorm.IndexOf('testes que afirmem comportamento dependente esperam o resultado consumido', [StringComparison]::OrdinalIgnoreCase) -ge 0
+    unknown = $delegationNorm.IndexOf('Não adivinhe esquema ou contrato desconhecido', [StringComparison]::OrdinalIgnoreCase) -ge 0
+    alignment = $delegationNorm.IndexOf('No ALINHAMENTO, somente leitura', [StringComparison]::OrdinalIgnoreCase) -ge 0
+    commit = $delegationNorm.IndexOf('Em `COMMIT`, nenhuma edição de conteúdo é autorizada', [StringComparison]::OrdinalIgnoreCase) -ge 0
+}
+$safePrefixDetails = ($safePrefixChecks.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join '; '
+Assert-Test "1.10 delegation.md allows only a read-only safe prefix, keeps mode gates, waits for consumed dependencies, and rejects unknown contracts" (
+    (@($safePrefixChecks.Values | Where-Object { -not $_ }).Count -eq 0)
+) $safePrefixDetails
 
-Assert-Test "1.11 GEMINI.md enforces worker parity: Gemini does not orchestrate/own chat, no premature writer close, versioned readset/failclosed reuse" (
+Assert-Test "1.11 GEMINI.md enforces worker parity: no orchestration ownership, no premature writer close, versioned work orders, and evidence tied to the exact diff" (
     ($geminiNorm -match '(?i)Gemini (?:doesn''t orchestrate/own chat|opera em escopo de worker e n[a\u00e3]o orquestra nem controla chat/metas)') -and
     ($geminiNorm -match '(?i)no writer premature close|escritores n[a\u00e3]o podem ser fechados antes da revis[a\u00e3]o') -and
-    ($geminiNorm -match '(?i)versioned readset/failclosed reuse|reuso versionado por readset')
+    ($geminiNorm -match '(?i)ordem de servi[cç]o compacta e versionada') -and
+    ($geminiNorm -match '(?i)evid[eê]ncias ligadas [àa] vers[aã]o exata do resultado')
 )
 
 # ==============================================================================
@@ -159,43 +169,35 @@ Assert-Test "3.2 GEMINI.md preserves ALINHAMENTO safety invariants" (
     ($geminiNorm -match '(?i)(?:proibid[oa]|n[a\u00e3]o acionar|sem).*(?:metadados|metadata|estado local|local state).*(?:workspace|falha fechad|fail closed)')
 )
 
-Assert-Test "3.3 AGENTS.md preserves backend matrix and route pinning" (
+Assert-Test "3.3 AGENTS.md preserves the backend matrix, exact native/deepseek routes, and route pinning" (
     ($agentsNorm -match '(?i)subagent_backend') -and
-    ($agentsNorm -match '(?i)native') -and
-    ($agentsNorm -match '(?i)deepseek') -and
-    ($agentsNorm -match '(?i)gpt-5\.6-luna') -and
-    ($agentsNorm -match '(?i)fallback silencioso')
+    ($agentsNorm -match '(?i)matriz ausente, inv[aá]lida ou inconsistente bloqueia sem fallback silencioso') -and
+    ($agentsNorm -match '(?i)native.*model="gpt-6-luna".*reasoning_effort="max".*pro[ií]be SubAgents MCP') -and
+    ($agentsNorm -match '(?i)deepseek.*usa SubAgents MCP.*pro[ií]be ferramentas nativas de trabalho')
 )
 
-Assert-Test "3.4 AGENTS.md preserves swarm no fixed count invariant" (
-    ($agentsNorm -match '(?i)swarm') -and
-    ($agentsNorm -match '(?i)ondas do DAG|DAG waves') -and
-    ($agentsNorm -match '(?i)sem n[u\u00fa]mero fixo|no fixed number') -and
-    ($agentsNorm -match '(?i)agentes (?:s[a\u00e3]o )?tratados como efetivamente gratuitos|agents are treated as effectively free') -and
-    ($agentsNorm -match '(?i)n[a\u00e3]o conserva(?:r)? contagem de agentes|do not conserve agent count') -and
-    ($agentsNorm -match '(?i)fan-out l[o\u00f3]gico el[a\u00e1]stico|elastic logical fan-out')
+Assert-Test "3.4 AGENTS.md and delegation.md use one adaptive orchestration with only backend and continuation selectors" (
+    ($agentsNorm -match '(?i)Orquestra[cç][aã]o adaptativa [eé] o padr[aã]o') -and
+    [regex]::IsMatch($delegationNorm, '(?i)[uú]nicos seletores persistidos s[aã]o.*subagent_backend.*subagent_continuation') -and
+    [regex]::IsMatch($delegationNorm, '(?i)o backend selecionado fixa a fam[ií]lia de ferramentas, modelo e rota; nenhuma decis[aã]o adaptativa troca backend ou provedor')
 )
 
-Assert-Test "3.5 GEMINI.md preserves swarm no fixed count invariant" (
-    ($geminiNorm -match '(?i)swarm') -and
-    ($geminiNorm -match '(?i)ondas do DAG') -and
-    ($geminiNorm -match '(?i)sem n[u\u00fa]mero fixo') -and
-    ($geminiNorm -match '(?i)efetivamente gratuitos sem conservar contagem|agents are treated as effectively free')
+Assert-Test "3.5 AGENTS.md preserves adaptive fan-out without a fixed agent count or artificial fragmentation" (
+    ($agentsNorm -match '(?i)sem quantidade fixa de agentes') -and
+    ($agentsNorm -match '(?i)sem fragmenta[cç][aã]o artificial') -and
+    ($agentsNorm -match '(?i)frentes paralelas')
 )
 
-Assert-Test "3.6 AGENTS.md preserves critical strategy GPT synthesis invariant" (
-    ($agentsNorm -match '(?i)subagent_strategy') -and
-    ($agentsNorm -match '(?i)critical') -and
-    ($agentsNorm -match '(?i)an[a\u00e1]lise independente') -and
-    ($agentsNorm -match '(?i)s[i\u00ed]ntese GPT') -and
-    ($agentsNorm -match '(?i)sem edi[c\u00e7][a\u00e3]o concorrente')
+Assert-Test "3.6 Parent GPT integrates worker evidence and retains final decision authority" (
+    ($delegationNorm -match '(?i)o parent GPT [eé] o [uú]nico arquiteto, integrador e decisor') -and
+    ($delegationNorm -match '(?i)o retorno lista.*criterion_id.*evidence_refs') -and
+    ($skillNorm -match '(?i)independent delivery review')
 )
 
-Assert-Test "3.7 GEMINI.md preserves critical strategy GPT synthesis invariant" (
-    ($geminiNorm -match '(?i)critical') -and
-    ($geminiNorm -match '(?i)an[a\u00e1]lise independente') -and
-    ($geminiNorm -match '(?i)s[i\u00ed]ntese GPT') -and
-    ($geminiNorm -match '(?i)sem edi[c\u00e7][a\u00e3]o concorrente')
+Assert-Test "3.7 GEMINI.md remains a worker and leaves orchestration and chat ownership with the parent" (
+    ($geminiNorm -match '(?i)Orquestra[cç][aã]o adaptativa [eé] o padr[aã]o') -and
+    ($geminiNorm -match '(?i)Gemini opera em escopo de worker e n[aã]o orquestra nem controla chat/metas do Codex') -and
+    ($geminiNorm -match '(?i)revis[aã]o independente e gates de qualidade permanecem obrigat[oó]rios')
 )
 
 Assert-Test "3.8 AGENTS.md preserves park_and_wake autonomy invariants" (

@@ -99,7 +99,7 @@ function Assert-InstallState {
     }
 
     $schemaText = [string]$State.schemaVersion
-    if ($schemaText -notin @('1', '2', '3', '4', '5')) {
+    if ($schemaText -notin @('1', '2', '3', '4', '5', '6')) {
         throw "Install state has an unsupported schema: $schemaText"
     }
     $schema = [int]$schemaText
@@ -149,13 +149,13 @@ function Assert-InstallState {
         }
         Assert-CodexBackendState -BackendState $State.codexBackend
     }
-    if ($State.PSObject.Properties.Name -contains 'codexDelegation') {
+    if ($schema -le 5 -and $State.PSObject.Properties.Name -contains 'codexDelegation') {
         if ($null -eq $State.codexDelegation) {
             throw "Install state contains an invalid codexDelegation property."
         }
         Assert-CodexDelegationState -DelegationState $State.codexDelegation
     }
-    if ($State.PSObject.Properties.Name -contains 'codexStrategy') {
+    if ($schema -le 5 -and $State.PSObject.Properties.Name -contains 'codexStrategy') {
         if ($null -eq $State.codexStrategy) {
             throw "Install state contains an invalid codexStrategy property."
         }
@@ -173,10 +173,19 @@ function Assert-InstallState {
             throw "Schema $schema install state is missing required codexBackend."
         }
         Assert-CodexBackendState -BackendState $State.codexBackend
-        if (-not ($State.PSObject.Properties.Name -contains 'codexDelegation') -or $null -eq $State.codexDelegation) {
+        if ($schema -eq 5 -and (-not ($State.PSObject.Properties.Name -contains 'codexDelegation') -or $null -eq $State.codexDelegation)) {
             throw "Schema $schema install state is missing required codexDelegation."
         }
-        Assert-CodexDelegationState -DelegationState $State.codexDelegation
+        if ($schema -eq 5) { Assert-CodexDelegationState -DelegationState $State.codexDelegation }
+    }
+    if ($schema -ge 6) {
+        if (($State.PSObject.Properties.Name -contains 'codexDelegation') -or ($State.PSObject.Properties.Name -contains 'codexStrategy')) {
+            throw 'Current install state contains retired orchestration selectors.'
+        }
+        if (-not ($State.PSObject.Properties.Name -contains 'codexContinuation') -or $null -eq $State.codexContinuation) {
+            throw 'Schema 6 install state is missing required codexContinuation.'
+        }
+        Assert-CodexContinuationState -ContinuationState $State.codexContinuation
     }
 
     $seenPaths = @{}

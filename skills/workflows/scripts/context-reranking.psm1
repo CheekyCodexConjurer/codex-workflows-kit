@@ -848,6 +848,16 @@ function Invoke-JevRerankBatch {
                 $critFalse = "The candidate is merely superficially related, tangential, or lacks actionable utility."
             }
 
+            # The orchestration caller uses this established bounded Jev transport
+            # for narrow decisions. It supplies short signals, never file content.
+            if ($cand.metadata -and $cand.metadata.decision_question) {
+                $signals = Sanitize-TaskObjective -Objective ([string]$cand.content)
+                $question = Sanitize-TaskObjective -Objective ([string]$cand.metadata.decision_question)
+                $inst = "Signals: $signals`n$question"
+                $critTrue = Sanitize-TaskObjective -Objective ([string]$cand.metadata.true_criteria)
+                $critFalse = Sanitize-TaskObjective -Objective ([string]$cand.metadata.false_criteria)
+            }
+
             $questions[$qKey] = [ordered]@{
                 type         = 'noul'
                 instructions = $inst

@@ -344,7 +344,7 @@ Assert-Test "[CONTENT/SIMULATION] SKILL.md mirrors evidence-based repair and ant
      [regex]::IsMatch($wfNorm, '(?i)debug_ledger\.md'))
 
 Assert-Test "[CONTENT/SIMULATION] AGENTS.md mirrors evidence-based repair and anti-loop ledger" `
-    ([regex]::IsMatch($agentsNorm, '(?i)(?:reparo orientado a evid[e\u00ea]ncia|evidence-based repair)') -and
+    ([regex]::IsMatch($agentsNorm, '(?i)(?:reparo orientad[oa] a evid[e\u00ea]ncia|evidence-based repair)') -and
      [regex]::IsMatch($agentsNorm, '(?i)debug_ledger\.md'))
 
 Assert-Test "[CONTENT/SIMULATION] GEMINI.md mirrors evidence-based repair and anti-loop ledger" `

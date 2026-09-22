@@ -2,8 +2,8 @@
 #SingleInstance Force
 
 ; Codex Workflows PromptPad
-; Contract: Transports canonical mode, policy, and backend commands directly.
-; Strict boundaries: No hardcoded agent counts, no resetting of swarm/continuation flags, and no hidden hooks.
+; Contract: Transports canonical workflow modes, backend, and continuation commands directly.
+; Strict boundaries: No hardcoded agent counts, no resetting of orchestration state, and no hidden hooks.
 ; CWD assumption: Execution from repository root where .\scripts exists (matching existing shortcuts).
 
 SendMode "Input"
@@ -69,16 +69,6 @@ NumpadDot::PastePrompt("$workflows mode=CONSULT")
 ^Numpad2::PastePrompt(".\scripts\switch-subagent-backend.ps1 -Backend deepseek")
 
 ^Numpad3::PastePrompt(".\scripts\switch-subagent-continuation.ps1 -Continuation active_follow")
-
-^Numpad4::PastePrompt(".\scripts\switch-subagent-policy.ps1 -Policy balanced")
-
-^Numpad5::PastePrompt(".\scripts\switch-subagent-policy.ps1 -Policy aggressive")
-
-^Numpad6::PastePrompt(".\scripts\switch-subagent-policy.ps1 -Policy swarm")
-
-^Numpad7::PastePrompt(".\scripts\switch-subagent-strategy.ps1 -Strategy worker")
-
-^Numpad8::PastePrompt(".\scripts\switch-subagent-strategy.ps1 -Strategy critical")
 
 ^Numpad9::PastePrompt(".\scripts\switch-subagent-continuation.ps1 -Continuation park_and_wake")
 

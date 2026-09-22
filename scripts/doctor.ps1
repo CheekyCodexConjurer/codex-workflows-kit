@@ -116,7 +116,7 @@ function Assert-InstallState {
     }
 
     $schemaText = [string]$State.schemaVersion
-    if ($schemaText -notin @('1', '2', '3', '4', '5')) {
+    if ($schemaText -notin @('1', '2', '3', '4', '5', '6')) {
         throw "Install state has an unsupported schema: $schemaText"
     }
     $schema = [int]$schemaText
@@ -166,13 +166,13 @@ function Assert-InstallState {
         }
         Assert-CodexBackendState -BackendState $State.codexBackend
     }
-    if ($State.PSObject.Properties.Name -contains 'codexDelegation') {
+    if ($schema -le 5 -and $State.PSObject.Properties.Name -contains 'codexDelegation') {
         if ($null -eq $State.codexDelegation) {
             throw "Install state contains an invalid codexDelegation property."
         }
         Assert-CodexDelegationState -DelegationState $State.codexDelegation
     }
-    if ($State.PSObject.Properties.Name -contains 'codexStrategy') {
+    if ($schema -le 5 -and $State.PSObject.Properties.Name -contains 'codexStrategy') {
         if ($null -eq $State.codexStrategy) {
             throw "Install state contains an invalid codexStrategy property."
         }
@@ -190,10 +190,19 @@ function Assert-InstallState {
             throw "Schema $schema install state is missing required codexBackend."
         }
         Assert-CodexBackendState -BackendState $State.codexBackend
-        if (-not ($State.PSObject.Properties.Name -contains 'codexDelegation') -or $null -eq $State.codexDelegation) {
+        if ($schema -eq 5 -and (-not ($State.PSObject.Properties.Name -contains 'codexDelegation') -or $null -eq $State.codexDelegation)) {
             throw "Schema $schema install state is missing required codexDelegation."
         }
-        Assert-CodexDelegationState -DelegationState $State.codexDelegation
+        if ($schema -eq 5) { Assert-CodexDelegationState -DelegationState $State.codexDelegation }
+    }
+    if ($schema -ge 6) {
+        if (($State.PSObject.Properties.Name -contains 'codexDelegation') -or ($State.PSObject.Properties.Name -contains 'codexStrategy')) {
+            throw 'Current install state contains retired orchestration selectors.'
+        }
+        if (-not ($State.PSObject.Properties.Name -contains 'codexContinuation') -or $null -eq $State.codexContinuation) {
+            throw 'Schema 6 install state is missing required codexContinuation.'
+        }
+        Assert-CodexContinuationState -ContinuationState $State.codexContinuation
     }
 
     $seenPaths = @{}
@@ -540,13 +549,9 @@ function Test-PromptPadContract {
     $tSct = Get-RuntimeToken @(115, 99, 111, 117, 116)
     $tRsr = Get-RuntimeToken @(114, 101, 115, 101, 97, 114, 99, 104, 101, 114)
     $tRvw = Get-RuntimeToken @(114, 101, 118, 105, 101, 119, 101, 114)
-    $tWk = Get-RuntimeToken @(119, 111, 114, 107, 101, 114)
+    $sanitized = $Text
 
-    # Narrowly allow exact canonical passive switch-subagent-strategy -Strategy worker command
-    $canonicalPassiveRegex = '(?i)PastePrompt\s*\(\s*["''](?:\.[\\/])?(?:scripts[\\/])?switch-subagent-strategy(?:\.ps1)?\s+-Strategy\s+' + $tWk + '\s*["'']\s*\)'
-    $sanitized = [regex]::Replace($Text, $canonicalPassiveRegex, '')
-
-    $promptPadPatterns = @('\breader\b', ('\b' + $tWr + '\b'), ('\b' + $tSct + '\b'), ('\b' + $tRsr + '\b'), ('\b' + $tRvw + '\b'), ('\b' + $tWk + '\b'), 'PromptPadNative', 'BackendOverrideText', 'WorkflowPrompt')
+    $promptPadPatterns = @('\breader\b', ('\b' + $tWr + '\b'), ('\b' + $tSct + '\b'), ('\b' + $tRsr + '\b'), ('\b' + $tRvw + '\b'), 'PromptPadNative', 'BackendOverrideText', 'WorkflowPrompt', 'switch-subagent-policy', 'switch-subagent-strategy')
     foreach ($pattern in $promptPadPatterns) {
         if ([regex]::IsMatch($sanitized, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)) {
             return $false
@@ -744,29 +749,15 @@ if ($installedProfile -eq 'safe') {
         Write-Check -Name 'Multi-agent route disabled' -Passed (Test-FeaturesMultiAgentDisabled -Path $configPath) -Detail $configPath
     }
 
-    $selectedPolicy = 'balanced'
-    if ($null -ne $state -and ($state.PSObject.Properties.Name -contains 'codexDelegation')) {
-        try {
-            $selectedPolicy = [string]$state.codexDelegation.selected
-            Assert-CodexDelegationState -DelegationState $state.codexDelegation
-            Write-Check -Name 'Delegation policy' -Passed $true -Detail $selectedPolicy
-        }
-        catch {
-            Write-Check -Name 'Delegation policy' -Passed $false -Detail $_.Exception.Message
-        }
-    }
-
     $agentsMdContent = Read-SurfaceText -Path $agentsMdPath
     $managedBlockCount = @([regex]::Matches($agentsMdContent, '(?m)^# BEGIN CODEX-WORKFLOWS-KIT\r?$')).Count
     Write-Check -Name 'Unique managed policy (AGENTS)' -Passed ($managedBlockCount -eq 1) -Detail $agentsMdPath
 
     $expectedBackend = if ($null -ne $state -and ($state.PSObject.Properties.Name -contains 'codexBackend')) { [string]$state.codexBackend.selected } else { 'deepseek' }
-    $expectedPolicy = if ($null -ne $state -and ($state.PSObject.Properties.Name -contains 'codexDelegation')) { [string]$state.codexDelegation.selected } else { 'balanced' }
-    $expectedStrategy = if ($null -ne $state -and ($state.PSObject.Properties.Name -contains 'codexStrategy')) { [string]$state.codexStrategy.selected } else { 'worker' }
     $expectedContinuation = if ($null -ne $state -and ($state.PSObject.Properties.Name -contains 'codexContinuation')) { [string]$state.codexContinuation.selected } else { 'active_follow' }
     try {
-        Assert-CodexAgentsRuntimeBlock -Text $agentsMdContent -Backend $expectedBackend -Policy $expectedPolicy -Strategy $expectedStrategy -Continuation $expectedContinuation
-        Write-Check -Name 'Managed AGENTS runtime' -Passed $true -Detail "Exact runtime block matches (backend=$expectedBackend, policy=$expectedPolicy, strategy=$expectedStrategy, continuation=$expectedContinuation)"
+        Assert-CodexAgentsRuntimeBlock -Text $agentsMdContent -Backend $expectedBackend -Continuation $expectedContinuation
+        Write-Check -Name 'Managed AGENTS runtime' -Passed $true -Detail "Exact runtime block matches (backend=$expectedBackend, continuation=$expectedContinuation)"
     }
     catch {
         Write-Check -Name 'Managed AGENTS runtime' -Passed $false -Detail $_.Exception.Message
@@ -1128,9 +1119,7 @@ if ($Detailed) {
     Write-Host 'The doctor is read-only: it inspects installed surfaces, MCP registrations,'
     Write-Host 'scheduled tasks, and the Startup shortcut without modifying configuration.'
     $docBackend = if ($null -ne $state -and ($state.PSObject.Properties.Name -contains 'codexBackend')) { [string]$state.codexBackend.selected } else { $selectedBackend }
-    $docPolicy = if ($null -ne $state -and ($state.PSObject.Properties.Name -contains 'codexDelegation')) { [string]$state.codexDelegation.selected } else { $selectedPolicy }
     Write-Host "Active subagent backend: $docBackend (matrix enforced in config.toml)"
-    Write-Host "Active delegation policy: $docPolicy"
 }
 
 if ($script:Failures.Count -gt 0) {

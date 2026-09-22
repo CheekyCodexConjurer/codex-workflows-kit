@@ -73,12 +73,9 @@ function New-IsolatedFixture {
     }
 }
 
-# Read canonical footer with conflicts from host file
-$canonicalSourcePath = 'C:\Users\mathe\.gemini\config\GEMINI.md'
-$endMarker = '# END CODEX-WORKFLOWS-KIT'
-$canonicalRaw = Get-Content -LiteralPath $canonicalSourcePath -Raw -Encoding UTF8
-$endIdx = $canonicalRaw.IndexOf($endMarker, [StringComparison]::Ordinal)
-$canonicalFooterWithConflicts = $canonicalRaw.Substring($endIdx + $endMarker.Length).TrimStart([char[]]@([char]13, [char]10))
+# Use a checked-in footer so migration checks do not depend on personal host state.
+$canonicalSourcePath = Join-Path $scriptDir 'fixtures\gemini-legacy-footer.txt'
+$canonicalFooterWithConflicts = Get-Content -LiteralPath $canonicalSourcePath -Raw -Encoding UTF8
 
 $managedHeader = (Get-Content -LiteralPath (Join-Path $repoRoot 'antigravity\GEMINI.md') -Raw -Encoding UTF8).Trim()
 $nl = [Environment]::NewLine

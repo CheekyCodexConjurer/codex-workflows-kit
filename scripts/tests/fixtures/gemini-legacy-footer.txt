@@ -1,0 +1,29 @@
+# Personal preferences
+Responda sempre em texto corrido quando isso ajudar a leitura.
+Compact syntax: `⇢`
+
+Global rules:
+- Route by task+risk+blast before work.
+
+Evidence & uncertainty:
+- Keep decisions evidence-first.
+
+Subagents:
+- Main agent owns critical path.
+- Use subagents only when they improve wall-clock time.
+- Writable workers require claim-map.
+
+CodeGraph:
+- Use it for cg-worthy questions.
+
+Session-start audit uses a 24-hour TTL.
+- Use Context7 for current library details and OpenAI Developer Docs for OpenAI APIs.
+
+- Read-only subagents default to 5.6 Sol Medium.
+- Every read-only spawn must select the exact custom role.
+- Custom-role spawns must omit model and fork_context.
+- On a transient launch, stream, or account-availability error, continue useful local work and make one fresh retry with the same explicit role.
+- In delivery, scouts and implementation workers may start early, but independent reviewers start only after all approved phases are integrated and frozen.
+- Deduplicate findings into one fix batch, then revalidate and run one delta-focused closure review; do not spawn reviewers per phase.
+- Allowlisted baseline: codegraph, context7, and openaiDeveloperDocs.
+- If an allowlisted MCP is missing, run maintain-mcps.ps1 -Mode Repair.

@@ -6,7 +6,7 @@ Este documento define o módulo invariante de qualidade de entrega (*delivery re
 
 ## 1. Escopo e Invariância
 
-O módulo de qualidade de entrega é um portão de qualidade embutido e invariante, sendo estritamente **ortogonal às flags** e seletores globais (`subagent_backend`, `delegation_policy`, `subagent_strategy` e `subagent_continuation`), operando de forma invariável independentemente da configuração ativa.
+O módulo de qualidade de entrega é obrigatório em todos os modos de escrita e independe da escolha de backend, continuação ou decisão adaptativa de execução.
 
 Exige validação determinística prévia, congelamento formal do alvo com identidade determinística invariante a staging, prova operacional em tempo de execução (*operational/runtime proof*) quando houver gatilho de risco, avaliação pelo Gate de Adequação da Correção orientada à correção suficiente e sustentável/delimitada e exatamente um revisor independente único por alvo congelado (*single independent reviewer* por *frozen target*), sem que o revisor final único e integrado proíba o estilhaçamento (*sharding*) independente útil de validações determinísticas ou revisões parciais intermediárias (*final unique integrated reviewer does not prohibit useful intermediate independent sharding*). Reparos bloqueantes geram um lote de reparo consolidado no mesmo writer. Revalidações subsequentes realizam uma closure review de delta sobre as correções e o blast radius afetado, revalidando a integridade e target_id. O processo ocorre sem R.A.F.V. automático; o modo `R.A.F.V` permanece estritamente manual sob demanda, nunca automático.
 
@@ -111,7 +111,7 @@ O Gate de Adequação da Correção é um portão de qualidade transversal para 
 ### Princípios e Substituição Semântica:
 - **Correção Suficiente**: atinge e elimina comprovadamente a causa-raiz identificada, prevenindo recorrências do mesmo defeito.
 - **Sustentável**: preserva a integridade estrutural do subsistema sem acumular débito técnico oculto nem adotar patches paliativos frágeis.
-- **Delimitada**: respeita estritamente o limite de *blast radius* (apenas os caminhos aprovados do escopo), o portão de refatoração oportuna (`tn-paydown-gate`), o portão de replanejamento (`replan-gate`), a política de reparo orientada a evidência e o registro obrigatório em `.scratchpad/debug_ledger.md` (anti-loop: hipótese testável, observação discriminante esperada, delta observado e próxima decisão; admissão distingue nova hipótese e observação esperada antes de delta versus pós-resultado com delta/falsificação; ausência de delta ou informação exige direção diagnóstica diferente, nunca retentativa idêntica ou proliferação de worker swarm; sem limite numérico fixo ou contadores disfarçados).
+- **Delimitada**: respeita estritamente o limite de *blast radius* (apenas os caminhos aprovados do escopo), o portão de refatoração oportuna (`tn-paydown-gate`), o portão de replanejamento (`replan-gate`), a política de reparo orientada a evidência e o registro obrigatório em `.scratchpad/debug_ledger.md` (anti-loop: hipótese testável, observação discriminante esperada, delta observado e próxima decisão; admissão distingue nova hipótese e observação esperada antes de delta versus pós-resultado com delta/falsificação; ausência de delta ou informação exige direção diagnóstica diferente, nunca retentativa idêntica ou proliferação de workers; sem limite numérico fixo ou contadores disfarçados).
 
 ### Eventos de Acionamento (*Event Triggers*):
 O gate é acionado estritamente em eventos determinísticos (**nunca a cada turno**, sem *per-turn polling* ou *turn chatter*) e opera **sem trocar automaticamente de modo** (a transição de modo permanece prerrogativa explícita do usuário):
@@ -131,11 +131,6 @@ O gate é acionado estritamente em eventos determinísticos (**nunca a cada turn
 
 ### Fronteira de Transporte Neutro do Bridge MCP:
 O SubAgents MCP e o daemon bridge permanecem estritamente como **transporte neutro** (`neutral transport`). Reutilizam contratos existentes (`EvidenceBundle`, `ExecutionReceipt`, `ProgressSnapshot`, heartbeat, lease, fence tokens, relations `correction` e `review`). Nenhuma regra de workflow, lógica de portão de adequação ou poder de decisão/aprovação reside no bridge (**nenhuma regra de workflow ou aprovação no bridge**).
-
-### Estratégia de Subagentes (`critical` vs `worker`):
-- Sob `subagent_strategy = critical`: GPT e Gemini analisam independentemente a causa-raiz e proposta de correção, trocam evidências, contradições e lacunas, e submetem à síntese GPT mandatória pelo parent GPT, sem edição concorrente e com fencing estrito de escopo. Pinned routing sem troca automática de rota/provedor.
-- Sob `subagent_strategy = worker`: o worker mantém o fluxo atual auxiliando o parent com avaliação pontual nos eventos do gate.
-- Ambas as estratégias nunca concedem escrita em modos no-write ou no ALINHAMENTO.
 
 ---
 
@@ -246,7 +241,7 @@ O revisor emite formalmente um pacote de revisão estruturado contendo:
     2. **Observação Discriminante Esperada (*expected discriminating observation*)**: resultado mensurável e específico esperado se a hipótese for verdadeira (definida na admissão).
     3. **Delta Observado (*observed delta*)**: variação concreta e verificável nas evidências, logs, testes ou comportamento do sistema após a intervenção, incluindo hipótese falsificada ou possibilidades estreitadas (registrado no pós-resultado).
     4. **Próxima Decisão (*next decision*)**: avanço para validação, congelamento de novo alvo, nova hipótese distinta ou mudança de rota.
-  - **Ausência de Delta Exige Mudança de Direção Diagnóstica**: Constatada ausência de delta ou informação nova (falha idêntica ou estagnação sem novas evidências nem estreitamento de hipótese), é estritamente proibida retentativa idêntica (*duplicate retry*) ou proliferação cega de agentes via worker swarm. Exige-se mudança mandatória para uma direção diagnóstica diferente (*different diagnostic direction*) ou transição para replanejamento (`replan-gate` / decisão `REWORK` ou `RESEARCH`).
+  - **Ausência de Delta Exige Mudança de Direção Diagnóstica**: Constatada ausência de delta ou informação nova (falha idêntica ou estagnação sem novas evidências nem estreitamento de hipótese), é estritamente proibida retentativa idêntica (*duplicate retry*) ou proliferação cega de agentes via workers. Exige-se mudança mandatória para uma direção diagnóstica diferente (*different diagnostic direction*) ou transição para replanejamento (`replan-gate` / decisão `REWORK` ou `RESEARCH`).
   - **Critérios Estritos de Parada (*Stop Conditions*)**: A interrupção e falha fechada (*fail closed* / `BLOCKED`) ocorrem **única e exclusivamente** sob:
     1. Bloqueio genuíno de autoridade, credenciais/acesso externo ou decisão de negócio do usuário que não possa ser resolvida no escopo concedido.
     2. Constatação de que não há alternativa viável ou sem caminho seguro acionável (*no safe actionable path forward*). A persistência de bloqueios após tentativas sucessivas sem delta observado ou sem estreitamento causal comprova a inexistência de caminho seguro acionável no escopo concedido, impondo parada imediata em `BLOCKED` e consulta ao usuário para evitar repetições especulativas.
@@ -266,3 +261,10 @@ O commit local de entrega é autorizado **única e exclusivamente** quando todas
 4. Realizar o staging exclusivamente dos arquivos pertencentes ao conjunto de caminhos aprovados do escopo.
 5. Imediatamente antes do commit, recomputar a identidade invariante a staging (`target_id`) a partir do estado atual da árvore de trabalho e exigir igualdade exata com o alvo aprovado na revisão; verificar se o conjunto de arquivos no stage (*staged path set*) corresponde exatamente ao conjunto de caminhos aprovados; e verificar que cada *staged blob* coincide com o conteúdo aprovado após a normalização do próprio Git, garantindo que nenhum caminho ou conteúdo não-aprovado esteja no index.
 6. Todas as obrigações e jobs delegados foram integralmente consumidos e todos os agentes escritores e revisores foram formalmente encerrados (`commit/final requires closure`). Uma vez emitido o veredito `APPROVED`, o parent encerra os writers e revisores abertos (`subagents_close`), satisfazendo o encerramento formal antes de executar o commit e a resposta final `DONE`.
+
+### Análise adaptativa por risco
+
+Segurança, concorrência, contrato público, ambiguidade ou contradição exigem
+análise direcionada e independente do GPT. A decisão adaptativa de execução
+preserva os cinco pilares, a prova operacional, as permissões e o veredito do
+revisor independente; Jev não aprova código nem concede escrita.
