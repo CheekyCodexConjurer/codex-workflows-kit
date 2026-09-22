@@ -715,6 +715,25 @@ base_url = "http://127.0.0.1:4040/v1"
     $catalogPath = Export-DevRouterModelCatalog -CodexHome $testCodexHome
     Assert-Test "Model catalog file created" (Test-Path -LiteralPath $catalogPath -PathType Leaf)
 
+    # Codex >= 0.145 requires UTF-8 without BOM; a BOM breaks configuration load.
+    $catalogBytes = [IO.File]::ReadAllBytes($catalogPath)
+    $hasBom = ($catalogBytes.Length -ge 3 -and $catalogBytes[0] -eq 0xEF -and $catalogBytes[1] -eq 0xBB -and $catalogBytes[2] -eq 0xBF)
+    Assert-Test "Catalog is written without a UTF-8 BOM" (-not $hasBom)
+
+    # Codex expects a SEQUENCE OF SEQUENCES of ModelInfo, not a flat array.
+    $catalogRaw = [IO.File]::ReadAllText($catalogPath)
+    $trimmedCatalog = $catalogRaw.TrimStart()
+    $firstChar = $trimmedCatalog[0]
+    $secondNonWhitespace = ''
+    for ($i = 1; $i -lt $trimmedCatalog.Length; $i++) {
+        if (-not [char]::IsWhiteSpace($trimmedCatalog[$i])) { $secondNonWhitespace = $trimmedCatalog[$i]; break }
+    }
+    Assert-Test "Catalog root is a JSON array" ($firstChar -eq '[')
+    Assert-Test "Catalog root is a nested model group (Vec<Vec<ModelInfo>>)" ($secondNonWhitespace -eq '[')
+
+    $shape = Test-DevRouterModelCatalogShape -Path $catalogPath
+    Assert-Test "Catalog passes strict structural validation" ($shape.valid -eq $true)
+
     $catJson = Get-Content -LiteralPath $catalogPath -Raw -Encoding UTF8 | ConvertFrom-Json
     $catEntries = if ($catJson -is [System.Collections.IEnumerable]) { $catJson } else { @($catJson) }
 
@@ -722,9 +741,9 @@ base_url = "http://127.0.0.1:4040/v1"
     $foundSol = $null
     $foundAstra = $null
     foreach ($entry in $catEntries) {
-        if ($entry.id -eq 'gpt-adaptive') { $foundAdaptive = $entry }
-        if ($entry.id -eq 'gpt-5.6-sol') { $foundSol = $entry }
-        if ($entry.id -eq 'gpt-6-astra') { $foundAstra = $entry }
+        if ($entry.slug -eq 'gpt-adaptive') { $foundAdaptive = $entry }
+        if ($entry.slug -eq 'gpt-5.6-sol') { $foundSol = $entry }
+        if ($entry.slug -eq 'gpt-6-astra') { $foundAstra = $entry }
     }
 
     Assert-Test "Catalog contains gpt-adaptive entry" ($null -ne $foundAdaptive)
@@ -732,6 +751,21 @@ base_url = "http://127.0.0.1:4040/v1"
     Assert-Test "GPT-Adaptive has model_provider_id 'dev-router'" ($foundAdaptive.model_provider_id -eq 'dev-router')
     Assert-Test "Catalog preserves official model Sol" ($null -ne $foundSol)
     Assert-Test "Catalog preserves official model Astra" ($null -ne $foundAstra)
+
+    # Every entry must carry the fields Codex 0.145+ rejects configuration without.
+    $requiredCatalogFields = @('slug', 'display_name', 'supported_reasoning_levels', 'shell_type', 'visibility', 'supported_in_api', 'priority', 'base_instructions', 'support_verbosity', 'truncation_policy', 'supports_parallel_tool_calls', 'experimental_supported_tools')
+    $missingFieldCount = 0
+    $legacyKeyCount = 0
+    foreach ($entry in $catEntries) {
+        $entryProps = @($entry.PSObject.Properties | ForEach-Object { $_.Name })
+        foreach ($field in $requiredCatalogFields) {
+            if ($entryProps -notcontains $field) { $missingFieldCount++ }
+        }
+        if ($entryProps -contains 'id' -or $entryProps -contains 'supported_reasoning_efforts' -or $entryProps -contains 'default_reasoning_effort') { $legacyKeyCount++ }
+    }
+    Assert-Test "No entry is missing a field required by Codex 0.145+ (missing=$missingFieldCount)" ($missingFieldCount -eq 0)
+    Assert-Test "No entry uses the rejected legacy catalog keys (legacy=$legacyKeyCount)" ($legacyKeyCount -eq 0)
+    Assert-Test "experimental_supported_tools is an empty array, never null" ($null -ne $foundAdaptive.experimental_supported_tools -and @($foundAdaptive.experimental_supported_tools).Count -eq 0)
 
     # ------------------------------------------------------------------------
     # SECTION 20: Real Proxy Lifecycle & Integration
@@ -771,6 +805,15 @@ base_url = "http://127.0.0.1:4040/v1"
 
     $mockUpstreamPort = 4055
     $testProxyPort = 4056
+
+    # Determinism + quota safety: with a live TYPESAFE_API_KEY present and the
+    # state left in `on`, the proxy would call the real TypeSafe/Jev service from
+    # this end-to-end test and the asserted model would depend on a live answer.
+    # Pin the state to `off` and blank the key so the run is byte-deterministic
+    # and consumes no provider quota.
+    $null = Set-DevRouterState -Mode 'off' -Target 'effort_only' -CodexHome $testCodexHome
+    $origZdrKey = $env:TYPESAFE_API_KEY
+    $env:TYPESAFE_API_KEY = ''
     $mockUpstreamScript = @"
 import http from 'node:http';
 import fs from 'node:fs';
@@ -862,8 +905,10 @@ server.listen($mockUpstreamPort, '127.0.0.1', () => {});
             Assert-Test "Upstream received requested effort low" ($captured.body.reasoning.effort -eq 'low')
             Assert-Test "Upstream received forwarded Authorization header" ($captured.headers.authorization -like '*mockToken*')
         }
+        Assert-Test "End-to-end run consumed no live Jev quota (TYPESAFE_API_KEY blanked)" ([string]::IsNullOrEmpty($env:TYPESAFE_API_KEY))
     }
     finally {
+        $env:TYPESAFE_API_KEY = $origZdrKey
         Remove-Item env:DEV_ROUTER_UPSTREAM -ErrorAction SilentlyContinue
         if ($null -ne $proxyProc -and -not $proxyProc.HasExited) {
             $proxyProc.Kill()

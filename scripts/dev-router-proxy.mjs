@@ -61,11 +61,21 @@ const ALLOWED_MODELS = {
 
 const DISALLOWED_MODELS = ["gpt-5.6-terra", "terra"];
 
+// Windows PowerShell 5.1 writes UTF-8 WITH a byte order mark by default, and a
+// leading BOM makes JSON.parse throw "Unexpected token". Tolerate it on read so
+// a stale artifact written by an older installer can never break the proxy.
+function stripBom(text) {
+    return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+}
+
+function readJsonFile(filePath) {
+    return JSON.parse(stripBom(fs.readFileSync(filePath, "utf8")));
+}
+
 function readDevRouterState() {
     try {
         if (fs.existsSync(stateFile)) {
-            const raw = fs.readFileSync(stateFile, "utf8");
-            const data = JSON.parse(raw);
+            const data = readJsonFile(stateFile);
             return {
                 mode: data.mode || "off",
                 target: data.target || "effort_only",
@@ -382,7 +392,7 @@ async function handleResponses(req, res) {
 function handleModels(req, res) {
     try {
         if (fs.existsSync(catalogFile)) {
-            const catalog = fs.readFileSync(catalogFile, "utf8");
+            const catalog = stripBom(fs.readFileSync(catalogFile, "utf8"));
             res.writeHead(200, { "Content-Type": "application/json" });
             res.end(catalog);
             return;

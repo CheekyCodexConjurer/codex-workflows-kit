@@ -5,6 +5,36 @@ O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Catálogo de modelos do Dev Router (`model_catalog_json`) reescrito para o
+  schema exigido pelo Codex CLI 0.145+: a raiz precisa ser uma **sequência de
+  sequências** de objetos `ModelInfo`, cada um com os campos obrigatórios
+  `slug`, `display_name`, `supported_reasoning_levels` (lista de
+  `{ effort, description }`), `shell_type`, `visibility`, `supported_in_api`,
+  `priority`, `base_instructions`, `support_verbosity`, `truncation_policy`,
+  `supports_parallel_tool_calls` e `experimental_supported_tools` (array vazio,
+  nunca `null`). O formato anterior (array plano com `id`,
+  `supported_reasoning_efforts` e `default_reasoning_effort`) fazia o Codex
+  falhar ao carregar QUALQUER configuração com
+  `invalid type: map, expected a sequence`. As entradas do cache oficial agora
+  são normalizadas para o schema atual em vez de repassadas verbatim (o cache
+  não contém `base_instructions` nem `supports_parallel_tool_calls`), e um
+  validador estrutural (`Test-DevRouterModelCatalogShape`) impede que um
+  catálogo incompatível seja registrado: em caso de falha o arquivo anterior é
+  restaurado e a exportação falha fechada.
+
+- Artefatos JSON/TOML agora são gravados em UTF-8 **sem BOM**. O default do
+  Windows PowerShell 5.1 (`[System.Text.Encoding]::UTF8`) emitia BOM e quebrava
+  o carregamento de `model_catalog_json` no Codex e o `JSON.parse` do proxy
+  Dev Router (`dev-router-state.json`). O proxy passou a tolerar BOM na leitura
+  como defesa em profundidade.
+
+- `scripts/test-dev-router.ps1` não vaza mais uma chamada **live** ao
+  TypeSafe/Jev: o teste end-to-end de proxy agora fixa o estado em `off` e
+  limpa `TYPESAFE_API_KEY` durante a execução (restaurando ao final), tornando a
+  suíte determinística e sem consumo de quota.
+
 ### Changed
 
 - Continuidade automática após fechamento prematuro do writer: o writer

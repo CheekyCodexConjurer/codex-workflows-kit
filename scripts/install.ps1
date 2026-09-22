@@ -1236,7 +1236,7 @@ function Save-InstallState {
             updatedAt = [datetime]::UtcNow.ToString('o')
         }
         $drJson = ($devRouterInit | ConvertTo-Json -Depth 4) + $nl
-        [IO.File]::WriteAllText($devRouterStatePath, $drJson, [System.Text.Encoding]::UTF8)
+        Write-Utf8NoBom -Path $devRouterStatePath -Content $drJson
     }
 
     # Deploy Dev Router model catalog and proxy

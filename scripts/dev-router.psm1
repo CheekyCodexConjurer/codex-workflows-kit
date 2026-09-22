@@ -5,6 +5,13 @@ Set-StrictMode -Version Latest
 # Supports ALINHAMENTO conversations and explicit workflows with thread isolation.
 # Implements real Codex Desktop App model selector dropdown integration via GPT-Adaptive.
 
+# UTF-8 WITHOUT a byte order mark. Codex parses `model_catalog_json` and the
+# Dev Router proxy parses its state file as strict JSON, so a leading BOM
+# (which [System.Text.Encoding]::UTF8 emits on Windows PowerShell 5.1) makes
+# them fail with "expected value at line 1 column 1". Every machine-readable
+# artifact this module writes must use this encoding.
+$script:Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+
 $script:DevRouterModelCatalog = [ordered]@{
     'Luna' = [ordered]@{
         Id               = 'gpt-5.6-luna'
@@ -265,7 +272,7 @@ function Set-DevRouterState {
         $tempFile = Join-Path $paths.KitDir ("dev-router-state-{0}.tmp" -f [Guid]::NewGuid().ToString('N'))
 
         # Atomic write to dev-router-state.json
-        [IO.File]::WriteAllText($tempFile, $json, [System.Text.Encoding]::UTF8)
+        [IO.File]::WriteAllText($tempFile, $json, $script:Utf8NoBom)
         if (Test-Path -LiteralPath $paths.StateFile -PathType Leaf) {
             $backupPath = $paths.StateFile + '.bak'
             Copy-Item -LiteralPath $paths.StateFile -Destination $backupPath -Force
@@ -291,7 +298,7 @@ function Set-DevRouterState {
                     }
                     $istateJson = ($orderedState | ConvertTo-Json -Depth 8) + [Environment]::NewLine
                     $tempIstate = Join-Path $paths.KitDir ("install-state-{0}.tmp" -f [Guid]::NewGuid().ToString('N'))
-                    [IO.File]::WriteAllText($tempIstate, $istateJson, [System.Text.Encoding]::UTF8)
+                    [IO.File]::WriteAllText($tempIstate, $istateJson, $script:Utf8NoBom)
                     Move-Item -LiteralPath $tempIstate -Destination $paths.InstallState -Force
                 }
             }
@@ -385,7 +392,7 @@ function Acquire-DevRouterLock {
 
         $json = ($locks | ConvertTo-Json -Depth 5) + [Environment]::NewLine
         $tempFile = Join-Path $paths.KitDir ("dev-router-locks-{0}.tmp" -f [Guid]::NewGuid().ToString('N'))
-        [IO.File]::WriteAllText($tempFile, $json, [System.Text.Encoding]::UTF8)
+        [IO.File]::WriteAllText($tempFile, $json, $script:Utf8NoBom)
         Move-Item -LiteralPath $tempFile -Destination $paths.LocksFile -Force
 
         return $lockRecord
@@ -412,7 +419,7 @@ function Release-DevRouterLock {
         [void]$locks.Remove($ConversationId)
         $json = ($locks | ConvertTo-Json -Depth 5) + [Environment]::NewLine
         $tempFile = Join-Path $paths.KitDir ("dev-router-locks-{0}.tmp" -f [Guid]::NewGuid().ToString('N'))
-        [IO.File]::WriteAllText($tempFile, $json, [System.Text.Encoding]::UTF8)
+        [IO.File]::WriteAllText($tempFile, $json, $script:Utf8NoBom)
         Move-Item -LiteralPath $tempFile -Destination $paths.LocksFile -Force
 
         return $true
@@ -593,7 +600,7 @@ function Start-DevRouterProxy {
 
     $proc = [System.Diagnostics.Process]::Start($pInfo)
     if ($null -ne $proc) {
-        [IO.File]::WriteAllText($paths.ProxyPid, [string]$proc.Id, [System.Text.Encoding]::UTF8)
+        [IO.File]::WriteAllText($paths.ProxyPid, [string]$proc.Id, $script:Utf8NoBom)
     }
 
     # Poll up to 2.5 seconds for readiness
@@ -634,6 +641,237 @@ function Stop-DevRouterProxy {
     return $true
 }
 
+# Codex >= 0.145 deserializes `model_catalog_json` as a SEQUENCE OF SEQUENCES of
+# ModelInfo objects. The shape was verified empirically against codex-cli
+# 0.145.0 by probing its deserializer: a flat array of models, the older
+# `id`/`supported_reasoning_efforts`/`default_reasoning_effort` keys, or string
+# entries all fail configuration loading with
+# "invalid type: map, expected a sequence" / "missing field ...".
+$script:DevRouterReasoningEffortOrder = @('none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra')
+
+function ConvertTo-DevRouterReasoningLevels {
+    param(
+        [string[]]$Efforts,
+        [string]$DefaultEffort = 'medium'
+    )
+    $levels = New-Object System.Collections.Generic.List[object]
+    foreach ($effort in $Efforts) {
+        if ([string]::IsNullOrWhiteSpace($effort)) { continue }
+        $description = if ($effort -eq $DefaultEffort) { "$effort (default)" } else { $effort }
+        $levels.Add([ordered]@{ effort = $effort; description = $description })
+    }
+    return , $levels.ToArray()
+}
+
+$script:DevRouterShellTypes = @('default', 'local', 'unified_exec', 'disabled', 'shell_command')
+$script:DevRouterVisibility = @('list', 'hide', 'none')
+
+function ConvertTo-DevRouterCatalogModel {
+    <#
+    .SYNOPSIS
+    Normalizes a model descriptor into the ModelInfo shape Codex 0.145+ requires.
+
+    Accepts either a raw Codex models-cache entry or a simple hashtable with
+    Slug/Display/Description/Efforts/Default/ModelProviderId keys, and always
+    emits every field Codex requires. Fields carrying values Codex would reject
+    are replaced with safe defaults rather than passed through.
+    #>
+    param(
+        [Parameter(Mandatory)]$Model,
+        [string]$Slug,
+        [string]$DisplayName,
+        [string]$Description,
+        [string[]]$Efforts,
+        [string]$DefaultEffort = 'medium',
+        [string]$ModelProviderId,
+        [int]$Priority = 0
+    )
+
+    $props = @($Model.PSObject.Properties | ForEach-Object { $_.Name })
+    $resolvedSlug = if (-not [string]::IsNullOrWhiteSpace($Slug)) { $Slug } elseif ($props -contains 'slug') { [string]$Model.slug } else { '' }
+    if ([string]::IsNullOrWhiteSpace($resolvedSlug)) { throw 'Catalog model is missing a slug' }
+
+    $resolvedDisplay = if (-not [string]::IsNullOrWhiteSpace($DisplayName)) { $DisplayName }
+        elseif ($props -contains 'display_name' -and -not [string]::IsNullOrWhiteSpace($Model.display_name)) { [string]$Model.display_name }
+        else { $resolvedSlug }
+
+    $resolvedDescription = if (-not [string]::IsNullOrWhiteSpace($Description)) { $Description }
+        elseif ($props -contains 'description') { [string]$Model.description }
+        else { '' }
+
+    # Reasoning levels: reuse the provider presets when they are well formed.
+    $levels = New-Object System.Collections.Generic.List[object]
+    if ($props -contains 'supported_reasoning_levels') {
+        foreach ($level in @($Model.supported_reasoning_levels)) {
+            $levelProps = @($level.PSObject.Properties | ForEach-Object { $_.Name })
+            if ($levelProps -contains 'effort' -and $levelProps -contains 'description') {
+                $levels.Add([ordered]@{ effort = [string]$level.effort; description = [string]$level.description })
+            }
+        }
+    }
+    if ($levels.Count -eq 0) {
+        $effortList = if ($Efforts) { $Efforts } else { @('low', 'medium', 'high', 'xhigh') }
+        foreach ($level in (ConvertTo-DevRouterReasoningLevels -Efforts $effortList -DefaultEffort $DefaultEffort)) {
+            $levels.Add($level)
+        }
+    }
+
+    $shellType = if ($props -contains 'shell_type' -and $script:DevRouterShellTypes -contains [string]$Model.shell_type) { [string]$Model.shell_type } else { 'default' }
+    $visibility = if ($props -contains 'visibility' -and $script:DevRouterVisibility -contains [string]$Model.visibility) { [string]$Model.visibility } else { 'list' }
+    $supportedInApi = if ($props -contains 'supported_in_api' -and $Model.supported_in_api -is [bool]) { [bool]$Model.supported_in_api } else { $true }
+    $priorityValue = if ($Priority -ne 0) { $Priority } elseif ($props -contains 'priority' -and $null -ne $Model.priority) { [int]$Model.priority } else { 0 }
+    $supportVerbosity = if ($props -contains 'support_verbosity' -and $Model.support_verbosity -is [bool]) { [bool]$Model.support_verbosity } else { $true }
+    $parallelTools = if ($props -contains 'supports_parallel_tool_calls' -and $Model.supports_parallel_tool_calls -is [bool]) { [bool]$Model.supports_parallel_tool_calls } else { $true }
+    $truncation = if ($props -contains 'truncation_policy' -and $null -ne $Model.truncation_policy -and
+        (@($Model.truncation_policy.PSObject.Properties | ForEach-Object { $_.Name }) -contains 'mode') -and
+        (@($Model.truncation_policy.PSObject.Properties | ForEach-Object { $_.Name }) -contains 'limit')) {
+        [ordered]@{ mode = [string]$Model.truncation_policy.mode; limit = [int]$Model.truncation_policy.limit }
+    } else {
+        [ordered]@{ mode = 'tokens'; limit = 10000 }
+    }
+    $experimentalTools = if ($props -contains 'experimental_supported_tools' -and $null -ne $Model.experimental_supported_tools) { @($Model.experimental_supported_tools) } else { @() }
+
+    # `base_instructions` is REQUIRED by Codex 0.145+ and is absent from the
+    # models cache, so it is always synthesized here.
+    $baseInstructions = if ($props -contains 'base_instructions' -and -not [string]::IsNullOrWhiteSpace([string]$Model.base_instructions)) {
+        [string]$Model.base_instructions
+    } elseif (-not [string]::IsNullOrWhiteSpace($resolvedDescription)) {
+        $resolvedDescription
+    } else {
+        "Codex model $resolvedSlug"
+    }
+
+    $entry = [ordered]@{
+        slug                         = $resolvedSlug
+        display_name                 = $resolvedDisplay
+        description                  = $resolvedDescription
+        supported_reasoning_levels   = $levels.ToArray()
+        shell_type                   = $shellType
+        visibility                   = $visibility
+        supported_in_api             = $supportedInApi
+        priority                     = $priorityValue
+        base_instructions            = $baseInstructions
+        support_verbosity            = $supportVerbosity
+        truncation_policy            = $truncation
+        supports_parallel_tool_calls = $parallelTools
+    }
+    # An empty array literal inside a hashtable literal collapses to $null, which
+    # Codex rejects ("invalid type: null, expected a sequence"). Assign a real
+    # typed array through the indexer instead.
+    $toolList = New-Object System.Collections.Generic.List[string]
+    foreach ($tool in @($experimentalTools)) {
+        if ($null -ne $tool -and -not [string]::IsNullOrWhiteSpace([string]$tool)) { $toolList.Add([string]$tool) }
+    }
+    $entry['experimental_supported_tools'] = $toolList.ToArray()
+    if ($props -contains 'default_reasoning_level' -and -not [string]::IsNullOrWhiteSpace([string]$Model.default_reasoning_level)) {
+        $entry['default_reasoning_level'] = [string]$Model.default_reasoning_level
+    }
+    $providerId = if (-not [string]::IsNullOrWhiteSpace($ModelProviderId)) { $ModelProviderId }
+        elseif ($props -contains 'model_provider_id') { [string]$Model.model_provider_id }
+        else { '' }
+    if (-not [string]::IsNullOrWhiteSpace($providerId)) {
+        $entry['model_provider_id'] = $providerId
+    }
+    return [pscustomobject]$entry
+}
+
+function New-DevRouterCatalogModel {
+    param(
+        [Parameter(Mandatory)][string]$Slug,
+        [string]$DisplayName,
+        [string]$Description,
+        [string[]]$Efforts = @('low', 'medium', 'high', 'xhigh'),
+        [string]$DefaultEffort = 'medium',
+        [string]$ModelProviderId,
+        [int]$Priority = 0
+    )
+    return ConvertTo-DevRouterCatalogModel -Model ([pscustomobject]@{}) -Slug $Slug -DisplayName $DisplayName `
+        -Description $Description -Efforts $Efforts -DefaultEffort $DefaultEffort `
+        -ModelProviderId $ModelProviderId -Priority $Priority
+}
+
+function Test-DevRouterModelCatalogShape {
+    <#
+    .SYNOPSIS
+    Structural validation for `model_catalog_json` artifacts.
+
+    Fails closed so an incompatible catalog is never registered in config.toml:
+    a bad catalog makes the Codex CLI unable to load ANY configuration.
+    #>
+    param([Parameter(Mandatory)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return @{ valid = $false; reason = "catalog file not found: $Path" }
+    }
+    try {
+        $text = [IO.File]::ReadAllText($Path)
+    }
+    catch {
+        return @{ valid = $false; reason = "catalog could not be read: $($_.Exception.Message)" }
+    }
+    if ($text.Length -gt 0 -and [int]$text[0] -eq 0xFEFF) {
+        return @{ valid = $false; reason = 'catalog is UTF-8 with a BOM; Codex and the proxy require BOM-free JSON' }
+    }
+    try {
+        $parsed = $text | ConvertFrom-Json
+    }
+    catch {
+        return @{ valid = $false; reason = "catalog is not valid JSON: $($_.Exception.Message)" }
+    }
+
+    # Root nesting must be checked on the RAW TEXT: PowerShell's ConvertFrom-Json
+    # unrolls a single-element outer array, so the object graph cannot tell
+    # `[[...]]` (required) apart from `[...]` (rejected by Codex).
+    $cursor = 0
+    while ($cursor -lt $text.Length -and [char]::IsWhiteSpace($text[$cursor])) { $cursor++ }
+    if ($cursor -ge $text.Length -or $text[$cursor] -ne '[') {
+        return @{ valid = $false; reason = 'catalog root must be a JSON array' }
+    }
+    $cursor++
+    while ($cursor -lt $text.Length -and [char]::IsWhiteSpace($text[$cursor])) { $cursor++ }
+    if ($cursor -ge $text.Length -or $text[$cursor] -ne '[') {
+        return @{ valid = $false; reason = 'catalog root must be a sequence of sequences: expected a nested "[" group after the root "[" (Codex 0.145+ rejects a flat model array)' }
+    }
+
+    if ($parsed -is [string] -or -not ($parsed -is [System.Collections.IEnumerable])) {
+        return @{ valid = $false; reason = 'catalog model group must be a JSON array' }
+    }
+    $models = @($parsed)
+    if ($models.Count -eq 0) {
+        return @{ valid = $false; reason = 'catalog model group is empty' }
+    }
+    $required = @('slug', 'display_name', 'supported_reasoning_levels', 'shell_type', 'visibility', 'supported_in_api', 'priority', 'base_instructions', 'support_verbosity', 'truncation_policy', 'supports_parallel_tool_calls', 'experimental_supported_tools')
+    $seenSlugs = New-Object System.Collections.Generic.List[string]
+    foreach ($model in $models) {
+        $props = @($model.PSObject.Properties | ForEach-Object { $_.Name })
+        foreach ($field in $required) {
+            if ($props -notcontains $field) {
+                return @{ valid = $false; reason = "model entry is missing required field '$field'" }
+            }
+        }
+        if ($props -contains 'supported_reasoning_efforts' -or $props -contains 'default_reasoning_effort' -or $props -contains 'id') {
+            return @{ valid = $false; reason = "model entry uses the legacy catalog keys (id/supported_reasoning_efforts); Codex 0.145+ rejects them" }
+        }
+        foreach ($level in @($model.supported_reasoning_levels)) {
+            $levelProps = @($level.PSObject.Properties | ForEach-Object { $_.Name })
+            if ($levelProps -notcontains 'effort' -or $levelProps -notcontains 'description') {
+                return @{ valid = $false; reason = "reasoning level must contain 'effort' and 'description'" }
+            }
+        }
+        if ($model.visibility -notin @('list', 'hide', 'none')) {
+            return @{ valid = $false; reason = "unsupported visibility '$($model.visibility)' (expected list|hide|none)" }
+        }
+        if ($model.shell_type -notin @('default', 'local', 'unified_exec', 'disabled', 'shell_command')) {
+            return @{ valid = $false; reason = "unsupported shell_type '$($model.shell_type)'" }
+        }
+        $seenSlugs.Add([string]$model.slug)
+    }
+    if ($seenSlugs -notcontains 'gpt-adaptive') {
+        return @{ valid = $false; reason = "catalog does not expose the 'gpt-adaptive' entry" }
+    }
+    return @{ valid = $true; reason = "catalog exposes $($models.Count) models: $($seenSlugs -join ', ')" }
+}
+
 function Export-DevRouterModelCatalog {
     param(
         [string]$CodexHome,
@@ -647,70 +885,87 @@ function Export-DevRouterModelCatalog {
         [void][IO.Directory]::CreateDirectory($targetDir)
     }
 
+    # Official models are read from the Codex cache and NORMALIZED: the cache is
+    # not a valid ModelInfo catalog on its own (it omits `base_instructions` and
+    # `supports_parallel_tool_calls`, which Codex 0.145+ requires), so passing
+    # entries through verbatim would break configuration loading.
     $officialModels = New-Object System.Collections.Generic.List[object]
     $modelsCachePath = Join-Path $paths.CodexHome 'models_cache.json'
     $foundCached = $false
 
     if (Test-Path -LiteralPath $modelsCachePath -PathType Leaf) {
         try {
-            $raw = Get-Content -LiteralPath $modelsCachePath -Raw -Encoding UTF8
-            $cacheObj = $raw | ConvertFrom-Json
-            $entries = if ($cacheObj -is [System.Collections.IEnumerable] -and -not ($cacheObj -is [string])) {
-                $cacheObj
+            $cacheObj = (Get-Content -LiteralPath $modelsCachePath -Raw -Encoding UTF8) | ConvertFrom-Json
+            $entries = @()
+            if ($cacheObj -is [System.Collections.IEnumerable] -and -not ($cacheObj -is [string])) {
+                $entries = @($cacheObj)
             }
             elseif ($cacheObj.PSObject.Properties.Name -contains 'models') {
-                $cacheObj.models
+                $entries = @($cacheObj.models)
             }
             else {
-                @($cacheObj)
+                $entries = @($cacheObj)
             }
-
             foreach ($m in $entries) {
-                if ($null -ne $m -and $m.id -ne 'gpt-adaptive') {
-                    $officialModels.Add($m)
+                if ($null -eq $m) { continue }
+                $slug = [string]$m.slug
+                if ([string]::IsNullOrWhiteSpace($slug) -or $slug -eq 'gpt-adaptive') { continue }
+                try {
+                    $officialModels.Add((ConvertTo-DevRouterCatalogModel -Model $m))
                     $foundCached = $true
                 }
+                catch {}
             }
         }
         catch {}
     }
 
     if (-not $foundCached) {
-        # Standard known official models for Codex Desktop
+        # Structural fallback for a cold Codex home (no models cache yet).
         $defaultOfficials = @(
-            [ordered]@{ id = 'gpt-5.6-sol'; display_name = 'gpt-5.6-sol'; description = 'Latest frontier agentic coding model'; supported_reasoning_efforts = @('low', 'medium', 'high', 'xhigh', 'max', 'ultra'); default_reasoning_effort = 'medium' },
-            [ordered]@{ id = 'gpt-6-astra'; display_name = 'gpt-6-astra'; description = 'Our most capable model for complex work'; supported_reasoning_efforts = @('low', 'medium', 'high', 'xhigh', 'max', 'ultra'); default_reasoning_effort = 'low' },
-            [ordered]@{ id = 'gpt-5.6-terra'; display_name = 'gpt-5.6-terra'; description = 'Balanced agentic coding model for everyday work'; supported_reasoning_efforts = @('low', 'medium', 'high', 'xhigh', 'max', 'ultra'); default_reasoning_effort = 'medium' },
-            [ordered]@{ id = 'gpt-5.6-luna'; display_name = 'gpt-5.6-luna'; description = 'Fast and affordable agentic coding model'; supported_reasoning_efforts = @('low', 'medium', 'high', 'xhigh', 'max'); default_reasoning_effort = 'medium' },
-            [ordered]@{ id = 'gpt-5.5'; display_name = 'gpt-5.5'; description = 'Frontier model for complex coding and research'; supported_reasoning_efforts = @('low', 'medium', 'high', 'xhigh'); default_reasoning_effort = 'medium' }
+            @{ Slug = 'gpt-5.6-sol'; Display = 'gpt-5.6-sol'; Description = 'Latest frontier agentic coding model'; Efforts = @('low', 'medium', 'high', 'xhigh', 'max', 'ultra'); Default = 'medium' },
+            @{ Slug = 'gpt-6-astra'; Display = 'gpt-6-astra'; Description = 'Most capable model for complex work'; Efforts = @('low', 'medium', 'high', 'xhigh', 'max', 'ultra'); Default = 'low' },
+            @{ Slug = 'gpt-5.6-terra'; Display = 'gpt-5.6-terra'; Description = 'Balanced agentic coding model for everyday work'; Efforts = @('low', 'medium', 'high', 'xhigh', 'max', 'ultra'); Default = 'medium' },
+            @{ Slug = 'gpt-5.6-luna'; Display = 'gpt-5.6-luna'; Description = 'Fast and affordable agentic coding model'; Efforts = @('low', 'medium', 'high', 'xhigh', 'max'); Default = 'medium' }
         )
         foreach ($d in $defaultOfficials) {
-            $officialModels.Add([pscustomobject]$d)
+            $officialModels.Add((New-DevRouterCatalogModel -Slug $d.Slug -DisplayName $d.Display -Description $d.Description -Efforts $d.Efforts -DefaultEffort $d.Default))
         }
     }
 
-    # Virtual model: GPT-Adaptive
-    $adaptiveEntry = [ordered]@{
-        id                          = 'gpt-adaptive'
-        display_name                = 'GPT-Adaptive'
-        description                 = 'Adaptive intelligent model routing powered by TypeSafe/Jev'
-        model_provider_id           = 'dev-router'
-        supported_reasoning_efforts = @('none', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra')
-        default_reasoning_effort    = 'medium'
-    }
+    # Virtual model: GPT-Adaptive routes through the loopback Dev Router proxy.
+    $adaptiveEntry = New-DevRouterCatalogModel -Slug 'gpt-adaptive' -DisplayName 'GPT-Adaptive' `
+        -Description 'Adaptive intelligent model routing powered by TypeSafe/Jev' `
+        -Efforts @('none', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra') -DefaultEffort 'medium' `
+        -ModelProviderId 'dev-router' -Priority 0
 
-    $combined = New-Object System.Collections.Generic.List[object]
-    $combined.Add([pscustomobject]$adaptiveEntry)
+    $group = New-Object System.Collections.Generic.List[object]
+    $group.Add($adaptiveEntry)
     foreach ($m in $officialModels) {
-        if ($m.id -ne 'gpt-adaptive') {
-            $combined.Add($m)
-        }
+        if ($m.slug -ne 'gpt-adaptive') { $group.Add($m) }
     }
 
-    $json = ($combined | ConvertTo-Json -Depth 6) + [Environment]::NewLine
+    # Nested sequence: Codex expects Vec<Vec<ModelInfo>>, not a flat Vec<ModelInfo>.
+    # -InputObject with a single-element outer array is required; piping would
+    # flatten the nesting and Codex would reject the catalog.
+    $json = (ConvertTo-Json -InputObject @(, @($group.ToArray())) -Depth 100) + [Environment]::NewLine
     $tempFile = Join-Path $targetDir ("model-catalog-{0}.tmp" -f [Guid]::NewGuid().ToString('N'))
-    [IO.File]::WriteAllText($tempFile, $json, [System.Text.Encoding]::UTF8)
+    [IO.File]::WriteAllText($tempFile, $json, $script:Utf8NoBom)
     Move-Item -LiteralPath $tempFile -Destination $targetPath -Force
+
+    $shape = Test-DevRouterModelCatalogShape -Path $targetPath
+    if (-not $shape.valid) {
+        # Never leave an incompatible catalog behind: restore the previous one or
+        # remove the file so Codex can still load its configuration.
+        $backup = "$targetPath.invalid-backup"
+        if (Test-Path -LiteralPath $backup -PathType Leaf) {
+            Move-Item -LiteralPath $backup -Destination $targetPath -Force
+        }
+        else {
+            Remove-Item -LiteralPath $targetPath -Force -ErrorAction SilentlyContinue
+        }
+        throw "Dev Router model catalog failed structural validation: $($shape.reason)"
+    }
 
     return $targetPath
 }
@@ -794,7 +1049,7 @@ requires_openai_auth = true
 
     $tomlContent = ($newLines -join [Environment]::NewLine) + [Environment]::NewLine
     $tempConfig = Join-Path $paths.CodexHome ("config-{0}.tmp" -f [Guid]::NewGuid().ToString('N'))
-    [IO.File]::WriteAllText($tempConfig, $tomlContent, [System.Text.Encoding]::UTF8)
+    [IO.File]::WriteAllText($tempConfig, $tomlContent, $script:Utf8NoBom)
     Move-Item -LiteralPath $tempConfig -Destination $paths.ConfigToml -Force
 
     return [ordered]@{
@@ -837,7 +1092,7 @@ function Unregister-DevRouterCodexIntegration {
 
         $tomlContent = ($newLines -join [Environment]::NewLine) + [Environment]::NewLine
         $tempConfig = Join-Path $paths.CodexHome ("config-{0}.tmp" -f [Guid]::NewGuid().ToString('N'))
-        [IO.File]::WriteAllText($tempConfig, $tomlContent, [System.Text.Encoding]::UTF8)
+        [IO.File]::WriteAllText($tempConfig, $tomlContent, $script:Utf8NoBom)
         Move-Item -LiteralPath $tempConfig -Destination $paths.ConfigToml -Force
     }
 
@@ -1683,6 +1938,7 @@ Export-ModuleMember -Function `
     Invoke-DevRouterTurn, `
     Get-DevRouterCliArguments, `
     Export-DevRouterModelCatalog, `
+    Test-DevRouterModelCatalogShape, `
     Test-DevRouterCatalogRegistered, `
     Register-DevRouterCodexIntegration, `
     Unregister-DevRouterCodexIntegration, `

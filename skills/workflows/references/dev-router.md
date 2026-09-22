@@ -151,21 +151,48 @@ Codex Desktop GUI (Real-time token streaming)
 
 ### Composite Model Catalog
 
-`Export-DevRouterModelCatalog` caches official OpenAI models and registers `gpt-adaptive`:
+`Export-DevRouterModelCatalog` normalizes the official models from the Codex
+models cache and registers `gpt-adaptive`. Codex CLI 0.145+ deserializes
+`model_catalog_json` as a **sequence of sequences** of `ModelInfo`, so the file
+root is a JSON array whose first element is the model group. All of these fields
+are mandatory per entry; the legacy `id` / `supported_reasoning_efforts` /
+`default_reasoning_effort` keys are rejected outright and make Codex fail to
+load ANY configuration.
 
 ```json
-{
-  "id": "gpt-adaptive",
-  "name": "GPT-Adaptive",
-  "description": "Dynamic parent model and reasoning effort routing via Dev Router and TypeSafe/Jev.",
-  "model_provider_id": "dev-router",
-  "supports_reasoning_effort": true
-}
+[
+  [
+    {
+      "slug": "gpt-adaptive",
+      "display_name": "GPT-Adaptive",
+      "description": "Dynamic parent model and reasoning effort routing via Dev Router and TypeSafe/Jev.",
+      "model_provider_id": "dev-router",
+      "supported_reasoning_levels": [
+        { "effort": "medium", "description": "medium (default)" }
+      ],
+      "shell_type": "default",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 0,
+      "base_instructions": "Dynamic parent model and reasoning effort routing via Dev Router and TypeSafe/Jev.",
+      "support_verbosity": true,
+      "truncation_policy": { "mode": "tokens", "limit": 10000 },
+      "supports_parallel_tool_calls": true,
+      "experimental_supported_tools": []
+    }
+  ]
+]
 ```
 
-This composite catalog is configured in `$CODEX_HOME/config.toml`:
+`experimental_supported_tools` must serialize as `[]`, never `null`. The catalog
+is written as UTF-8 **without BOM** and validated by
+`Test-DevRouterModelCatalogShape` before it is registered; if validation fails,
+the previous catalog is restored and the export fails closed, so Codex can never
+be left unable to load its configuration.
+
+The composite catalog is configured in `$CODEX_HOME/config.toml`:
 ```toml
-model_catalog_json = "C:\\Users\\<user>\\.codex\\codex-workflows-kit\\dev-router-catalog.json"
+model_catalog_json = "C:\\Users\\<user>\\.codex\\codex-workflows-kit\\model-catalog.json"
 
 [model_providers.dev-router]
 name = "Dev Router (Adaptive)"
