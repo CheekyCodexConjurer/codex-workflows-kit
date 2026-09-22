@@ -11,7 +11,8 @@ import {
     decideRoute,
     deriveBoundaryKey,
     isLockValid,
-    toUpstreamModelId
+    toUpstreamModelId,
+    deriveUpstream
 } from "./dev-router-policy.mjs";
 
 const DEFAULT_PORT = 4040;
@@ -28,8 +29,10 @@ function parseArgs() {
     const options = {
         port: Number(process.env.DEV_ROUTER_PORT) || DEFAULT_PORT,
         host: process.env.DEV_ROUTER_HOST || DEFAULT_HOST,
-        upstream: process.env.DEV_ROUTER_UPSTREAM || DEFAULT_UPSTREAM,
-    upstreamPath: process.env.DEV_ROUTER_UPSTREAM_PATH || null,
+        // Explicit operator/test override; the effective upstream base is
+        // resolved later from `preferred_auth_method` / `chatgpt_base_url`.
+        upstreamOverride: process.env.DEV_ROUTER_UPSTREAM || null,
+        upstreamPath: process.env.DEV_ROUTER_UPSTREAM_PATH || null,
         jevEndpoint: process.env.DEV_ROUTER_JEV_ENDPOINT || DEFAULT_JEV_ENDPOINT,
         jevTimeoutMs: Number(process.env.DEV_ROUTER_JEV_TIMEOUT_MS) || DEFAULT_JEV_TIMEOUT_MS,
         codexHome: process.env.CODEX_HOME || path.join(process.env.USERPROFILE || process.env.HOME || ".", ".codex"),
@@ -41,7 +44,7 @@ function parseArgs() {
         } else if (args[i] === "--host" && args[i + 1]) {
             options.host = args[++i];
         } else if (args[i] === "--upstream" && args[i + 1]) {
-            options.upstream = args[++i];
+            options.upstreamOverride = args[++i];
         } else if (args[i] === "--codex-home" && args[i + 1]) {
             options.codexHome = args[++i];
         } else if (args[i] === "--jev-endpoint" && args[i + 1]) {
@@ -60,6 +63,20 @@ const stateFile = path.join(kitDir, "dev-router-state.json");
 const locksFile = path.join(kitDir, "dev-router-locks.json");
 const catalogFile = path.join(kitDir, "model-catalog.json");
 const configTomlFile = path.join(config.codexHome, "config.toml");
+
+// The upstream base depends on HOW Codex is authenticated: a ChatGPT account
+// must reach the ChatGPT Codex backend, not the public OpenAI API (the public
+// `/v1/responses` path 404s there). Derived from the official config keys and
+// overridable explicitly; never guessed silently.
+const _topLevelConfig = readTopLevelConfig();
+const _upstream = deriveUpstream({
+    envOverride: config.upstreamOverride,
+    chatgptBaseUrl: _topLevelConfig.chatgptBaseUrl,
+    preferredAuthMethod: _topLevelConfig.preferredAuthMethod,
+    codexHome: config.codexHome
+});
+config.upstream = _upstream.upstream;
+config.upstreamSource = _upstream.source;
 
 const responseChainBoundaries = new Map();
 let lastAppliedRoute = null;
@@ -96,6 +113,38 @@ function readDevRouterState() {
         // Fallback to default
     }
     return { mode: "off", target: "effort_only", version: 1, manual_base_model: null, manual_base_effort: null };
+}
+
+/**
+ * Top-level string values from config.toml that decide how the upstream must be
+ * reached. No secret is read: only the model/provider/auth-method selectors.
+ */
+function readTopLevelConfig() {
+    const result = { modelProvider: null, preferredAuthMethod: null, chatgptBaseUrl: null };
+    try {
+        if (!fs.existsSync(configTomlFile)) return result;
+        const lines = fs.readFileSync(configTomlFile, "utf8").split(/\r?\n/);
+        let inTopLevel = true;
+        for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed.startsWith("#") || trimmed.length === 0) continue;
+            if (trimmed.startsWith("[")) {
+                inTopLevel = false;
+                continue;
+            }
+            if (!inTopLevel) continue;
+            const match = (key) => {
+                const m = trimmed.match(new RegExp(`^${key}\\s*=\\s*"([^"]+)"`));
+                return m ? m[1].trim() : null;
+            };
+            result.modelProvider = match("model_provider") ?? result.modelProvider;
+            result.preferredAuthMethod = match("preferred_auth_method") ?? result.preferredAuthMethod;
+            result.chatgptBaseUrl = match("chatgpt_base_url") ?? result.chatgptBaseUrl;
+        }
+    } catch {
+        // Ignore read errors; the derivation falls back to the public API.
+    }
+    return result;
 }
 
 function readTomlBaseline() {
@@ -579,8 +628,15 @@ function forwardToUpstream(req, res, bodyBuffer, boundaryKey) {
             upstreamRes.on("error", () => {
                 res.destroy();
             });
+            // Non-secret execution proof: the caller can confirm the request
+            // really reached the backend without inspecting any content.
+            upstreamRes.once("response", () => {});
         }
     );
+
+    upstreamReq.on("response", (upstreamRes) => {
+        console.log(`[DevRouter] upstream_status=${upstreamRes.statusCode} host=${upstreamUrl.host} path=${upstreamUrl.pathname}`);
+    });
 
     upstreamReq.on("error", (err) => {
         console.error(`[DevRouter Upstream Error] ${err.message}`);
@@ -637,6 +693,8 @@ function handleHealth(req, res) {
     const state = readDevRouterState();
     const toml = readTomlBaseline();
     const baseline = resolveConcreteBaseline(state, toml);
+    const topLevel = readTopLevelConfig();
+    const upstreamUrl = buildUpstreamUrl(config.upstream, config.upstreamPath);
 
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({
@@ -645,6 +703,12 @@ function handleHealth(req, res) {
         port: config.port,
         host: config.host,
         upstream: config.upstream,
+        // Non-secret routing introspection used by readiness checks.
+        upstream_host: upstreamUrl.host,
+        upstream_path: upstreamUrl.pathname,
+        upstream_source: config.upstreamSource,
+        model_provider: topLevel.modelProvider,
+        preferred_auth_method: topLevel.preferredAuthMethod,
         mode: state.mode,
         target: state.target,
         baseline_model: baseline.model,
@@ -673,8 +737,10 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(config.port, config.host, () => {
+    const upstreamUrl = buildUpstreamUrl(config.upstream, config.upstreamPath);
     console.log(`[DevRouter] Proxy listening on http://${config.host}:${config.port}`);
-    console.log(`[DevRouter] Upstream: ${config.upstream}`);
+    // Host/path only: never log Authorization, cookies or prompt content.
+    console.log(`[DevRouter] Upstream: ${upstreamUrl.protocol}//${upstreamUrl.host}${upstreamUrl.pathname} (source=${config.upstreamSource})`);
     console.log(`[DevRouter] Codex Home: ${config.codexHome}`);
 });
 

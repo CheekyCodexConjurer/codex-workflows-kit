@@ -474,3 +474,47 @@ export function isLockValid(lock, { mode, target, surface, executionId, turnId }
     }
     return true;
 }
+
+/**
+ * Canonical ChatGPT / OpenAI backend bases. The ChatGPT-auth Codex backend is
+ * NOT the public API host: the installed CLI resolves it to
+ * `<chatgpt-host>/backend-api/codex` (verified against the binary's own base
+ * table and live: the public `/v1/responses` path 404s there). The Dev Router
+ * must never guess for a ChatGPT account.
+ */
+export const OPENAI_PUBLIC_UPSTREAM = "https://api.openai.com";
+export const CHATGPT_CODEX_UPSTREAM = "https://chatgpt.com/backend-api/codex";
+
+/**
+ * Resolves the upstream base for the local proxy.
+ *
+ * Priority (never invents for a ChatGPT account):
+ *  1. explicit operator/test override (`DEV_ROUTER_UPSTREAM`);
+ *  2. the official `chatgpt_base_url` config value when set;
+ *  3. the ChatGPT backend when the configured auth method is `chatgpt`;
+ *  4. the public OpenAI API otherwise.
+ *
+ * Returns `{ upstream, source }` so status/logging can report WHY a host was
+ * chosen without exposing credentials.
+ */
+export function deriveUpstream({ envOverride, chatgptBaseUrl, preferredAuthMethod, codexHome } = {}) {
+    const override = normalizeText(envOverride);
+    if (override) {
+        return { upstream: override, source: "env:DEV_ROUTER_UPSTREAM" };
+    }
+    const configured = normalizeText(chatgptBaseUrl);
+    if (configured) {
+        return { upstream: configured, source: "config.chatgpt_base_url" };
+    }
+    const authMethod = normalizeText(preferredAuthMethod).toLowerCase();
+    if (authMethod === "chatgpt") {
+        return { upstream: CHATGPT_CODEX_UPSTREAM, source: "auth-method:chatgpt" };
+    }
+    if (authMethod) {
+        return { upstream: OPENAI_PUBLIC_UPSTREAM, source: `auth-method:${authMethod}` };
+    }
+    return {
+        upstream: OPENAI_PUBLIC_UPSTREAM,
+        source: normalizeText(codexHome) ? "default:public-api" : "default:public-api"
+    };
+}

@@ -134,7 +134,7 @@ try {
     Assert-Test "Status reports configured_mode = off" ($statusOff.configured_mode -eq 'off')
     Assert-Test "Status reports effective_mode = off" ($statusOff.effective_mode -eq 'off')
     Assert-Test "Status reports target = effort_only" ($statusOff.target -eq 'effort_only')
-    Assert-Test "Status reports integration_status = unintegrated for GUI" ($statusOff.integration_status -eq 'unintegrated')
+    Assert-Test "Status reports integration_status = inactive before any registration" ($statusOff.integration_status -eq 'inactive')
 
     # Switch to shadow
     $null = Set-DevRouterState -Mode 'shadow' -Target 'effort_only' -CodexHome $testCodexHome
@@ -547,7 +547,7 @@ Check file C:\SecretProjects\Finance\Accounts.txt
     $statusObj = & $switchScript -Status -CodexHome $testCodexHome
     Assert-Test "switch-dev-router -Status returns pscustomobject" ($null -ne $statusObj)
     Assert-Test "Status object has configured_mode" ($statusObj.configured_mode -eq 'off')
-    Assert-Test "Status object has integration_status" ($statusObj.integration_status -eq 'unintegrated')
+    Assert-Test "Status object has integration_status" ($statusObj.integration_status -eq 'inactive')
 
     # ------------------------------------------------------------------------
     # SECTION 13: Baseline Scoping & Preservation (No Invented Sol/Medium)
@@ -949,17 +949,18 @@ base_url = "http://127.0.0.1:4040/v1"
     # ------------------------------------------------------------------------
     Write-Host "`nSection 20: Real Proxy Lifecycle & Integration" -ForegroundColor Yellow
 
-    $regResult = Register-DevRouterCodexIntegration -CodexHome $testCodexHome -Port 4049
+    $regResult = Register-DevRouterCodexIntegration -CodexHome $testCodexHome -Port 4049 -ManualBaseModel 'gpt-5.6-sol' -SkipCodexValidation
     Assert-Test "Register integration returns catalog path" ($null -ne $regResult.CatalogPath)
+    Assert-Test "Register selects the dev-router provider" ($regResult.ProviderSelected -eq $true)
     Assert-Test "config.toml registers model_catalog_json" (Test-DevRouterCatalogRegistered -CodexHome $testCodexHome)
 
     # Start proxy on port 4049
     $proxyStatus = Start-DevRouterProxy -CodexHome $testCodexHome -Port 4049
     Assert-Test "Proxy started and responds to health check" ($proxyStatus.Running -eq $true)
 
-    # Status reflects integrated
+    # Status reflects a genuinely ready integration (provider selected + proxy + base)
     $statusIntegrated = Get-DevRouterStatus -CodexHome $testCodexHome
-    Assert-Test "Dev Router status reports integrated when proxy and catalog are active" ($statusIntegrated.integration_status -eq 'integrated')
+    Assert-Test "Dev Router status reports ready when provider, proxy and base are all present" ($statusIntegrated.integration_status -eq 'ready') ("got=$($statusIntegrated.integration_status)")
 
     # Stop proxy
     $stopped = Stop-DevRouterProxy -CodexHome $testCodexHome -Port 4049

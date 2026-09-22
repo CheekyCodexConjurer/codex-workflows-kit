@@ -11,7 +11,8 @@ import {
     decideRoute,
     deriveBoundaryKey,
     isLockValid,
-    toUpstreamModelId
+    toUpstreamModelId,
+    deriveUpstream
 } from "./dev-router-policy.mjs";
 
 const OPERATIONS = {
@@ -56,6 +57,12 @@ const OPERATIONS = {
         surface: request.surface,
         executionId: request.executionId,
         turnId: request.turnId
+    }),
+    deriveUpstream: (request) => deriveUpstream({
+        envOverride: request.envOverride,
+        chatgptBaseUrl: request.chatgptBaseUrl,
+        preferredAuthMethod: request.preferredAuthMethod,
+        codexHome: request.codexHome
     })
 };
 

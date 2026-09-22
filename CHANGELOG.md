@@ -7,6 +7,55 @@ O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ### Added
 
+- **Seleção real do provedor Dev Router no Codex Desktop**: o alias
+  `gpt-adaptive` aparecia no seletor de modelos, mas `model_provider` continuava
+  apontando para o provedor padrão `openai`; o Codex Desktop enviava o alias ao
+  backend ChatGPT e falhava com `The 'gpt-adaptive' model is not supported when
+  using Codex with a ChatGPT account.` Declarar
+  `[model_providers.dev-router]` passou a significar também SELECIONAR o
+  provedor: `Register-DevRouterCodexIntegration` grava
+  `model_provider = "dev-router"` junto do `model_catalog_json`, sem reescrever
+  o `model` do usuário.
+- **Registro transacional com rollback**: o registro tira snapshot do `model`,
+  `model_provider`, `model_catalog_json`, `model_reasoning_effort`,
+  `hadDevRouterProviderBlock`, `manual_base_model` e `manual_base_effort`
+  anteriores para `dev-router-integration-backup.json`, constrói e valida o
+  catálogo, publica o proxy e os arquivos canônicos de política, **exige
+  `/health` saudável ANTES de escrever o provedor** (porta morta nunca é
+  registrada), valida o config gerado com o `codex debug models` real e desfaz
+  a ativação inteira em qualquer falha. Sem base concreta o registro falha
+  fechado com mensagem clara, em vez de inventar `Sol`.
+- **Readiness ladder do Dev Router**: `Get-DevRouterIntegrationReadiness` e
+  `Get-DevRouterStatus` substituem o antigo "proxy + catálogo = integrado" por
+  `inactive` → `catalog_only` (o bug original: catálogo visível mas provedor não
+  selecionado) → `provider_registered` → `degraded` → `ready`. `ready` exige
+  catálogo válido, provedor efetivamente SELECIONADO, proxy saudável e base
+  manual concreta disponível; `effective_mode` reporta `bypass` em vez de `on`
+  quando a integração não está pronta.
+- **Upstream derivado da autenticação**: o proxy deixa de hardcodar a API
+  pública e deriva o backend da configuração do Codex, na ordem
+  `DEV_ROUTER_UPSTREAM`, `chatgpt_base_url`,
+  `preferred_auth_method = "chatgpt"` → `https://chatgpt.com/backend-api/codex`
+  e, por fim, `https://api.openai.com`. Base que já carrega caminho mantém o
+  caminho e recebe apenas `/responses` (a API pública mantém `/v1/responses`);
+  `DEV_ROUTER_UPSTREAM_PATH` sobrescreve o sufixo. O `/health` passa a reportar
+  `upstream_host`, `upstream_path`, `upstream_source`, `model_provider` e
+  `preferred_auth_method` (nunca credenciais).
+- **Proxy destacado com log gerenciado**: `Start-DevRouterProxy` inicia o proxy
+  destacado do shell registrante, para que ele sobreviva à saída do terminal,
+  com log em `dev-router-proxy.log` / `dev-router-proxy.err.log` no diretório do
+  kit.
+- `scripts/test-dev-router-desktop-provider.ps1`: 46 asserções do bug de
+  provedor não selecionado, do registro transacional/rollback, da readiness
+  ladder, da derivação de upstream e do pass-through de modelo concreto; 46/46
+  no PowerShell 7 e no Windows PowerShell 5.1. Evidência E2E live com o config
+  persistente do Register (sem override de provedor): `model = gpt-adaptive`,
+  `model_provider = dev-router`, readiness `ready`, log de rota
+  `incoming=gpt-adaptive … final=gpt-5.6-sol/none`,
+  `upstream_status=200 host=chatgpt.com path=/backend-api/codex/responses` e
+  `ADAPTIVE_OK` impresso pelo Codex (exit 0), com a conta ChatGPT preservada
+  (sem migração para API key e sem mudança de autenticação).
+
 - **Política única do Dev Router** (`scripts/dev-router-policy.json` +
   `scripts/dev-router-policy.mjs` + `scripts/dev-router-policy-cli.mjs`): o
   catálogo de modelos, os esforços suportados, o allow/deny de roteamento
@@ -34,6 +83,22 @@ O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
   base ausente (fail-closed), Terra e caminho upstream com path.
 
 ### Fixed
+
+- **Causa-raiz do `gpt-adaptive` rejeitado pela conta ChatGPT**: a configuração
+  ficava só com o catálogo (`catalog_only`), sem o provedor selecionado.
+  `Register-DevRouterCodexIntegration` agora seleciona
+  `model_provider = "dev-router"`; `Unregister-DevRouterCodexIntegration`
+  restaura os valores exatos do backup gerenciado, remove apenas o bloco do Dev
+  Router e seu catálogo e para somente o proxy que o kit possui (pid file).
+- **Modelo concreto passa direto**: todas as requisições passam pelo provedor
+  local; um modelo concreto escolhido manualmente é encaminhado sem alteração
+  (modo `off`) ou apenas com o esforço reescrito (modo `on` +
+  `target effort_only`). `gpt-adaptive` é sempre resolvido para um modelo
+  concreto e nunca alcança o upstream.
+- **`Test-DevRouterModelCatalogShape` no Windows PowerShell 5.1**: a raiz
+  `[[...]]` agora é desembrulhada corretamente também no 5.1 (que mantém o array
+  externo embrulhado) e no PowerShell 7, mantendo a validação estrutural
+  idêntica nas duas plataformas.
 
 - **`gpt-adaptive` nunca chega ao upstream**: guarda estrutural antes do
   encaminhamento; sem base concreta o proxy responde 400 local

@@ -555,6 +555,101 @@ function Clear-AllDevRouterLocks {
     }
 }
 
+function Get-CodexTopLevelConfig {
+    <#
+    .SYNOPSIS
+    Raw top-level string keys from config.toml that the Dev Router must inspect.
+
+    Unlike Get-CodexBaselineConfig this does NOT canonicalize model names: it
+    reports exactly what the file says so provider selection and rollback can be
+    exact. No secret value is read.
+    #>
+    param([string]$CodexHome)
+
+    $paths = Get-DevRouterPaths -CodexHome $CodexHome
+    $result = [ordered]@{
+        Model             = $null
+        ModelProvider     = $null
+        ModelCatalogJson  = $null
+        ModelEffort       = $null
+        PreferredAuthMethod = $null
+        ChatgptBaseUrl    = $null
+    }
+
+    if (Test-Path -LiteralPath $paths.ConfigToml -PathType Leaf) {
+        try {
+            $lines = Get-Content -LiteralPath $paths.ConfigToml -Encoding UTF8
+            $inTopLevel = $true
+            foreach ($line in $lines) {
+                $trimmed = $line.Trim()
+                if ($trimmed.StartsWith('#') -or $trimmed.Length -eq 0) { continue }
+                if ($trimmed.StartsWith('[')) { $inTopLevel = $false; continue }
+                if (-not $inTopLevel) { continue }
+                foreach ($pair in @(
+                    @{ Key = 'model'; Field = 'Model' },
+                    @{ Key = 'model_provider'; Field = 'ModelProvider' },
+                    @{ Key = 'model_catalog_json'; Field = 'ModelCatalogJson' },
+                    @{ Key = 'model_reasoning_effort'; Field = 'ModelEffort' },
+                    @{ Key = 'preferred_auth_method'; Field = 'PreferredAuthMethod' },
+                    @{ Key = 'chatgpt_base_url'; Field = 'ChatgptBaseUrl' }
+                )) {
+                    $m = [regex]::Match($trimmed, '^' + [regex]::Escape($pair.Key) + '\s*=\s*"([^"]*)"')
+                    if ($m.Success) {
+                        $result[$pair.Field] = $m.Groups[1].Value.Trim()
+                    }
+                }
+            }
+        }
+        catch {
+            # Preserve nulls; the caller fails closed when it needs a value.
+        }
+    }
+
+    return $result
+}
+
+function Test-DevRouterProviderSelected {
+    <#
+    .SYNOPSIS
+    True only when config.toml selects the Dev Router as the ACTIVE model provider.
+
+    Declaring `[model_providers.dev-router]` is not the same as selecting it: the
+    original Desktop bug was `model = "gpt-adaptive"` with
+    `model_provider = "openai"`, so the alias was sent to the ChatGPT backend.
+    #>
+    param([string]$CodexHome)
+
+    $top = Get-CodexTopLevelConfig -CodexHome $CodexHome
+    return ([string]$top.ModelProvider).Trim().ToLowerInvariant() -eq 'dev-router'
+}
+
+function Get-DevRouterUpstream {
+    <#
+    .SYNOPSIS
+    Resolves the upstream base the proxy must forward to, using the shared
+    canonical policy module (never guessed locally).
+    #>
+    param(
+        [string]$CodexHome,
+        [string]$EnvOverride = $null
+    )
+
+    $top = Get-CodexTopLevelConfig -CodexHome $CodexHome
+    $resolved = Invoke-DevRouterPolicyCli -Operation 'deriveUpstream' -Request @{
+        envOverride         = if ([string]::IsNullOrWhiteSpace($EnvOverride)) { $null } else { $EnvOverride }
+        chatgptBaseUrl      = $top.ChatgptBaseUrl
+        preferredAuthMethod = $top.PreferredAuthMethod
+        codexHome           = $CodexHome
+    }
+    if ($null -eq $resolved -or [string]::IsNullOrWhiteSpace([string]$resolved.upstream)) {
+        throw "Dev Router could not resolve an upstream base for Codex home '$CodexHome'."
+    }
+    return [ordered]@{
+        Upstream = [string]$resolved.upstream
+        Source   = [string]$resolved.source
+    }
+}
+
 function Get-CodexBaselineConfig {
     param([string]$CodexHome)
 
@@ -709,20 +804,14 @@ function Start-DevRouterProxy {
         "--codex-home", "`"$($paths.CodexHome)`""
     )
 
-    $pInfo = New-Object System.Diagnostics.ProcessStartInfo
-    $pInfo.FileName = $nodeCmd.Source
-    $pInfo.Arguments = ($args -join ' ')
-    $pInfo.UseShellExecute = $false
-    $pInfo.CreateNoWindow = $true
-    $pInfo.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
-    $pInfo.WorkingDirectory = $paths.KitDir
-
-    # Forward environment
-    if ($env:TYPESAFE_API_KEY) {
-        $pInfo.EnvironmentVariables['TYPESAFE_API_KEY'] = $env:TYPESAFE_API_KEY
-    }
-
-    $proc = [System.Diagnostics.Process]::Start($pInfo)
+    # The proxy must SURVIVE the launcher (the Desktop keeps running after the
+    # registering shell exits), so it is started without inheriting the caller's
+    # console/job. Output goes to bounded log files for diagnostics.
+    $logPath = Join-Path $paths.KitDir 'dev-router-proxy.log'
+    $errPath = Join-Path $paths.KitDir 'dev-router-proxy.err.log'
+    $proc = Start-Process -FilePath $nodeCmd.Source -ArgumentList ($args -join ' ') `
+        -WorkingDirectory $paths.KitDir -WindowStyle Hidden -PassThru `
+        -RedirectStandardOutput $logPath -RedirectStandardError $errPath
     if ($null -ne $proc) {
         [IO.File]::WriteAllText($paths.ProxyPid, [string]$proc.Id, $script:Utf8NoBom)
     }
@@ -1061,7 +1150,13 @@ function Test-DevRouterModelCatalogShape {
     if ($parsed -is [string] -or -not ($parsed -is [System.Collections.IEnumerable])) {
         return @{ valid = $false; reason = 'catalog model group must be a JSON array' }
     }
+    # ConvertFrom-Json enumerates the single-element outer array on PowerShell 7
+    # but keeps it wrapped on Windows PowerShell 5.1, so both shapes must unwrap
+    # to the flat model list.
     $models = @($parsed)
+    if ($models.Count -eq 1 -and $null -ne $models[0] -and $models[0] -is [System.Collections.IEnumerable] -and -not ($models[0] -is [string])) {
+        $models = @($models[0])
+    }
     if ($models.Count -eq 0) {
         return @{ valid = $false; reason = 'catalog model group is empty' }
     }
@@ -1274,143 +1369,668 @@ function Export-DevRouterModelCatalog {
     return $targetPath
 }
 
-function Register-DevRouterCodexIntegration {
+function Get-DevRouterRawState {
+    <#
+    .SYNOPSIS
+    Full state object including manual_base_model / manual_base_effort.
+    Get-DevRouterState intentionally narrows the shape; integration and baseline
+    decisions need the raw record.
+    #>
+    param([string]$CodexHome)
+
+    $paths = Get-DevRouterPaths -CodexHome $CodexHome
+    if (-not (Test-Path -LiteralPath $paths.StateFile -PathType Leaf)) {
+        return [ordered]@{ mode = 'off'; target = 'effort_only'; manual_base_model = $null; manual_base_effort = $null }
+    }
+    try {
+        $state = (Get-Content -LiteralPath $paths.StateFile -Raw -Encoding UTF8) | ConvertFrom-Json
+        $model = $null
+        $effort = $null
+        if ($null -ne $state -and $state.PSObject.Properties.Name -contains 'manual_base_model') { $model = [string]$state.manual_base_model }
+        if ($null -ne $state -and $state.PSObject.Properties.Name -contains 'manual_base_effort') { $effort = [string]$state.manual_base_effort }
+        return [ordered]@{
+            mode               = if ($null -ne $state -and $state.PSObject.Properties.Name -contains 'mode') { [string]$state.mode } else { 'off' }
+            target             = if ($null -ne $state -and $state.PSObject.Properties.Name -contains 'target') { [string]$state.target } else { 'effort_only' }
+            manual_base_model  = if ([string]::IsNullOrWhiteSpace($model)) { $null } else { $model }
+            manual_base_effort = if ([string]::IsNullOrWhiteSpace($effort)) { $null } else { $effort }
+        }
+    }
+    catch {
+        return [ordered]@{ mode = 'off'; target = 'effort_only'; manual_base_model = $null; manual_base_effort = $null }
+    }
+}
+
+function Set-DevRouterManualBase {
+    <#
+    .SYNOPSIS
+    Seeds the concrete manual base the proxy falls back to for the local alias.
+
+    GPT-Adaptive is NOT a concrete model: the proxy needs a real model for OFF,
+    shadow, Jev timeout/error and missing TYPESAFE_API_KEY. This never invents
+    one; the caller must supply a concrete allowed model.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Model,
+        [string]$Effort,
+        [string]$CodexHome
+    )
+
+    return Invoke-DevRouterSynchronized -LockName 'State' -ScriptBlock {
+        $paths = Get-DevRouterPaths -CodexHome $CodexHome
+        if (-not (Test-Path -LiteralPath $paths.KitDir -PathType Container)) {
+            [void][IO.Directory]::CreateDirectory($paths.KitDir)
+        }
+        $raw = Get-DevRouterRawState -CodexHome $CodexHome
+        $now = [datetime]::UtcNow.ToString('o')
+        $stateObj = [ordered]@{
+            version            = 1
+            product            = 'codex-workflows-kit'
+            component          = 'dev-router'
+            mode               = $raw.mode
+            target             = $raw.target
+            manual_base_model  = $Model
+            manual_base_effort = if ([string]::IsNullOrWhiteSpace($Effort)) { $null } else { $Effort }
+            updatedAt          = $now
+        }
+        $json = ($stateObj | ConvertTo-Json -Depth 4) + [Environment]::NewLine
+        $tempFile = Join-Path $paths.KitDir ("dev-router-state-{0}.tmp" -f [Guid]::NewGuid().ToString('N'))
+        [IO.File]::WriteAllText($tempFile, $json, $script:Utf8NoBom)
+        Move-Item -LiteralPath $tempFile -Destination $paths.StateFile -Force
+        return $stateObj
+    }
+}
+
+function Set-DevRouterTopLevelValues {
+    <#
+    .SYNOPSIS
+    Rewrites TOP-LEVEL config.toml keys, preserving every other line, comment and
+    section verbatim. A $null value removes the key.
+
+    Only keys before the first `[section]` header are touched, so custom providers
+    and profiles owned by the user are never disturbed. Written UTF-8 without BOM
+    (a BOM breaks Codex config loading).
+    #>
+    param(
+        [string]$CodexHome,
+        [Parameter(Mandatory)][hashtable]$Values
+    )
+
+    $paths = Get-DevRouterPaths -CodexHome $CodexHome
+    $lines = @()
+    if (Test-Path -LiteralPath $paths.ConfigToml -PathType Leaf) {
+        $lines = @(Get-Content -LiteralPath $paths.ConfigToml -Encoding UTF8)
+    }
+
+    $out = New-Object System.Collections.Generic.List[string]
+    $handled = @{}
+    $inTopLevel = $true
+
+    foreach ($line in $lines) {
+        $trimmed = $line.Trim()
+        if ($trimmed.StartsWith('[')) { $inTopLevel = $false }
+        if ($inTopLevel -and $trimmed.Length -gt 0 -and -not $trimmed.StartsWith('#')) {
+            $matched = $false
+            foreach ($key in @($Values.Keys)) {
+                if ($trimmed -match ('^' + [regex]::Escape([string]$key) + '\s*=')) {
+                    if ($null -ne $Values[$key]) {
+                        $out.Add([string]$key + ' = "' + [string]$Values[$key] + '"')
+                    }
+                    $handled[[string]$key] = $true
+                    $matched = $true
+                    break
+                }
+            }
+            if ($matched) { continue }
+        }
+        $out.Add($line)
+    }
+
+    foreach ($key in @($Values.Keys)) {
+        if ($null -eq $Values[$key]) { continue }
+        if ($handled.ContainsKey([string]$key)) { continue }
+        $insertIdx = 0
+        while ($insertIdx -lt $out.Count -and ($out[$insertIdx].Trim().StartsWith('#') -or $out[$insertIdx].Trim().Length -eq 0)) {
+            $insertIdx++
+        }
+        $out.Insert($insertIdx, [string]$key + ' = "' + [string]$Values[$key] + '"')
+        $handled[[string]$key] = $true
+    }
+
+    $tomlContent = (($out -join [Environment]::NewLine).TrimEnd()) + [Environment]::NewLine
+    $tempConfig = Join-Path $paths.CodexHome ("config-{0}.tmp" -f [Guid]::NewGuid().ToString('N'))
+    [IO.File]::WriteAllText($tempConfig, $tomlContent, $script:Utf8NoBom)
+    Move-Item -LiteralPath $tempConfig -Destination $paths.ConfigToml -Force
+}
+
+function Test-DevRouterProviderBlockDeclared {
+    param([string]$CodexHome)
+    $paths = Get-DevRouterPaths -CodexHome $CodexHome
+    if (-not (Test-Path -LiteralPath $paths.ConfigToml -PathType Leaf)) { return $false }
+    try {
+        return ((Get-Content -LiteralPath $paths.ConfigToml -Raw -Encoding UTF8) -match '\[model_providers\.dev-router\]')
+    }
+    catch { return $false }
+}
+
+function Set-DevRouterProviderBlock {
+    <#
+    .SYNOPSIS
+    Installs the local Dev Router provider section, replacing any existing one.
+
+    The block is appended at the end so user sections keep their positions.
+    #>
     param(
         [string]$CodexHome,
         [int]$Port = 4040
     )
 
     $paths = Get-DevRouterPaths -CodexHome $CodexHome
-
-    # 1. Export composite catalog
-    $catalogPath = Export-DevRouterModelCatalog -CodexHome $CodexHome
-
-    # 2. Deploy proxy script if needed
-    $repoProxyScript = Join-Path (Split-Path -Parent $PSCommandPath) 'dev-router-proxy.mjs'
-    if (Test-Path -LiteralPath $repoProxyScript -PathType Leaf) {
-        Copy-Item -LiteralPath $repoProxyScript -Destination $paths.ProxyScript -Force
-        foreach ($policyFile in @('dev-router-policy.json', 'dev-router-policy.mjs', 'dev-router-policy-cli.mjs')) {
-            $policySrc = Join-Path (Split-Path -Parent $PSCommandPath) $policyFile
-            if (Test-Path -LiteralPath $policySrc -PathType Leaf) {
-                Copy-Item -LiteralPath $policySrc -Destination (Join-Path $paths.KitDir $policyFile) -Force
-            }
-        }
+    $lines = @()
+    if (Test-Path -LiteralPath $paths.ConfigToml -PathType Leaf) {
+        $lines = @(Get-Content -LiteralPath $paths.ConfigToml -Encoding UTF8)
     }
 
-    # 3. Configure config.toml
-    $normCatalogPath = $catalogPath -replace '\\', '/'
-    $configLines = if (Test-Path -LiteralPath $paths.ConfigToml -PathType Leaf) {
-        Get-Content -LiteralPath $paths.ConfigToml -Encoding UTF8
-    } else {
-        @()
-    }
-
-    $newLines = New-Object System.Collections.Generic.List[string]
-    $catalogSet = $false
-    $inDevRouterProvider = $false
-    $inTopLevel = $true
-
-    foreach ($line in $configLines) {
+    $out = New-Object System.Collections.Generic.List[string]
+    $skipping = $false
+    foreach ($line in $lines) {
         $trimmed = $line.Trim()
-        if ($trimmed.StartsWith('[')) {
-            $inTopLevel = $false
-            if ($trimmed -eq '[model_providers.dev-router]') {
-                $inDevRouterProvider = $true
-                continue
-            }
-            elseif ($inDevRouterProvider) {
-                $inDevRouterProvider = $false
-            }
+        if ($trimmed -eq '[model_providers.dev-router]') { $skipping = $true; continue }
+        if ($skipping) {
+            if ($trimmed.StartsWith('[')) { $skipping = $false }
+            else { continue }
         }
-
-        if ($inDevRouterProvider) {
-            # Skip existing provider keys to rewrite cleanly
-            continue
-        }
-
-        if ($inTopLevel -and $trimmed -match '^model_catalog_json\s*=') {
-            $newLines.Add("model_catalog_json = `"$normCatalogPath`"")
-            $catalogSet = $true
-            continue
-        }
-
-        $newLines.Add($line)
+        $out.Add($line)
     }
 
-    # If model_catalog_json was not set in top level, insert it near top
-    if (-not $catalogSet) {
-        $insertIdx = 0
-        while ($insertIdx -lt $newLines.Count -and ($newLines[$insertIdx].Trim().StartsWith('#') -or $newLines[$insertIdx].Trim().Length -eq 0)) {
-            $insertIdx++
-        }
-        $newLines.Insert($insertIdx, "model_catalog_json = `"$normCatalogPath`"")
-    }
+    # NOTE: the concatenation MUST be parenthesized. Inside an @() array literal
+    # PowerShell binds the comma tighter than `+`, so a bare
+    # `'prefix' + $Port + 'suffix'` element is parsed as THREE elements (with
+    # unary plus), which silently corrupts the emitted TOML.
+    $baseUrlLine = 'base_url = "http://127.0.0.1:' + $Port + '/v1"'
+    $block = @(
+        '',
+        '[model_providers.dev-router]',
+        'name = "Dev Router"',
+        $baseUrlLine,
+        'wire_api = "responses"',
+        'requires_openai_auth = true'
+    )
+    foreach ($b in $block) { $out.Add($b) }
 
-    # Append provider section
-    $providerBlock = @"
-
-[model_providers.dev-router]
-name = "Dev Router"
-base_url = "http://127.0.0.1:$Port/v1"
-wire_api = "responses"
-requires_openai_auth = true
-"@
-    $newLines.Add($providerBlock.TrimStart("`r`n"))
-
-    $tomlContent = ($newLines -join [Environment]::NewLine) + [Environment]::NewLine
+    $tomlContent = (($out -join [Environment]::NewLine).TrimEnd()) + [Environment]::NewLine
     $tempConfig = Join-Path $paths.CodexHome ("config-{0}.tmp" -f [Guid]::NewGuid().ToString('N'))
     [IO.File]::WriteAllText($tempConfig, $tomlContent, $script:Utf8NoBom)
     Move-Item -LiteralPath $tempConfig -Destination $paths.ConfigToml -Force
+}
 
-    return [ordered]@{
-        CatalogPath = $catalogPath
-        ConfigToml  = $paths.ConfigToml
-        Port        = $Port
+function Remove-DevRouterProviderBlock {
+    param([string]$CodexHome)
+
+    $paths = Get-DevRouterPaths -CodexHome $CodexHome
+    if (-not (Test-Path -LiteralPath $paths.ConfigToml -PathType Leaf)) { return $false }
+
+    $lines = @(Get-Content -LiteralPath $paths.ConfigToml -Encoding UTF8)
+    $out = New-Object System.Collections.Generic.List[string]
+    $skipping = $false
+    $removed = $false
+    foreach ($line in $lines) {
+        $trimmed = $line.Trim()
+        if ($trimmed -eq '[model_providers.dev-router]') { $skipping = $true; $removed = $true; continue }
+        if ($skipping) {
+            if ($trimmed.StartsWith('[')) { $skipping = $false }
+            else { continue }
+        }
+        $out.Add($line)
+    }
+    if (-not $removed) { return $false }
+
+    $tomlContent = (($out -join [Environment]::NewLine).TrimEnd()) + [Environment]::NewLine
+    $tempConfig = Join-Path $paths.CodexHome ("config-{0}.tmp" -f [Guid]::NewGuid().ToString('N'))
+    [IO.File]::WriteAllText($tempConfig, $tomlContent, $script:Utf8NoBom)
+    Move-Item -LiteralPath $tempConfig -Destination $paths.ConfigToml -Force
+    return $true
+}
+
+function Test-DevRouterCodexConfigLoadable {
+    <#
+    .SYNOPSIS
+    Real-Codex validation: the generated configuration must actually load.
+
+    Uses a read-only command that parses config.toml (and therefore
+    model_catalog_json). No model request is made. Fails closed when the codex
+    binary is unavailable so we never claim a config is valid without proof.
+    #>
+    param(
+        [string]$CodexHome,
+        [int]$TimeoutMs = 30000
+    )
+
+    $codexCmd = Get-Command codex -ErrorAction SilentlyContinue
+    if ($null -eq $codexCmd) {
+        return [ordered]@{ Validated = $false; Reason = "codex binary not found on PATH; cannot prove the generated config loads." }
+    }
+
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $codexCmd.Source
+    $psi.Arguments = 'debug models'
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.CreateNoWindow = $true
+    $psi.EnvironmentVariables['CODEX_HOME'] = $CodexHome
+    try {
+        $proc = [System.Diagnostics.Process]::Start($psi)
+        $stdout = $proc.StandardOutput.ReadToEnd()
+        $stderr = $proc.StandardError.ReadToEnd()
+        if (-not $proc.WaitForExit($TimeoutMs)) {
+            try { $proc.Kill() } catch {}
+            return [ordered]@{ Validated = $false; Reason = "codex config validation timed out after ${TimeoutMs}ms." }
+        }
+        if ($proc.ExitCode -ne 0) {
+            $detail = ($stderr + ' ' + $stdout).Trim()
+            if ($detail.Length -gt 400) { $detail = $detail.Substring(0, 400) }
+            return [ordered]@{ Validated = $false; Reason = "codex rejected the generated configuration: " + $detail }
+        }
+        return [ordered]@{ Validated = $true; Reason = 'codex loaded the generated configuration.' }
+    }
+    catch {
+        return [ordered]@{ Validated = $false; Reason = "codex config validation failed: " + $_.Exception.Message }
+    }
+}
+
+function Get-DevRouterIntegrationBackupPath {
+    param([string]$CodexHome)
+    $paths = Get-DevRouterPaths -CodexHome $CodexHome
+    return (Join-Path $paths.KitDir 'dev-router-integration-backup.json')
+}
+
+function Register-DevRouterCodexIntegration {
+    <#
+    .SYNOPSIS
+    Transactionally activates the Dev Router as Codex's EFFECTIVE provider.
+
+    Declaring `[model_providers.dev-router]` is not enough: the original Desktop
+    bug was `model = "gpt-adaptive"` with `model_provider = "openai"`, so the
+    local alias was sent to the ChatGPT backend and rejected with "The
+    'gpt-adaptive' model is not supported when using Codex with a ChatGPT
+    account." This function also SELECTS the provider, guarantees the proxy is
+    alive, proves the generated config loads in the real Codex, and restores the
+    previous configuration on any failure.
+    #>
+    param(
+        [string]$CodexHome,
+        [int]$Port = 4040,
+        [string]$ManualBaseModel = $null,
+        [string]$ManualBaseEffort = $null,
+        [switch]$SkipProxyStart,
+        [switch]$SkipCodexValidation
+    )
+
+    $paths = Get-DevRouterPaths -CodexHome $CodexHome
+    if (-not (Test-Path -LiteralPath $paths.KitDir -PathType Container)) {
+        [void][IO.Directory]::CreateDirectory($paths.KitDir)
+    }
+
+    # --- Snapshot for rollback BEFORE any mutation -------------------------
+    $previous = Get-CodexTopLevelConfig -CodexHome $CodexHome
+    $hadProviderBlock = Test-DevRouterProviderBlockDeclared -CodexHome $CodexHome
+    $previousState = Get-DevRouterRawState -CodexHome $CodexHome
+
+    $backupPath = Get-DevRouterIntegrationBackupPath -CodexHome $CodexHome
+    $proxyWasRunning = (Get-DevRouterProxyStatus -CodexHome $CodexHome -Port $Port -TimeoutMs 400).Running
+
+    # Resolve the concrete base the proxy will fall back to. GPT-Adaptive is an
+    # alias, never a base: prefer an explicit override, then an existing manual
+    # base, then a concrete top-level model.
+    $baseModel = $null
+    $baseEffort = $null
+    $effectiveModel = $previous.Model
+    if (-not [string]::IsNullOrWhiteSpace($ManualBaseModel)) {
+        $baseModel = $ManualBaseModel.Trim()
+    }
+    elseif (-not [string]::IsNullOrWhiteSpace($previousState.manual_base_model)) {
+        $baseModel = $previousState.manual_base_model
+    }
+    elseif (-not [string]::IsNullOrWhiteSpace($previous.Model) -and $previous.Model -ne 'gpt-adaptive') {
+        $baseModel = $previous.Model
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ManualBaseEffort)) {
+        $baseEffort = $ManualBaseEffort.Trim()
+    }
+    elseif (-not [string]::IsNullOrWhiteSpace($previousState.manual_base_effort)) {
+        $baseEffort = $previousState.manual_base_effort
+    }
+    elseif (-not [string]::IsNullOrWhiteSpace($previous.ModelEffort)) {
+        $baseEffort = $previous.ModelEffort
+    }
+
+    $resolvedBase = $null
+    if (-not [string]::IsNullOrWhiteSpace($baseModel)) {
+        $resolvedBase = Resolve-DevRouterModel -ModelNameOrId $baseModel -IncludeDisallowed
+    }
+
+    if ($null -eq $resolvedBase) {
+        # Fail closed BEFORE touching config.toml. Never silently invent Sol.
+        throw ("Dev Router cannot activate: no concrete manual base model is available. " +
+            "GPT-Adaptive is a local alias and is never used as a base. " +
+            "Select a concrete model in the Desktop, or pass -ManualBaseModel (e.g. gpt-5.6-sol).")
+    }
+
+    $result = [ordered]@{
+        CatalogPath        = $null
+        ConfigToml         = $paths.ConfigToml
+        Port               = $Port
+        Provider           = 'dev-router'
+        ProviderSelected   = $false
+        ProxyRunning       = $false
+        ProxyHealth        = $false
+        Upstream           = $null
+        UpstreamSource     = $null
+        ManualBaseModel    = $resolvedBase.Name
+        ManualBaseEffort   = $baseEffort
+        RollbackPerformed  = $false
+    }
+
+    $mutationStarted = $false
+    try {
+        # 1. Build + validate the catalog (fails closed internally).
+        $catalogPath = Export-DevRouterModelCatalog -CodexHome $CodexHome
+        $result.CatalogPath = $catalogPath
+
+        # 2. Persist the rollback snapshot.
+        $backup = [ordered]@{
+            schemaVersion            = 1
+            createdAt                = [datetime]::UtcNow.ToString('o')
+            model                    = $previous.Model
+            model_provider           = $previous.ModelProvider
+            model_catalog_json       = $previous.ModelCatalogJson
+            model_reasoning_effort   = $previous.ModelEffort
+            hadDevRouterProviderBlock = $hadProviderBlock
+            manual_base_model        = $previousState.manual_base_model
+            manual_base_effort       = $previousState.manual_base_effort
+        }
+        [IO.File]::WriteAllText($backupPath, (($backup | ConvertTo-Json -Depth 6) + [Environment]::NewLine), $script:Utf8NoBom)
+
+        # 3. Deploy proxy + canonical policy files.
+        $repoDir = Split-Path -Parent $PSCommandPath
+        foreach ($file in @('dev-router-proxy.mjs', 'dev-router-policy.json', 'dev-router-policy.mjs', 'dev-router-policy-cli.mjs')) {
+            $src = Join-Path $repoDir $file
+            if (Test-Path -LiteralPath $src -PathType Leaf) {
+                Copy-Item -LiteralPath $src -Destination (Join-Path $paths.KitDir $file) -Force
+            }
+        }
+        if (-not (Test-Path -LiteralPath $paths.ProxyScript -PathType Leaf)) {
+            throw "Dev Router proxy script is not deployed at '$($paths.ProxyScript)'."
+        }
+
+        # 4/5. The proxy MUST be alive before the provider is selected, otherwise
+        # the config would point at a dead port.
+        $mutationStarted = $true
+        if (-not $SkipProxyStart) {
+            $proxyStatus = Start-DevRouterProxy -CodexHome $CodexHome -Port $Port
+            if (-not $proxyStatus.Running) {
+                throw "Dev Router proxy did not become healthy on port $Port; refusing to activate the provider."
+            }
+            $result.ProxyRunning = $true
+            $result.ProxyHealth = $true
+        }
+
+        # 6. Select the provider and register the catalog.
+        # Suppress the helper's return value: anything written to the output
+        # stream here would be prepended to this function's own result.
+        $null = Set-DevRouterManualBase -Model $resolvedBase.Name -Effort $baseEffort -CodexHome $CodexHome
+        Set-DevRouterTopLevelValues -CodexHome $CodexHome -Values @{
+            model_provider    = 'dev-router'
+            model_catalog_json = ($catalogPath -replace '\\', '/')
+        }
+        Set-DevRouterProviderBlock -CodexHome $CodexHome -Port $Port
+
+        $integration = Get-DevRouterUpstream -CodexHome $CodexHome -EnvOverride $env:DEV_ROUTER_UPSTREAM
+        $result.Upstream = $integration.Upstream
+        $result.UpstreamSource = $integration.Source
+
+        # 7. Prove the generated config actually loads in the real Codex.
+        if (-not $SkipCodexValidation) {
+            $validation = Test-DevRouterCodexConfigLoadable -CodexHome $CodexHome
+            if (-not $validation.Validated) {
+                throw ("Dev Router activation aborted: " + $validation.Reason)
+            }
+        }
+
+        # 8. Mark active.
+        $result.ProviderSelected = Test-DevRouterProviderSelected -CodexHome $CodexHome
+        if (-not $result.ProviderSelected) {
+            throw "Dev Router activation aborted: model_provider was not applied."
+        }
+        return $result
+    }
+    catch {
+        $failure = $_
+        if ($mutationStarted) {
+            # Automatic rollback: restore the exact previous config and stop the
+            # proxy we may have started, so Codex is never left unusable.
+            try {
+                $restoreValues = @{
+                    model_catalog_json = $previous.ModelCatalogJson
+                    model_provider     = $previous.ModelProvider
+                }
+                if ([string]::IsNullOrWhiteSpace($previous.ModelCatalogJson)) {
+                    $restoreValues['model_catalog_json'] = $null
+                }
+                if ([string]::IsNullOrWhiteSpace($previous.ModelProvider)) {
+                    $restoreValues['model_provider'] = $null
+                }
+                Set-DevRouterTopLevelValues -CodexHome $CodexHome -Values $restoreValues
+                if (-not $hadProviderBlock) {
+                    [void](Remove-DevRouterProviderBlock -CodexHome $CodexHome)
+                }
+                else {
+                    Set-DevRouterProviderBlock -CodexHome $CodexHome -Port $Port
+                }
+                if (-not $proxyWasRunning) {
+                    [void](Stop-DevRouterProxy -CodexHome $CodexHome -Port $Port)
+                }
+            }
+            catch {}
+            $result.RollbackPerformed = $true
+        }
+        throw $failure
     }
 }
 
 function Unregister-DevRouterCodexIntegration {
+    <#
+    .SYNOPSIS
+    Reverses Register-DevRouterCodexIntegration exactly.
+
+    Restores the previous top-level model_provider / model_catalog_json /
+    model_reasoning_effort from the managed backup, removes only Dev Router
+    artifacts, and stops only the proxy this kit owns (pid file). Custom
+    providers, profiles and unrelated MCP definitions are preserved.
+    #>
     param([string]$CodexHome)
 
     $paths = Get-DevRouterPaths -CodexHome $CodexHome
+    $backupPath = Get-DevRouterIntegrationBackupPath -CodexHome $CodexHome
+
+    # Stop only OUR proxy: Stop-DevRouterProxy uses the kit pid file.
     [void](Stop-DevRouterProxy -CodexHome $CodexHome)
 
-    if (Test-Path -LiteralPath $paths.ConfigToml -PathType Leaf) {
-        $lines = Get-Content -LiteralPath $paths.ConfigToml -Encoding UTF8
-        $newLines = New-Object System.Collections.Generic.List[string]
-        $inDevRouterProvider = $false
+    $restored = $false
+    if (Test-Path -LiteralPath $backupPath -PathType Leaf) {
+        try {
+            $backup = (Get-Content -LiteralPath $backupPath -Raw -Encoding UTF8) | ConvertFrom-Json
+            $values = @{}
+            $values['model_provider'] = [string]$backup.model_provider
+            $values['model_catalog_json'] = [string]$backup.model_catalog_json
+            $values['model_reasoning_effort'] = [string]$backup.model_reasoning_effort
+            foreach ($key in @('model_provider', 'model_catalog_json', 'model_reasoning_effort')) {
+                if ([string]::IsNullOrWhiteSpace($values[$key])) { $values[$key] = $null }
+            }
+            Set-DevRouterTopLevelValues -CodexHome $CodexHome -Values $values
 
-        foreach ($line in $lines) {
-            $trimmed = $line.Trim()
-            if ($trimmed -eq '[model_providers.dev-router]') {
-                $inDevRouterProvider = $true
-                continue
-            }
-            if ($inDevRouterProvider) {
-                if ($trimmed.StartsWith('[')) {
-                    $inDevRouterProvider = $false
+            # Restore the manual base only if Register seeded it (i.e. it was absent before).
+            if ([string]::IsNullOrWhiteSpace($backup.manual_base_model)) {
+                $raw = Get-DevRouterRawState -CodexHome $CodexHome
+                if (-not [string]::IsNullOrWhiteSpace($raw.manual_base_model)) {
+                    $restore = Get-DevRouterRawState -CodexHome $CodexHome
+                    $stateObj = [ordered]@{
+                        version            = 1
+                        product            = 'codex-workflows-kit'
+                        component          = 'dev-router'
+                        mode               = $restore.mode
+                        target             = $restore.target
+                        manual_base_model  = $backup.manual_base_model
+                        manual_base_effort = $backup.manual_base_effort
+                        updatedAt          = [datetime]::UtcNow.ToString('o')
+                    }
+                    $tempFile = Join-Path $paths.KitDir ("dev-router-state-{0}.tmp" -f [Guid]::NewGuid().ToString('N'))
+                    [IO.File]::WriteAllText($tempFile, (($stateObj | ConvertTo-Json -Depth 4) + [Environment]::NewLine), $script:Utf8NoBom)
+                    Move-Item -LiteralPath $tempFile -Destination $paths.StateFile -Force
                 }
-                else {
-                    continue
-                }
             }
-            if ($trimmed -match '^model_catalog_json\s*=\s*".*codex-workflows-kit[/\\]model-catalog\.json"') {
-                continue
-            }
-            $newLines.Add($line)
+            $restored = $true
         }
+        catch {
+            # Fall through to the structural cleanup below; never leave the alias
+            # as the active provider.
+        }
+    }
 
-        $tomlContent = ($newLines -join [Environment]::NewLine) + [Environment]::NewLine
-        $tempConfig = Join-Path $paths.CodexHome ("config-{0}.tmp" -f [Guid]::NewGuid().ToString('N'))
-        [IO.File]::WriteAllText($tempConfig, $tomlContent, $script:Utf8NoBom)
-        Move-Item -LiteralPath $tempConfig -Destination $paths.ConfigToml -Force
+    # Remove the Dev Router provider block only.
+    [void](Remove-DevRouterProviderBlock -CodexHome $CodexHome)
+
+    # Safety net: if the catalog line still points at our artifact and no backup
+    # was available, clear it so Codex does not keep loading a removed file.
+    if (-not $restored) {
+        $top = Get-CodexTopLevelConfig -CodexHome $CodexHome
+        if (-not [string]::IsNullOrWhiteSpace($top.ModelCatalogJson) -and $top.ModelCatalogJson -match 'codex-workflows-kit[/\\]model-catalog\.json') {
+            Set-DevRouterTopLevelValues -CodexHome $CodexHome -Values @{ model_catalog_json = $null }
+        }
     }
 
     if (Test-Path -LiteralPath $paths.CatalogFile -PathType Leaf) {
         Remove-Item -LiteralPath $paths.CatalogFile -Force -ErrorAction SilentlyContinue
     }
+    if (Test-Path -LiteralPath $backupPath -PathType Leaf) {
+        Remove-Item -LiteralPath $backupPath -Force -ErrorAction SilentlyContinue
+    }
 
     return $true
+}
+
+function Get-DevRouterIntegrationReadiness {
+    <#
+    .SYNOPSIS
+    Machine-checkable readiness of the Desktop integration.
+
+    Status ladder (never reports ready without proof):
+      inactive           - no catalog and no provider selection
+      catalog_only       - catalog registered but the provider is NOT selected
+                           (the exact original Desktop bug: GPT-Adaptive visible
+                           in the dropdown but requests sent to the default
+                           provider)
+      provider_registered- provider selected but the proxy is not healthy
+      degraded           - provider + proxy ok, but no concrete manual base
+      ready              - catalog valid + provider SELECTED + proxy healthy +
+                           concrete manual base available
+    #>
+    param([string]$CodexHome)
+
+    $paths = Get-DevRouterPaths -CodexHome $CodexHome
+    $top = Get-CodexTopLevelConfig -CodexHome $CodexHome
+    $raw = Get-DevRouterRawState -CodexHome $CodexHome
+
+    $catalogRegistered = -not [string]::IsNullOrWhiteSpace($top.ModelCatalogJson)
+    $catalogValid = $false
+    $catalogPresent = $false
+    if (Test-Path -LiteralPath $paths.CatalogFile -PathType Leaf) {
+        $catalogPresent = $true
+        $shape = Test-DevRouterModelCatalogShape -Path $paths.CatalogFile
+        $catalogValid = [bool]$shape.valid
+    }
+    $providerRegistered = Test-DevRouterProviderBlockDeclared -CodexHome $CodexHome
+    $providerSelected = Test-DevRouterProviderSelected -CodexHome $CodexHome
+
+    $configuredPort = 4040
+    try {
+        $toml = Get-Content -LiteralPath $paths.ConfigToml -Raw -Encoding UTF8
+        $pMatch = [regex]::Match($toml, '(?i)base_url\s*=\s*"http://127\.0\.0\.1:(\d+)/v1"')
+        if ($pMatch.Success) { $configuredPort = [int]$pMatch.Groups[1].Value }
+    }
+    catch {}
+
+    $proxyStatus = Get-DevRouterProxyStatus -CodexHome $CodexHome -Port $configuredPort -TimeoutMs 600
+    $proxyRunning = [bool]$proxyStatus.Running
+    $proxyHealth = $false
+    $upstreamHost = $null
+    $upstreamPath = $null
+    $upstreamSource = $null
+    if ($proxyRunning) {
+        try {
+            $req = [System.Net.HttpWebRequest]::Create("http://127.0.0.1:$configuredPort/health")
+            $req.Timeout = 600
+            $req.ReadWriteTimeout = 600
+            $res = $req.GetResponse()
+            $reader = New-Object System.IO.StreamReader($res.GetResponseStream())
+            $body = $reader.ReadToEnd()
+            $reader.Close(); $res.Close()
+            $health = $body | ConvertFrom-Json
+            $proxyHealth = ([string]$health.status -eq 'ok')
+            $upstreamHost = [string]$health.upstream_host
+            $upstreamPath = [string]$health.upstream_path
+            $upstreamSource = [string]$health.upstream_source
+        }
+        catch {}
+    }
+
+    $manualBaseAvailable = -not [string]::IsNullOrWhiteSpace($raw.manual_base_model)
+    $resolvedBase = $null
+    if ($manualBaseAvailable) {
+        $resolvedBase = Resolve-DevRouterModel -ModelNameOrId $raw.manual_base_model -IncludeDisallowed
+        if ($null -eq $resolvedBase) { $manualBaseAvailable = $false }
+    }
+
+    $integrationStatus = 'inactive'
+    if ($providerSelected -and $proxyHealth -and $catalogValid -and $manualBaseAvailable) {
+        $integrationStatus = 'ready'
+    }
+    elseif ($providerSelected -and $proxyRunning) {
+        $integrationStatus = 'degraded'
+    }
+    elseif ($providerSelected) {
+        $integrationStatus = 'provider_registered'
+    }
+    elseif ($providerRegistered -or $catalogRegistered) {
+        $integrationStatus = 'catalog_only'
+    }
+
+    $notes = switch ($integrationStatus) {
+        'ready' { "Dev Router is the effective Codex provider; the proxy is healthy on 127.0.0.1:$configuredPort and forwards to $upstreamHost$upstreamPath (source=$upstreamSource)." }
+        'degraded' { 'Dev Router is selected as provider but the integration is incomplete (proxy health or concrete manual base missing).' }
+        'provider_registered' { 'Dev Router provider is selected but the proxy is not responding; requests would fail.' }
+        'catalog_only' { 'GPT-Adaptive is visible in the model catalog but the Dev Router provider is NOT selected, so requests go to the default provider and the alias is rejected by the ChatGPT backend.' }
+        default { 'Dev Router integration is not active.' }
+    }
+
+    return [ordered]@{
+        integration_status   = $integrationStatus
+        integration_notes    = $notes
+        catalog_registered   = $catalogRegistered
+        catalog_present      = $catalogPresent
+        catalog_valid        = $catalogValid
+        provider_registered  = $providerRegistered
+        provider_selected    = $providerSelected
+        proxy_running        = $proxyRunning
+        proxy_health         = $proxyHealth
+        proxy_port           = $configuredPort
+        manual_base_available = $manualBaseAvailable
+        manual_base_model    = $raw.manual_base_model
+        upstream_host        = $upstreamHost
+        upstream_path        = $upstreamPath
+        upstream_source      = $upstreamSource
+        model                = $top.Model
+    }
 }
 
 function Get-DevRouterStatus {
@@ -1443,35 +2063,50 @@ function Get-DevRouterStatus {
         catch {}
     }
 
-    # Integration Status check
+    # Integration Status check. Readiness (not just "proxy + catalog") is
+    # required: declaring a provider is not the same as selecting it, and the
+    # original Desktop bug was exactly catalog-without-provider-selection.
+    $readiness = Get-DevRouterIntegrationReadiness -CodexHome $CodexHome
+    $configuredPort = [int]$readiness.proxy_port
     $proxyStatus = Get-DevRouterProxyStatus -CodexHome $CodexHome -Port $configuredPort -TimeoutMs 500
-    $catalogRegistered = Test-DevRouterCatalogRegistered -CodexHome $CodexHome
+    $catalogRegistered = [bool]$readiness.catalog_registered
 
-    $integrationStatus = 'unintegrated'
-    $integrationNotes = 'Codex Desktop GUI does not expose a native dynamic model-switching IPC; adapter is unintegrated for GUI chats without binary patching. CLI harness (codex exec) and manual prompt guidance are fully supported.'
-
-    if ($proxyStatus.Running -and $catalogRegistered) {
-        $integrationStatus = 'integrated'
-        $integrationNotes = "Codex Desktop App integration active via composite model catalog and local responses proxy (http://127.0.0.1:$($proxyStatus.Port)). GPT-Adaptive available in model dropdown."
-    }
+    $integrationStatus = [string]$readiness.integration_status
+    $integrationNotes = [string]$readiness.integration_notes
 
     $effectiveMode = switch ($state.mode) {
         'off'    { 'off' }
         'shadow' { 'shadow' }
         'on'     {
-            if ($integrationStatus -eq 'integrated') {
+            if ($integrationStatus -eq 'ready') {
                 'on'
             }
             else {
-                # In GUI, since integration is unintegrated, effective application is bypassed
+                # The route cannot be applied until the provider is selected and
+                # the proxy is healthy; report bypass instead of a false "on".
                 'bypass'
             }
         }
         default  { 'off' }
     }
 
-    $baselineDisplayModel = if ($null -ne $baseline.Model) { $baseline.Model } else { 'Sol' }
-    $baselineDisplayEffort = if ($null -ne $baseline.Effort) { $baseline.Effort } else { 'medium' }
+    # Display the CONCRETE model that will actually be used. Showing the alias
+    # here is what made the original catalog-only bug look healthy.
+    $baselineDisplayModel = if ($readiness.manual_base_available) {
+        [string]$readiness.manual_base_model
+    }
+    elseif (-not [string]::IsNullOrWhiteSpace($baseline.Model) -and $baseline.Model -ne 'gpt-adaptive') {
+        [string]$baseline.Model
+    }
+    else {
+        '(none - set a manual base)'
+    }
+    $baselineDisplayEffort = if (-not [string]::IsNullOrWhiteSpace($baseline.Effort)) {
+        [string]$baseline.Effort
+    }
+    else {
+        'medium'
+    }
 
     $effectiveModel = if ($null -ne $activeLock) {
         [string]$activeLock.locked_model
@@ -1500,6 +2135,7 @@ function Get-DevRouterStatus {
         pending_change      = $false
         route_lock_scope    = $lockScope
         active_lock         = $activeLock
+        readiness           = $readiness
     }
 }
 
@@ -2104,6 +2740,12 @@ Export-ModuleMember -Function `
     Test-DevRouterCatalogRegistered, `
     Register-DevRouterCodexIntegration, `
     Unregister-DevRouterCodexIntegration, `
+    Get-DevRouterIntegrationReadiness, `
+    Test-DevRouterProviderSelected, `
+    Test-DevRouterProviderBlockDeclared, `
+    Get-DevRouterUpstream, `
+    Get-CodexTopLevelConfig, `
+    Set-DevRouterManualBase, `
     Get-DevRouterProxyStatus, `
     Start-DevRouterProxy, `
     Stop-DevRouterProxy

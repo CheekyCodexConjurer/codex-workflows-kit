@@ -128,26 +128,36 @@ Routing must not drift inconsistently mid-workflow or thrash between sub-steps.
 
 ## 7. Native Desktop App Integration (`GPT-Adaptive`) & Loopback Proxy
 
-The Dev Router integrates into the Codex Desktop App without binary patching through Codex's official custom model provider configuration and model catalog overrides.
+The Dev Router integrates into the Codex Desktop App without binary patching through Codex's official custom model provider configuration: declaring `[model_providers.dev-router]` AND selecting `model_provider = "dev-router"`, plus the model catalog override.
 
 ```
 Codex Desktop GUI
   │ (User selects "GPT-Adaptive")
   ▼
 Codex App Server (JSON-RPC)
-  │ (Reads model_catalog_json pointing to dev-router provider)
+  │ (needs model_provider = "dev-router" AND model_catalog_json;
+  │  the catalog alone does NOT reach the proxy)
   ▼
 Local Loopback Proxy (127.0.0.1:4040)
   │ (Intercepts POST /v1/responses)
-  │── mode = 'off'    ──> Rewrites to user baseline model & effort
+  │── mode = 'off'    ──> Forwards a concrete model unchanged
   │── mode = 'shadow' ──> Queries Jev, logs recommendation, routes to baseline
   │── mode = 'on'     ──> Queries Jev choice, rewrites model & effort
   ▼
-Upstream API (api.openai.com/v1/responses)
+Upstream (auth-derived: chatgpt.com/backend-api/codex or api.openai.com/v1/responses)
   │ (Streams SSE chunks back to proxy)
   ▼
 Codex Desktop GUI (Real-time token streaming)
 ```
+
+Selecting the provider is mandatory: `model_catalog_json` only makes
+`GPT-Adaptive` visible in the selector. If the top-level `model_provider` still
+points at the default provider (a catalog-only configuration, `catalog_only` in
+the readiness ladder below), Codex sends the alias to the ChatGPT backend and
+fails with `The 'gpt-adaptive' model is not supported when using Codex with a
+ChatGPT account.` `Register-DevRouterCodexIntegration` writes
+`model_provider = "dev-router"` together with the catalog and never rewrites the
+user's `model`.
 
 ### Composite Model Catalog
 
@@ -192,6 +202,7 @@ be left unable to load its configuration.
 
 The composite catalog is configured in `$CODEX_HOME/config.toml`:
 ```toml
+model_provider = "dev-router"
 model_catalog_json = "C:\\Users\\<user>\\.codex\\codex-workflows-kit\\model-catalog.json"
 
 [model_providers.dev-router]
@@ -201,17 +212,79 @@ base_url = "http://127.0.0.1:4040/v1"
 requires_openai_auth = true
 ```
 
+### Provider Selection, Manual Base and Readiness Ladder
+
+Declaring `[model_providers.dev-router]` does not route anything by itself.
+`Register-DevRouterCodexIntegration` is transactional and also SELECTS the
+provider: it writes `model_provider = "dev-router"` alongside the catalog, and
+never rewrites the user's `model`.
+
+Registration sequence (fail-closed):
+1. Snapshot the previous top-level `model`, `model_provider`,
+   `model_catalog_json`, `model_reasoning_effort` and the previous
+   `manual_base_model` / `manual_base_effort` to
+   `$CODEX_HOME/codex-workflows-kit/dev-router-integration-backup.json`.
+2. Build and validate the composite catalog (`Test-DevRouterModelCatalogShape`).
+3. Deploy the proxy and the canonical policy files to the kit directory.
+4. Start the proxy and require a healthy `/health` BEFORE writing the provider,
+   so a dead port is never registered.
+5. Seed a concrete `manual_base_model`: an explicit `-ManualBaseModel`, else an
+   existing manual base, else a concrete top-level `model`.
+6. Write `model_provider = "dev-router"`, `model_catalog_json` and the provider
+   block, and validate the generated config with the real `codex debug models`.
+7. Roll the whole change back on any failure.
+
+`manual_base_model` / `manual_base_effort` separate the concrete base the proxy
+falls back to from the local alias `gpt-adaptive`. The alias is never a base:
+without a concrete `manual_base_model` (or a concrete top-level `model`),
+registration fails closed with a clear message instead of inventing `Sol`.
+
+`Unregister-DevRouterCodexIntegration` restores the exact previous top-level
+values from the managed backup, removes only the Dev Router provider block and
+its catalog, and stops only the proxy this kit owns (pid file). Custom
+providers, profiles and unrelated definitions are preserved.
+
+#### Readiness Ladder
+
+`Get-DevRouterIntegrationReadiness` (also embedded in `Get-DevRouterStatus`
+under `readiness`) reports a machine-checkable ladder that never claims `ready`
+without proof:
+
+| Status | Meaning |
+| :--- | :--- |
+| `inactive` | No catalog and no provider selection. |
+| `catalog_only` | Catalog registered but the provider is NOT selected — the exact original Desktop bug: `GPT-Adaptive` is visible in the dropdown but every request goes to the default provider. |
+| `provider_registered` | Provider selected but the proxy is not responding; requests would fail. |
+| `degraded` | Provider selected and proxy running, but proxy health or a concrete manual base is missing. |
+| `ready` | Catalog valid + provider actually SELECTED + proxy healthy + concrete manual base available. |
+
+Status keys:
+
+| Key | Meaning |
+| :--- | :--- |
+| `integration_status` | Ladder value above. |
+| `provider_selected` | Top-level `model_provider` is `dev-router`. |
+| `catalog_valid` | `model-catalog.json` passes structural validation. |
+| `proxy_health` | `/health` answered `status = ok`. |
+| `manual_base_available` | A resolvable concrete manual base exists. |
+| `upstream_host` / `upstream_path` | Effective upstream after auth-based derivation. |
+| `upstream_source` | Why that upstream was chosen (`env:DEV_ROUTER_UPSTREAM`, `config.chatgpt_base_url`, `auth-method:chatgpt` or `default:public-api`). |
+
+When the ladder is not `ready`, `effective_mode` reports `bypass` instead of a
+false `on`.
+
 ### Loopback Proxy Service (`scripts/dev-router-proxy.mjs`)
 
-The proxy is a dependency-free Node.js service running locally on `127.0.0.1:4040`:
+The proxy is a dependency-free Node.js service running locally on `127.0.0.1:4040`. It is a managed background process: `Register-DevRouterCodexIntegration` starts it and fails closed (full rollback) unless `/health` is healthy BEFORE the provider is selected, so a dead port is never registered; operators start and stop it explicitly with `scripts/switch-dev-router.ps1 -StartProxy` / `-StopProxy`. It detaches from the registering shell (the Desktop outlives the terminal) and logs to `dev-router-proxy.log` / `dev-router-proxy.err.log` in the kit directory.
+
 - **`GET /health`**: Health status check returning `{ "status": "ok", "service": "dev-router-proxy" }`.
 - **`GET /v1/models`**: Returns the active model catalog for Codex App Server.
 - **`POST /v1/responses`**: Receives requests from Codex Desktop with the user's authentic ChatGPT session bearer token:
   - If `body.model` is `gpt-adaptive`: sanitizes objective, checks Dev Router state, resolves concrete model and reasoning effort via Jev choice or baseline, updates `body.model` and `body.reasoning.effort`.
-  - With `state.target = effort_only` the proxy ALSO routes a manually selected concrete model (Sol/Astra/Luna): only the reasoning effort changes, the model never does. `gpt-adaptive` is not required to activate effort routing.
+  - Concrete models pass through unchanged: with `mode = off` a manually selected concrete model keeps its model and effort, and with `state.target = effort_only` the proxy routes it by effort only — the model never changes. `gpt-adaptive` is not required to activate effort routing.
   - **Sticky routing**: the decision is locked per boundary (`conversation_id`, response-chain `previous_response_id`, or `session_id`) in the same `dev-router-locks.json` the PowerShell core uses. Tool continuations inside the same turn reuse the locked route and never re-query Jev; a new boundary allows a new decision. Without a reliable boundary the proxy preserves the active route, and fails closed (local HTTP 400) if there is none.
   - **Alias guard**: `gpt-adaptive` is a local alias and can NEVER reach the upstream. If no concrete base model is configured (`manual_base_model` in the state, or a concrete top-level `model` in `config.toml`), the proxy answers `400 dev_router_missing_base` locally instead of inventing `Sol`.
-  - Upstream request is forwarded transparently with original headers. The upstream path is derived from the base URL: a base with a path keeps it and gets `/responses` appended, while a bare host gets `/v1/responses`. ChatGPT auth uses `DEV_ROUTER_UPSTREAM=https://chatgpt.com/backend-api/codex`; API-key auth keeps the default `https://api.openai.com` (`/v1/responses`). Override the suffix entirely with `DEV_ROUTER_UPSTREAM_PATH`.
+  - Upstream request is forwarded transparently with original headers. The upstream base is derived from the Codex configuration instead of being hardcoded: `DEV_ROUTER_UPSTREAM` (explicit override), then the official `chatgpt_base_url`, then `preferred_auth_method = "chatgpt"` → `https://chatgpt.com/backend-api/codex`, otherwise the public `https://api.openai.com`. A base that already carries a path keeps it and only gets `/responses` appended (ChatGPT auth therefore uses `/backend-api/codex/responses`, while the public API keeps `/v1/responses`); `DEV_ROUTER_UPSTREAM_PATH` overrides the suffix entirely. `/health` reports `upstream_host`, `upstream_path`, `upstream_source`, `model_provider` and `preferred_auth_method` (never a credential).
   - Response chunks are streamed back to Codex Desktop in real time.
   - Abort handling attaches to `res.on('close')` guarded by `!res.writableEnded` to prevent premature client socket resets.
 
@@ -233,20 +306,44 @@ pwsh -NoProfile -File scripts/switch-dev-router.ps1 -Status
 
 Output:
 ```
-Dev Router Status
-=================
-Configured Mode:    on
-Effective Mode:     on
-Target:             effort_only
-Integration Status: integrated
-Proxy Status:       running (port 4040)
-Baseline Model:     gpt-5.6-luna
-Baseline Effort:    medium
-Effective Model:    gpt-5.6-luna
-Effective Effort:   high
-Route Lock Scope:   turn
-Catalog Override:   configured
+=== Dev Router Status ===
+Configured Mode:     on
+Effective Mode:      on
+Target:              effort_only
+Integration Status:  ready
+Baseline Model:      gpt-5.6-luna
+Baseline Effort:     medium
+Effective Model:     gpt-5.6-luna
+Effective Effort:    high
+Pending Change:      False
+Route Lock Scope:    turn
+Scope:               parent orchestrator in alignment and workflow
+
+Notes: Dev Router is the effective Codex provider; the proxy is healthy on 127.0.0.1:4040 and forwards to chatgpt.com/backend-api/codex/responses (source=auth-method:chatgpt).
 ```
+
+`Get-DevRouterStatus` also exposes the readiness fields under `readiness`:
+`integration_status`, `provider_selected`, `catalog_valid`, `proxy_health`,
+`manual_base_available`, `upstream_host`, `upstream_path` and
+`upstream_source` (see the readiness ladder above). It never reports
+`integration active` without that proof.
+
+### Manual Desktop Validation
+
+1. Start the proxy (registering the integration first when needed):
+   ```powershell
+   pwsh -NoProfile -File scripts/switch-dev-router.ps1 -StartProxy
+   ```
+2. Confirm the readiness ladder reaches `ready` (provider selected, proxy
+   healthy, concrete manual base available):
+   ```powershell
+   pwsh -NoProfile -File scripts/switch-dev-router.ps1 -Status
+   ```
+3. In the Codex Desktop, select `GPT-Adaptive` in "Selecionar modelo" and send:
+   `Responda somente DESKTOP_ADAPTIVE_OK.`
+4. Verify in `$CODEX_HOME/codex-workflows-kit/dev-router-proxy.log` a route line
+   with `incoming=gpt-adaptive` and a concrete `final=<concrete model>`,
+   followed by `upstream_status=200`.
 
 ---
 
@@ -270,6 +367,10 @@ pwsh -NoProfile -File scripts/switch-dev-router.ps1 -Mode on -Target effort_only
 
 # Inspect status
 pwsh -NoProfile -File scripts/switch-dev-router.ps1 -Status
+
+# Register / unregister the Desktop provider (transactional, with rollback)
+pwsh -NoProfile -File scripts/switch-dev-router.ps1 -RegisterIntegration
+pwsh -NoProfile -File scripts/switch-dev-router.ps1 -UnregisterIntegration
 
 # Control loopback proxy lifecycle explicitly
 pwsh -NoProfile -File scripts/switch-dev-router.ps1 -StartProxy
