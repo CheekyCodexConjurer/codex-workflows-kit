@@ -89,6 +89,8 @@ O comportamento global em qualquer repositório é fornecido pelo perfil `safe`,
 | `validate.ps1 -SkipInstalled` | valida apenas o checkout, sem exigir espelhos instalados |
 | `doctor.ps1 -Detailed` | inclui os caminhos registrados pelo estado instalado |
 
+Os gates Jev de subagentes ficam em `skills/workflows/scripts/subagent-gate.ps1`. O padrão é `on`; `CODEX_SUBAGENT_JEV_MODE=shadow` compara sem alterar a execução e `off` desliga as chamadas. As decisões e os campos aceitos estão em `skills/workflows/references/delegation.md` e `delivery-review.md`. O backend configurado e a revisão independente continuam obrigatórios.
+
 O instalador é idempotente. Ele registra hashes dos arquivos que gerencia,
 faz backup antes de sobrescrever e preserva arquivos fora do seu estado.
 

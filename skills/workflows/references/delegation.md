@@ -1,5 +1,15 @@
 # Subagent Delegation Policies
 
+## Jev delegation gate
+
+Before material work, the parent computes its current policy decision and calls `scripts/subagent-gate.ps1 -Gate delegation` with a compact JSON input. The script's `on` default applies Jev's closed `Choice` among `PARENT_SOLO`, `REUSE_SUBAGENT`, `DELEGATE_SINGLE`, and `DELEGATE_BATCH`; `off` makes no Jev call, and `shadow` reports the recommendation while preserving the current decision. `CODEX_SUBAGENT_JEV_MODE` or `-Mode` selects the mode. The existing backend remains authoritative and appears only in output telemetry, never in Jev's state. `standard` is accepted as an alias for `balanced`.
+
+The parent supplies `current_decision`, selected `backend`, mode, policy, bounded counts and flags. It marks `relevant_worker_available`, `worker_context_warm`, and `worker_route_matches` true only after checking the open worker ledger and route. Trivial work and balanced work without a clear delegation gain use the parent without Jev. Batch is available only with multiple genuinely independent fronts; reuse is available only for a related warm worker on the same route. No-write mode permission and backend capability checks remain mandatory outside this decision gate. A Jev timeout, invalid answer, or low confidence preserves the current policy decision; no provider or backend fallback occurs. Under aggressive, Jev may select parent solo for material work only when delegation cost is explicitly high.
+
+The implementation is `skills/workflows/scripts/subagent-gates.psm1` and its command entry is `skills/workflows/scripts/subagent-gate.ps1`. Invoke `.ps1` files through `scripts/invoke-safe-powershell.ps1` with `-File`, `-NoProfile`, and `-NonInteractive`. Pass only compact enum/boolean/count JSON. The command emits one compact JSON result containing `gate`, `policy`, `decision`, `reason_code`, `jev_called`, `latency_ms`, `worker_reused`, `backend`, `review_result`, `current_decision`, `jev_recommendation`, and `jev_calls_avoided`; it never logs prompts, code, diffs, credentials, or the full Jev response. `shadow` comparisons use `current_decision` and `jev_recommendation`.
+
+Delegation input fields: `policy`, `workflow_mode`, `backend`, `current_decision`, `task_type` (`general|read|implementation|debug|review|research`), `scope` (`local|multi_file|large`), `estimated_files`, `material`, `trivial`, `requires_edit`, `requires_tests`, `requires_architecture`, `independent_fronts`, `fronts_independent`, `context_load` (`low|medium|high`), `relevant_worker_available`, `worker_context_warm`, `worker_route_matches`, and `delegation_cost_high`. Omitted flags are false. A caller must not put user text, paths, source, or diffs into these fields. The backend field is checked for route consistency and emitted only in telemetry.
+
 Esta referência detalha as três políticas de delegação globais ortogonais (`balanced`, `aggressive` e `swarm`) e sua interação com os seletores de backend (`native` e `deepseek`) para tarefas e sessões do Codex.
 
 ---

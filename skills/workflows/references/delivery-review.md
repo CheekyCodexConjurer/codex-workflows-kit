@@ -1,5 +1,13 @@
 # Delivery Quality Review Gate
 
+## Jev worker-result review gate
+
+After the worker result is terminally consumed and deterministic checks run, `skills/workflows/scripts/subagent-gate.ps1 -Gate review` may choose `ACCEPT_OBVIOUS` or `GPT_REVIEW`. Failed tests, permission or scope problems, blockers, unresolved issues, errors, missing mandatory evidence, unexpected files, architectural or sensitive changes, and ambiguity force `GPT_REVIEW` without calling Jev. Only a small, clearly aligned, low-risk result can be considered for `ACCEPT_OBVIOUS`; low confidence, malformed answers, timeout, and transport errors return `GPT_REVIEW`. `off` and `shadow` preserve GPT review. The gate emits compact telemetry without source content.
+
+`ACCEPT_OBVIOUS` skips only an extra parent semantic reading of that worker result. The frozen-target, operational-proof, and independent integrated delivery review below remain mandatory; Jev never issues the final `APPROVED` verdict.
+
+Review input fields are `policy`, `backend`, `tests_passed`, `permissions_clear`, `no_blockers`, `no_unresolved`, `scope_clean`, `mandatory_evidence_present`, `no_errors`, `files_expected`, `small_change`, `clearly_aligned`, `low_risk`, `changed_files`, `architecture_change`, `ambiguous`, and `sensitive`. The parent must determine the checks from observed results before calling the gate. A missing positive check means `GPT_REVIEW` without Jev.
+
 Este documento define o módulo invariante de qualidade de entrega (*delivery review gate*), aplicável obrigatoriamente a todos os modos de escrita de código do Codex Workflows Kit.
 
 ---
