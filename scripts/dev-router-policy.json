@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "models": [
+    {
+      "name": "Luna",
+      "id": "gpt-5.6-luna",
+      "aliases": ["gpt-5.6-luna", "luna"],
+      "supported_efforts": ["none", "minimal", "low", "medium", "high", "xhigh"],
+      "profile": "mechanical_low_risk",
+      "description": "Mechanical, low-risk, explicit target, minimal ambiguity",
+      "automatic": true
+    },
+    {
+      "name": "Sol",
+      "id": "gpt-5.6-sol",
+      "aliases": ["gpt-5.6-sol", "sol"],
+      "supported_efforts": ["none", "minimal", "low", "medium", "high", "xhigh"],
+      "profile": "investigation_synthesis_implementation",
+      "description": "Investigation, synthesis, standard/complex implementation, debugging with context",
+      "automatic": true
+    },
+    {
+      "name": "Astra",
+      "id": "gpt-6-astra",
+      "aliases": ["gpt-6-astra", "astra"],
+      "supported_efforts": ["low", "medium", "high", "xhigh"],
+      "profile": "architecture_concurrency_security",
+      "description": "Difficult architecture, concurrency, security, high impact or exceptional ambiguity",
+      "automatic": true
+    },
+    {
+      "name": "Terra",
+      "id": "gpt-5.6-terra",
+      "aliases": ["gpt-5.6-terra", "terra"],
+      "supported_efforts": ["none", "low", "medium", "high", "xhigh", "max", "ultra"],
+      "profile": "balanced_coding",
+      "description": "Balanced agentic coding model (manual selection pass-through only)",
+      "automatic": false
+    }
+  ],
+  "disallowed_for_automatic_routing": ["gpt-5.6-terra", "terra"],
+  "all_valid_efforts": ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"],
+  "model_and_effort_option_efforts": ["minimal", "low", "medium", "high", "xhigh"],
+  "effort_descriptions": {
+    "none": "No reasoning effort: direct response without chain-of-thought.",
+    "minimal": "Minimal reasoning effort: trivial, simple tasks.",
+    "low": "Low reasoning effort: straightforward mechanical task, clear requirements.",
+    "medium": "Medium reasoning effort: standard implementation, balanced analysis.",
+    "high": "High reasoning effort: intricate algorithms, deep debugging, complex reasoning.",
+    "xhigh": "Extra high reasoning effort: critical architecture, subtle concurrency, high blast radius.",
+    "max": "Maximum reasoning effort: most demanding multi-step reasoning.",
+    "ultra": "Ultra reasoning effort: maximum computational budget."
+  }
+}

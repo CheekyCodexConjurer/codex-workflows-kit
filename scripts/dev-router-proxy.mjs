@@ -1,32 +1,37 @@
 #!/usr/bin/env node
-/**
- * scripts/dev-router-proxy.mjs
- * 
- * Local Dev Router loopback proxy for Codex Desktop App and CLI.
- * Intercepts `POST /v1/responses` requests with `model: "gpt-adaptive"` (or target models),
- * evaluates routing decisions via TypeSafe/Jev System One (choice primitive) or local state/policy,
- * transforms the model and reasoning effort, and transparently streams upstream SSE responses.
- * 
- * Zero external npm dependencies (pure Node.js built-ins).
- */
-
 import http from "node:http";
 import https from "node:https";
 import fs from "node:fs";
 import path from "node:path";
 import { URL } from "node:url";
+import {
+    canonicalModelName,
+    isEffortSupported,
+    buildOptionSet,
+    decideRoute,
+    deriveBoundaryKey,
+    isLockValid,
+    toUpstreamModelId
+} from "./dev-router-policy.mjs";
 
 const DEFAULT_PORT = 4040;
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_UPSTREAM = "https://api.openai.com";
+const DEFAULT_JEV_ENDPOINT = "https://api.typesafe.ai/v1/systemone";
+const DEFAULT_JEV_TIMEOUT_MS = 3000;
+const ADAPTIVE_MODEL = "gpt-adaptive";
+const MAX_CHAIN_ENTRIES = 500;
+const RESPONSE_ID_PATTERN = /"id"\s*:\s*"(resp[A-Za-z0-9_-]*)"/g;
 
-// Parse CLI arguments
 function parseArgs() {
     const args = process.argv.slice(2);
     const options = {
         port: Number(process.env.DEV_ROUTER_PORT) || DEFAULT_PORT,
         host: process.env.DEV_ROUTER_HOST || DEFAULT_HOST,
         upstream: process.env.DEV_ROUTER_UPSTREAM || DEFAULT_UPSTREAM,
+    upstreamPath: process.env.DEV_ROUTER_UPSTREAM_PATH || null,
+        jevEndpoint: process.env.DEV_ROUTER_JEV_ENDPOINT || DEFAULT_JEV_ENDPOINT,
+        jevTimeoutMs: Number(process.env.DEV_ROUTER_JEV_TIMEOUT_MS) || DEFAULT_JEV_TIMEOUT_MS,
         codexHome: process.env.CODEX_HOME || path.join(process.env.USERPROFILE || process.env.HOME || ".", ".codex"),
     };
 
@@ -39,6 +44,10 @@ function parseArgs() {
             options.upstream = args[++i];
         } else if (args[i] === "--codex-home" && args[i + 1]) {
             options.codexHome = args[++i];
+        } else if (args[i] === "--jev-endpoint" && args[i + 1]) {
+            options.jevEndpoint = args[++i];
+        } else if (args[i] === "--jev-timeout-ms" && args[i + 1]) {
+            options.jevTimeoutMs = Number(args[++i]);
         }
     }
 
@@ -52,24 +61,23 @@ const locksFile = path.join(kitDir, "dev-router-locks.json");
 const catalogFile = path.join(kitDir, "model-catalog.json");
 const configTomlFile = path.join(config.codexHome, "config.toml");
 
-// Model catalog metadata
-const ALLOWED_MODELS = {
-    Luna: { id: "gpt-5.6-luna", name: "Luna", efforts: ["none", "minimal", "low", "medium", "high", "xhigh"] },
-    Sol: { id: "gpt-5.6-sol", name: "Sol", efforts: ["none", "minimal", "low", "medium", "high", "xhigh"] },
-    Astra: { id: "gpt-6-astra", name: "Astra", efforts: ["low", "medium", "high", "xhigh"] }
-};
+const responseChainBoundaries = new Map();
+let lastAppliedRoute = null;
 
-const DISALLOWED_MODELS = ["gpt-5.6-terra", "terra"];
-
-// Windows PowerShell 5.1 writes UTF-8 WITH a byte order mark by default, and a
-// leading BOM makes JSON.parse throw "Unexpected token". Tolerate it on read so
-// a stale artifact written by an older installer can never break the proxy.
 function stripBom(text) {
     return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
 }
 
 function readJsonFile(filePath) {
     return JSON.parse(stripBom(fs.readFileSync(filePath, "utf8")));
+}
+
+function normalizeEffort(value) {
+    if (typeof value !== "string") {
+        return null;
+    }
+    const trimmed = value.trim().toLowerCase();
+    return trimmed || null;
 }
 
 function readDevRouterState() {
@@ -79,16 +87,18 @@ function readDevRouterState() {
             return {
                 mode: data.mode || "off",
                 target: data.target || "effort_only",
-                version: data.version || 1
+                version: data.version || 1,
+                manual_base_model: typeof data.manual_base_model === "string" ? data.manual_base_model.trim() : null,
+                manual_base_effort: normalizeEffort(data.manual_base_effort)
             };
         }
     } catch {
         // Fallback to default
     }
-    return { mode: "off", target: "effort_only", version: 1 };
+    return { mode: "off", target: "effort_only", version: 1, manual_base_model: null, manual_base_effort: null };
 }
 
-function readBaselineConfig() {
+function readTomlBaseline() {
     let baselineModel = null;
     let baselineEffort = null;
 
@@ -121,10 +131,61 @@ function readBaselineConfig() {
         // Ignore read errors
     }
 
+    return { model: baselineModel, effort: baselineEffort };
+}
+
+function resolveConcreteBaseline(state, toml) {
+    const manualModel = typeof state.manual_base_model === "string" && state.manual_base_model ? state.manual_base_model : null;
+    const configModel = toml.model && toml.model !== ADAPTIVE_MODEL ? toml.model : null;
+    const manualEffort = normalizeEffort(state.manual_base_effort);
+    const configEffort = normalizeEffort(toml.effort);
     return {
-        model: baselineModel || "gpt-5.6-sol",
-        effort: baselineEffort || "medium"
+        model: manualModel || configModel || null,
+        effort: manualEffort || configEffort || null
     };
+}
+
+function readLocks() {
+    try {
+        if (!fs.existsSync(locksFile)) {
+            return {};
+        }
+        const data = readJsonFile(locksFile);
+        return data && typeof data === "object" && !Array.isArray(data) ? data : {};
+    } catch {
+        return {};
+    }
+}
+
+function writeLock(boundaryKey, lockRecord) {
+    if (!boundaryKey) {
+        return false;
+    }
+    try {
+        fs.mkdirSync(kitDir, { recursive: true });
+        const locks = readLocks();
+        locks[boundaryKey] = lockRecord;
+        const tempFile = path.join(kitDir, `.dev-router-locks-${process.pid}-${Date.now()}.tmp`);
+        fs.writeFileSync(tempFile, JSON.stringify(locks, null, 2), "utf8");
+        fs.renameSync(tempFile, locksFile);
+        return true;
+    } catch (error) {
+        console.error(`[DevRouter] lock write failed: ${error.message}`);
+        return false;
+    }
+}
+
+function recordResponseIds(text, boundaryKey) {
+    if (!boundaryKey) {
+        return;
+    }
+    for (const match of text.matchAll(RESPONSE_ID_PATTERN)) {
+        responseChainBoundaries.set(match[1], boundaryKey);
+        while (responseChainBoundaries.size > MAX_CHAIN_ENTRIES) {
+            const oldest = responseChainBoundaries.keys().next().value;
+            responseChainBoundaries.delete(oldest);
+        }
+    }
 }
 
 function sanitizeObjective(text) {
@@ -160,33 +221,19 @@ function extractPromptFromInput(input) {
     return "";
 }
 
-async function invokeJevChoice(objective, target, currentModel, currentEffort, apiKey) {
+function invokeJevChoice(objective, target, currentModel, currentEffort, apiKey) {
     if (!apiKey) {
-        return null;
+        return Promise.resolve({ status: "unavailable", choice: null });
     }
 
-    let instructions = "";
-    const criteria = {};
-
-    if (target === "effort_only") {
-        instructions = `Select the appropriate reasoning effort for this task running on model '${currentModel}'.`;
-        const efforts = ["low", "medium", "high", "xhigh"];
-        for (const eff of efforts) {
-            criteria[eff] = `Reasoning effort ${eff}: balanced for appropriate task difficulty`;
-        }
-    } else if (target === "model_only") {
-        instructions = "Select the best model from the allowlist for this task.";
-        criteria["Luna"] = "Luna (gpt-5.6-luna): fast, mechanical, low-risk, simple changes";
-        criteria["Sol"] = "Sol (gpt-5.6-sol): balanced implementation, deep debugging, agentic workflow";
-        criteria["Astra"] = "Astra (gpt-6-astra): complex architecture, concurrency, high blast radius";
-    } else {
-        instructions = "Select the optimal model and reasoning effort pair for this task.";
-        criteria["Luna:low"] = "Luna with low effort: routine mechanical edits";
-        criteria["Luna:medium"] = "Luna with medium effort: standard localized modifications";
-        criteria["Sol:medium"] = "Sol with medium effort: standard feature implementation and debugging";
-        criteria["Sol:high"] = "Sol with high effort: complex feature work, algorithmic changes";
-        criteria["Astra:high"] = "Astra with high effort: critical system architecture, security";
-        criteria["Astra:xhigh"] = "Astra with extra-high effort: highest complexity, deadlock/concurrency";
+    let optionSet;
+    try {
+        optionSet = buildOptionSet(target, { baselineModel: currentModel, baselineEffort: currentEffort });
+    } catch (error) {
+        return Promise.resolve({ status: "invalid_response", choice: null, reason: error.message });
+    }
+    if (optionSet.incompatible) {
+        return Promise.resolve({ status: "incompatible", choice: null, reason: optionSet.reason });
     }
 
     const payload = {
@@ -200,20 +247,33 @@ async function invokeJevChoice(objective, target, currentModel, currentEffort, a
         questions: {
             q_route: {
                 type: "choice",
-                instructions,
-                criteria
+                instructions: optionSet.instructions,
+                criteria: optionSet.criteria
             }
         }
     };
 
     return new Promise((resolve) => {
+        let settled = false;
+        let jevReq = null;
+        const finish = (value) => {
+            if (!settled) {
+                settled = true;
+                resolve(value);
+            }
+        };
         const timeout = setTimeout(() => {
-            resolve(null);
-        }, 3000); // Strict 3-second bounded timeout
+            finish({ status: "timeout", choice: null });
+            if (jevReq && !jevReq.destroyed) {
+                jevReq.destroy();
+            }
+        }, config.jevTimeoutMs);
 
         try {
-            const req = https.request(
-                "https://api.typesafe.ai/v1/systemone",
+            const endpoint = new URL(config.jevEndpoint);
+            const transport = endpoint.protocol === "https:" ? https : http;
+            const req = transport.request(
+                endpoint,
                 {
                     method: "POST",
                     headers: {
@@ -226,16 +286,23 @@ async function invokeJevChoice(objective, target, currentModel, currentEffort, a
                     res.on("data", chunk => { data += chunk; });
                     res.on("end", () => {
                         clearTimeout(timeout);
+                        if (res.statusCode < 200 || res.statusCode >= 300) {
+                            finish({ status: "unavailable", choice: null });
+                            return;
+                        }
                         try {
-                            if (res.statusCode >= 200 && res.statusCode < 300) {
-                                const parsed = JSON.parse(data);
-                                const choice = parsed.answers?.q_route?.choice;
-                                resolve(choice || null);
-                            } else {
-                                resolve(null);
+                            const parsed = JSON.parse(data);
+                            const answer = parsed.answers?.q_route;
+                            let choice = null;
+                            if (typeof answer === "string") {
+                                choice = answer;
+                            } else if (answer && typeof answer === "object") {
+                                choice = answer.choice ?? answer.selected ?? answer.value ?? null;
                             }
+                            choice = typeof choice === "string" && choice.trim() ? choice.trim() : null;
+                            finish(choice ? { status: "ok", choice } : { status: "invalid_response", choice: null });
                         } catch {
-                            resolve(null);
+                            finish({ status: "invalid_response", choice: null });
                         }
                     });
                 }
@@ -243,150 +310,300 @@ async function invokeJevChoice(objective, target, currentModel, currentEffort, a
 
             req.on("error", () => {
                 clearTimeout(timeout);
-                resolve(null);
+                finish({ status: "unavailable", choice: null });
             });
 
+            jevReq = req;
             req.write(JSON.stringify(payload));
             req.end();
         } catch {
             clearTimeout(timeout);
-            resolve(null);
+            finish({ status: "unavailable", choice: null });
         }
     });
 }
 
-function resolveModelId(name) {
-    if (!name) return "gpt-5.6-sol";
-    const lower = name.toLowerCase();
-    if (lower.includes("luna")) return "gpt-5.6-luna";
-    if (lower.includes("astra")) return "gpt-6-astra";
-    if (lower.includes("sol")) return "gpt-5.6-sol";
-    return name;
+function assertConcreteForUpstream(model) {
+    const upstreamModel = toUpstreamModelId(model);
+    if (!upstreamModel) {
+        console.error(`[DevRouter] FAIL-CLOSED refusing to forward non-concrete model '${model === null || model === undefined ? "" : model}' to upstream.`);
+    }
+    return upstreamModel;
 }
 
-// Request Handler
+function sendLocalError(res, statusCode, type, message) {
+    console.error(`[DevRouter] FAIL-CLOSED ${type}: ${message}`);
+    if (res.headersSent) {
+        res.end();
+        return;
+    }
+    res.writeHead(statusCode, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: { message, type, code: statusCode } }));
+}
+
+function readBoundaryKey(req, parsedBody) {
+    const header = (name) => {
+        const value = req.headers[name];
+        return typeof value === "string" ? value : (Array.isArray(value) ? value[0] : null);
+    };
+    const conversationId = parsedBody.conversation_id
+        || parsedBody.metadata?.conversation_id
+        || header("x-conversation-id")
+        || parsedBody.prompt_cache_key;
+    const previousResponseId = parsedBody.previous_response_id || header("x-previous-response-id");
+    const responseChainRoot = previousResponseId ? (responseChainBoundaries.get(previousResponseId) ?? null) : null;
+    const requestSessionId = header("x-session-id") || parsedBody.session_id;
+    return {
+        boundaryKey: deriveBoundaryKey({ conversationId, responseChainRoot, previousResponseId, requestSessionId }),
+        previousResponseId
+    };
+}
+
 async function handleResponses(req, res) {
-    let bodyChunks = [];
+    const bodyChunks = [];
     req.on("data", chunk => bodyChunks.push(chunk));
     req.on("end", async () => {
         let bodyBuffer = Buffer.concat(bodyChunks);
         let parsedBody = null;
-        let isGptAdaptive = false;
 
         try {
             parsedBody = JSON.parse(bodyBuffer.toString("utf8"));
-            isGptAdaptive = (parsedBody && parsedBody.model === "gpt-adaptive");
         } catch {
-            // Not JSON or parse error, pass through unmodified
+            // Not JSON: forward untouched so a malformed payload still reaches upstream
         }
 
         const state = readDevRouterState();
-        const baseline = readBaselineConfig();
+        const toml = readTomlBaseline();
+        const baseline = resolveConcreteBaseline(state, toml);
 
-        let finalModel = baseline.model;
-        let finalEffort = baseline.effort;
-
-        if (isGptAdaptive && parsedBody) {
-            const promptText = extractPromptFromInput(parsedBody.input);
-            const requestedEffort = parsedBody.reasoning?.effort || baseline.effort;
-
-            if (state.mode === "off") {
-                finalModel = baseline.model;
-                finalEffort = requestedEffort;
-            } else if (state.mode === "shadow") {
-                finalModel = baseline.model;
-                finalEffort = requestedEffort;
-                // Shadow evaluation in background
-                const apiKey = process.env.TYPESAFE_API_KEY;
-                if (apiKey) {
-                    invokeJevChoice(promptText, state.target, finalModel, finalEffort, apiKey).then(rec => {
-                        if (rec) {
-                            console.log(`[DevRouter Shadow] Jev recommendation for prompt: ${rec}`);
-                        }
-                    }).catch(() => {});
-                }
-            } else if (state.mode === "on") {
-                const apiKey = process.env.TYPESAFE_API_KEY;
-                const choice = await invokeJevChoice(promptText, state.target, baseline.model, requestedEffort, apiKey);
-
-                if (choice) {
-                    if (state.target === "effort_only") {
-                        finalModel = baseline.model;
-                        finalEffort = choice.toLowerCase();
-                    } else if (state.target === "model_only") {
-                        finalModel = resolveModelId(choice);
-                        finalEffort = requestedEffort;
-                    } else if (state.target === "model_and_effort") {
-                        const parts = choice.split(":");
-                        if (parts.length === 2) {
-                            finalModel = resolveModelId(parts[0]);
-                            finalEffort = parts[1].toLowerCase();
-                        }
-                    }
-                } else {
-                    // Fallback to baseline
-                    finalModel = baseline.model;
-                    finalEffort = requestedEffort;
-                }
-            }
-
-            // Apply transformed model and reasoning effort
-            parsedBody.model = finalModel;
-            if (!parsedBody.reasoning) parsedBody.reasoning = {};
-            parsedBody.reasoning.effort = finalEffort;
-
-            bodyBuffer = Buffer.from(JSON.stringify(parsedBody), "utf8");
-            console.log(`[DevRouter] Routed gpt-adaptive -> model=${finalModel}, effort=${finalEffort} (mode=${state.mode}, target=${state.target})`);
+        if (!parsedBody || typeof parsedBody !== "object" || Array.isArray(parsedBody)) {
+            return forwardToUpstream(req, res, bodyBuffer, null);
         }
 
-        // Prepare upstream request
-        const upstreamUrl = new URL(`${config.upstream}/v1/responses`);
-        const isHttps = upstreamUrl.protocol === "https:";
-        const transport = isHttps ? https : http;
+        const rawIncoming = typeof parsedBody.model === "string" ? parsedBody.model.trim() : "";
+        const incomingModel = rawIncoming || "";
+        const requestedEffort = normalizeEffort(parsedBody.reasoning?.effort);
+        const isAdaptive = incomingModel === "" || incomingModel === ADAPTIVE_MODEL;
+        const concreteIncoming = isAdaptive ? null : toUpstreamModelId(incomingModel);
+        const effectiveModel = concreteIncoming || baseline.model;
+        const effectiveEffort = requestedEffort ?? baseline.effort;
+        const needsRewrite = state.mode === "on" || state.mode === "shadow" || isAdaptive;
 
-        const forwardHeaders = { ...req.headers };
-        forwardHeaders.host = upstreamUrl.host;
-        forwardHeaders["content-length"] = bodyBuffer.length;
-
-        // Strip hop-by-hop headers
-        delete forwardHeaders["connection"];
-        delete forwardHeaders["keep-alive"];
-
-        const upstreamReq = transport.request(
-            upstreamUrl,
-            {
-                method: req.method,
-                headers: forwardHeaders
-            },
-            (upstreamRes) => {
-                res.writeHead(upstreamRes.statusCode, upstreamRes.headers);
-                upstreamRes.pipe(res);
+        if (!needsRewrite) {
+            const upstreamReject = assertConcreteForUpstream(concreteIncoming || incomingModel);
+            if (!upstreamReject) {
+                return sendLocalError(res, 400, "dev_router_missing_base", "The request model is not a concrete model the proxy may forward upstream.");
             }
-        );
+            parsedBody.model = upstreamReject;
+            bodyBuffer = Buffer.from(JSON.stringify(parsedBody), "utf8");
+            lastAppliedRoute = { model: upstreamReject, effort: requestedEffort, boundaryKey: null };
+            console.log(`[DevRouter] route boundary=none mode=${state.mode} target=${state.target} incoming=${incomingModel || "none"} jev=skipped final=${upstreamReject}/${requestedEffort ?? "none"} status=off`);
+            return forwardToUpstream(req, res, bodyBuffer, null);
+        }
 
-        upstreamReq.on("error", (err) => {
-            console.error(`[DevRouter Upstream Error] ${err.message}`);
-            if (!res.headersSent) {
-                res.writeHead(502, { "Content-Type": "application/json" });
-                res.end(JSON.stringify({
-                    error: {
-                        message: `Dev Router failed to connect to upstream: ${err.message}`,
-                        type: "dev_router_upstream_error",
-                        code: 502
-                    }
-                }));
+        if (!effectiveModel) {
+            return sendLocalError(res, 400, "dev_router_missing_base", `The Dev Router ${state.mode} mode requires a concrete base model (set manual_base_model in dev-router-state.json or a top-level model in config.toml). It will never invent one.`);
+        }
+
+        const objective = extractPromptFromInput(parsedBody.input);
+        const { boundaryKey } = readBoundaryKey(req, parsedBody);
+        const surfaceHeader = req.headers["x-dev-router-surface"];
+        const surface = typeof surfaceHeader === "string" && surfaceHeader.toLowerCase() === "workflow" ? "workflow" : "alignment";
+        const scope = surface === "alignment" ? "turn" : "workflow";
+
+        let finalModel = effectiveModel;
+        let finalEffort = effectiveEffort;
+        let statusLabel = state.mode;
+        let jevMark = "skipped";
+        let appliedLock = null;
+
+        if (state.mode === "on") {
+            const locks = boundaryKey ? readLocks() : {};
+            const existing = boundaryKey ? locks[boundaryKey] : null;
+
+            if (existing && isLockValid(existing, { mode: state.mode, target: state.target, surface, executionId: null, turnId: null })) {
+                const lockedModel = typeof existing.locked_model === "string" && existing.locked_model.trim() ? existing.locked_model.trim() : null;
+                const lockedEffort = normalizeEffort(existing.locked_effort);
+                if (lockedModel && (!lockedEffort || isEffortSupported(lockedModel, lockedEffort))) {
+                    finalModel = lockedModel;
+                    finalEffort = lockedEffort ?? effectiveEffort;
+                    statusLabel = "locked";
+                } else {
+                    statusLabel = "locked_incompatible";
+                    console.error(`[DevRouter] lock boundary=${boundaryKey} stores an invalid model/effort pair; keeping the concrete base.`);
+                }
+            } else if (!boundaryKey && lastAppliedRoute) {
+                finalModel = lastAppliedRoute.model;
+                finalEffort = lastAppliedRoute.effort ?? effectiveEffort;
+                statusLabel = "sticky_last_route";
+            } else if (!boundaryKey) {
+                return sendLocalError(res, 400, "dev_router_no_boundary", "The Dev Router cannot derive a boundary key and has no prior applied route to preserve. It never invents a route.");
+            } else {
+                const apiKey = process.env.TYPESAFE_API_KEY;
+                const jev = await invokeJevChoice(objective, state.target, effectiveModel, effectiveEffort, apiKey);
+                jevMark = jev.status === "incompatible" ? "skipped" : "called";
+                const decision = decideRoute({
+                    mode: "on",
+                    target: state.target,
+                    baseline: { model: effectiveModel, effort: effectiveEffort },
+                    requestedEffort,
+                    jevChoice: jev.choice,
+                    jevStatus: jev.status
+                });
+                if (!decision.model) {
+                    return sendLocalError(res, 400, "dev_router_missing_base", "The Dev Router decision has no concrete model to forward.");
+                }
+                const pairSupported = !decision.effort || isEffortSupported(decision.model, decision.effort);
+                if (!pairSupported) {
+                    finalModel = effectiveModel;
+                    finalEffort = effectiveEffort;
+                    statusLabel = "incompatible";
+                    console.error(`[DevRouter] decision pair ${decision.model}/${decision.effort} is not supported; keeping the concrete base.`);
+                } else {
+                    finalModel = decision.model;
+                    finalEffort = decision.effort;
+                    statusLabel = decision.status;
+                }
+                appliedLock = {
+                    conversation_id: boundaryKey,
+                    scope,
+                    execution_id: null,
+                    turn_id: null,
+                    locked_model: canonicalModelName(finalModel) || finalModel,
+                    locked_effort: finalEffort,
+                    mode: state.mode,
+                    target: state.target,
+                    locked_at_utc: new Date().toISOString(),
+                    reason: decision.isFallback ? "proxy_fallback" : "proxy_route"
+                };
+                writeLock(boundaryKey, appliedLock);
             }
-        });
+        } else if (state.mode === "shadow") {
+            statusLabel = "shadow";
+            jevMark = "shadow";
+            const apiKey = process.env.TYPESAFE_API_KEY;
+            invokeJevChoice(objective, state.target, effectiveModel, effectiveEffort, apiKey)
+                .then((jev) => {
+                    const shadowDecision = decideRoute({
+                        mode: "shadow",
+                        target: state.target,
+                        baseline: { model: effectiveModel, effort: effectiveEffort },
+                        requestedEffort,
+                        jevChoice: jev.choice,
+                        jevStatus: jev.status
+                    });
+                    const recommendation = shadowDecision.model
+                        ? `${shadowDecision.model}/${shadowDecision.effort ?? "none"}`
+                        : "none";
+                    console.log(`[DevRouter] shadow recommendation=${recommendation} status=${jev.status} boundary=${boundaryKey || "none"}`);
+                })
+                .catch(() => {});
+        } else {
+            statusLabel = "off";
+        }
 
-        res.on("close", () => {
-            if (!res.writableEnded && !upstreamReq.destroyed) {
-                upstreamReq.destroy();
+        const upstreamModel = assertConcreteForUpstream(finalModel);
+        if (!upstreamModel) {
+            return sendLocalError(res, 400, "dev_router_missing_base", "The resolved route has no concrete model that can be forwarded upstream.");
+        }
+
+        parsedBody.model = upstreamModel;
+        if (state.mode !== "off" || finalEffort) {
+            if (!parsedBody.reasoning) parsedBody.reasoning = {};
+            if (finalEffort) {
+                parsedBody.reasoning.effort = finalEffort;
             }
-        });
+        }
+        bodyBuffer = Buffer.from(JSON.stringify(parsedBody), "utf8");
+        lastAppliedRoute = { model: upstreamModel, effort: finalEffort, boundaryKey };
 
-        upstreamReq.write(bodyBuffer);
-        upstreamReq.end();
+        console.log(`[DevRouter] route boundary=${boundaryKey || "none"} mode=${state.mode} target=${state.target} incoming=${incomingModel || "none"} jev=${jevMark} final=${upstreamModel}/${finalEffort ?? "none"} status=${statusLabel}`);
+        return forwardToUpstream(req, res, bodyBuffer, boundaryKey);
     });
+}
+
+/**
+ * Builds the upstream `/responses` URL.
+ *
+ * The request line is NOT always `${base}/v1/responses`: the public OpenAI API
+ * serves it under `/v1`, while the ChatGPT-auth Codex backend serves it under
+ * `https://chatgpt.com/backend-api/codex/responses`. Blindly appending
+ * `/v1/responses` produced a 404 for every ChatGPT-auth user (verified live).
+ * A base that already carries a path keeps it and only gets `/responses`
+ * appended; a bare host gets the public `/v1/responses` shape.
+ * `DEV_ROUTER_UPSTREAM_PATH` overrides the suffix entirely.
+ */
+function buildUpstreamUrl(upstreamBase, overridePath) {
+    const base = new URL(upstreamBase);
+    const trimmedPath = base.pathname.replace(/\/+$/, "");
+    const suffix = overridePath
+        ? (overridePath.startsWith("/") ? overridePath : `/${overridePath}`)
+        : (trimmedPath.length > 0 ? `${trimmedPath}/responses` : "/v1/responses");
+    return new URL(suffix + base.search, base.origin);
+}
+
+function forwardToUpstream(req, res, bodyBuffer, boundaryKey) {
+    const upstreamUrl = buildUpstreamUrl(config.upstream, config.upstreamPath);
+    const isHttps = upstreamUrl.protocol === "https:";
+    const transport = isHttps ? https : http;
+
+    const forwardHeaders = { ...req.headers };
+    forwardHeaders.host = upstreamUrl.host;
+    forwardHeaders["content-length"] = bodyBuffer.length;
+
+    delete forwardHeaders["connection"];
+    delete forwardHeaders["keep-alive"];
+
+    const upstreamReq = transport.request(
+        upstreamUrl,
+        {
+            method: req.method,
+            headers: forwardHeaders
+        },
+        (upstreamRes) => {
+            res.writeHead(upstreamRes.statusCode, upstreamRes.headers);
+            let sniffBuffer = "";
+            upstreamRes.on("data", (chunk) => {
+                if (boundaryKey) {
+                    sniffBuffer = (sniffBuffer + chunk.toString("utf8")).slice(-65536);
+                    recordResponseIds(sniffBuffer, boundaryKey);
+                }
+                res.write(chunk);
+            });
+            upstreamRes.on("end", () => {
+                if (boundaryKey) {
+                    recordResponseIds(sniffBuffer, boundaryKey);
+                }
+                res.end();
+            });
+            upstreamRes.on("error", () => {
+                res.destroy();
+            });
+        }
+    );
+
+    upstreamReq.on("error", (err) => {
+        console.error(`[DevRouter Upstream Error] ${err.message}`);
+        if (!res.headersSent) {
+            res.writeHead(502, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({
+                error: {
+                    message: `Dev Router failed to connect to upstream: ${err.message}`,
+                    type: "dev_router_upstream_error",
+                    code: 502
+                }
+            }));
+        }
+    });
+
+    res.on("close", () => {
+        if (!res.writableEnded && !upstreamReq.destroyed) {
+            upstreamReq.destroy();
+        }
+    });
+
+    upstreamReq.write(bodyBuffer);
+    upstreamReq.end();
 }
 
 function handleModels(req, res) {
@@ -418,7 +635,8 @@ function handleModels(req, res) {
 
 function handleHealth(req, res) {
     const state = readDevRouterState();
-    const baseline = readBaselineConfig();
+    const toml = readTomlBaseline();
+    const baseline = resolveConcreteBaseline(state, toml);
 
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({
@@ -450,7 +668,6 @@ const server = http.createServer((req, res) => {
         return handleResponses(req, res);
     }
 
-    // Default 404
     res.writeHead(404, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: { message: "Not found", code: 404 } }));
 });

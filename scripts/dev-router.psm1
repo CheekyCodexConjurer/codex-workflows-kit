@@ -12,46 +12,166 @@ Set-StrictMode -Version Latest
 # artifact this module writes must use this encoding.
 $script:Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
-$script:DevRouterModelCatalog = [ordered]@{
-    'Luna' = [ordered]@{
-        Id               = 'gpt-5.6-luna'
-        Name             = 'Luna'
-        Aliases          = @('gpt-5.6-luna', 'luna')
-        SupportedEfforts = @('none', 'minimal', 'low', 'medium', 'high', 'xhigh')
-        Profile          = 'mechanical_low_risk'
-        Description      = 'Mechanical, low-risk, explicit target, minimal ambiguity'
+# Canonical routing policy DATA lives in dev-router-policy.json; the pure LOGIC
+# lives in dev-router-policy.mjs and is consumed through dev-router-policy-cli.mjs.
+# PowerShell never re-declares model ids, efforts, aliases or profiles.
+$script:DevRouterModelCatalog = [ordered]@{}
+$script:ManualPassThroughModels = [ordered]@{}
+$script:DisallowedModels = @()
+$script:AllValidEfforts = @()
+
+function Import-DevRouterPolicyData {
+    $policyPath = Join-Path (Split-Path -Parent $PSCommandPath) 'dev-router-policy.json'
+    if (-not (Test-Path -LiteralPath $policyPath -PathType Leaf)) {
+        throw "Dev Router policy data not found at '$policyPath'. The canonical policy JSON must ship next to dev-router.psm1."
     }
-    'Sol' = [ordered]@{
-        Id               = 'gpt-5.6-sol'
-        Name             = 'Sol'
-        Aliases          = @('gpt-5.6-sol', 'sol')
-        SupportedEfforts = @('none', 'minimal', 'low', 'medium', 'high', 'xhigh')
-        Profile          = 'investigation_synthesis_implementation'
-        Description      = 'Investigation, synthesis, standard/complex implementation, debugging with context'
+
+    $raw = [IO.File]::ReadAllText($policyPath)
+    if ($raw.Length -gt 0 -and [int]$raw[0] -eq 0xFEFF) {
+        $raw = $raw.Substring(1)
     }
-    'Astra' = [ordered]@{
-        Id               = 'gpt-6-astra'
-        Name             = 'Astra'
-        Aliases          = @('gpt-6-astra', 'astra')
-        SupportedEfforts = @('low', 'medium', 'high', 'xhigh')
-        Profile          = 'architecture_concurrency_security'
-        Description      = 'Difficult architecture, concurrency, security, high impact or exceptional ambiguity'
+
+    $data = $raw | ConvertFrom-Json
+    $catalog = [ordered]@{}
+    $manual = [ordered]@{}
+
+    foreach ($model in @($data.models)) {
+        $entry = [ordered]@{
+            Id               = [string]$model.id
+            Name             = [string]$model.name
+            Aliases          = @($model.aliases)
+            SupportedEfforts = @($model.supported_efforts)
+            Profile          = [string]$model.profile
+            Description      = [string]$model.description
+        }
+        if ([bool]$model.automatic) {
+            $catalog[[string]$model.name] = $entry
+        }
+        else {
+            $manual[[string]$model.name] = $entry
+        }
     }
+
+    $script:DevRouterModelCatalog = $catalog
+    $script:ManualPassThroughModels = $manual
+    $script:DisallowedModels = @($data.disallowed_for_automatic_routing)
+    $script:AllValidEfforts = @($data.all_valid_efforts)
 }
 
-$script:ManualPassThroughModels = [ordered]@{
-    'Terra' = [ordered]@{
-        Id               = 'gpt-5.6-terra'
-        Name             = 'Terra'
-        Aliases          = @('gpt-5.6-terra', 'terra')
-        SupportedEfforts = @('none', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra')
-        Profile          = 'balanced_coding'
-        Description      = 'Balanced agentic coding model (manual selection pass-through only)'
+Import-DevRouterPolicyData
+
+function ConvertFrom-DevRouterPolicyValue {
+    param($Value)
+
+    if ($null -eq $Value) {
+        return $null
     }
+    if ($Value -is [System.Management.Automation.PSCustomObject]) {
+        $map = [ordered]@{}
+        foreach ($prop in $Value.PSObject.Properties) {
+            $map[$prop.Name] = ConvertFrom-DevRouterPolicyValue -Value $prop.Value
+        }
+        return $map
+    }
+    if ($Value -is [System.Collections.IEnumerable] -and -not ($Value -is [string])) {
+        $list = New-Object System.Collections.Generic.List[object]
+        foreach ($item in $Value) {
+            $list.Add((ConvertFrom-DevRouterPolicyValue -Value $item))
+        }
+        return , $list.ToArray()
+    }
+    return $Value
 }
 
-$script:DisallowedModels = @('gpt-5.6-terra', 'terra')
-$script:AllValidEfforts = @('none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra')
+$script:DevRouterPolicyCache = @{}
+$script:DevRouterCacheableOperations = @('resolveModel', 'modelEfforts', 'isEffortSupported', 'isModelAllowedForAutomaticRouting')
+
+function Invoke-DevRouterPolicyCli {
+    param(
+        [Parameter(Mandatory)][string]$Operation,
+        [hashtable]$Request = @{}
+    )
+
+    $cacheable = $script:DevRouterCacheableOperations -contains $Operation
+    $cacheKey = $null
+    if ($cacheable) {
+        $parts = foreach ($key in ($Request.Keys | Sort-Object)) {
+            "$key=$($Request[$key])"
+        }
+        $cacheKey = "$Operation|$($parts -join '&')"
+        if ($script:DevRouterPolicyCache.ContainsKey($cacheKey)) {
+            return $script:DevRouterPolicyCache[$cacheKey]
+        }
+    }
+
+    $nodeCmd = Get-Command node -ErrorAction SilentlyContinue
+    if ($null -eq $nodeCmd) {
+        throw "Dev Router policy CLI '$Operation' requires Node.js ('node') on PATH. Refusing to evaluate routing policy without the canonical module."
+    }
+
+    $cliPath = Join-Path (Split-Path -Parent $PSCommandPath) 'dev-router-policy-cli.mjs'
+    if (-not (Test-Path -LiteralPath $cliPath -PathType Leaf)) {
+        throw "Dev Router policy CLI not found at '$cliPath'. The canonical policy module must ship next to dev-router.psm1."
+    }
+
+    $payload = [ordered]@{ op = $Operation }
+    foreach ($key in $Request.Keys) {
+        $payload[$key] = $Request[$key]
+    }
+    $json = $payload | ConvertTo-Json -Depth 12 -Compress
+
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $nodeCmd.Source
+    $psi.Arguments = "`"$cliPath`""
+    $psi.RedirectStandardInput = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.StandardOutputEncoding = New-Object System.Text.UTF8Encoding($false)
+    $psi.StandardErrorEncoding = New-Object System.Text.UTF8Encoding($false)
+
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    if ($null -eq $proc) {
+        throw "Dev Router policy CLI '$Operation' could not be started."
+    }
+
+    try {
+        $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
+        $stderrTask = $proc.StandardError.ReadToEndAsync()
+        $proc.StandardInput.Write($json)
+        $proc.StandardInput.Close()
+        $proc.WaitForExit()
+        $exitCode = $proc.ExitCode
+        $stdout = $stdoutTask.Result
+        $stderr = $stderrTask.Result
+    }
+    finally {
+        $proc.Dispose()
+    }
+
+    if ($exitCode -ne 0) {
+        throw "Dev Router policy CLI '$Operation' failed (exit $($exitCode)): $($stderr.Trim()) $($stdout.Trim())"
+    }
+
+    $parsed = $null
+    try {
+        $parsed = $stdout | ConvertFrom-Json
+    }
+    catch {
+        throw "Dev Router policy CLI '$Operation' returned unparseable output: $($stdout.Trim())"
+    }
+    if ($null -eq $parsed -or -not ($parsed.PSObject.Properties.Name -contains 'ok') -or -not [bool]$parsed.ok) {
+        $message = if ($null -ne $parsed -and $parsed.PSObject.Properties.Name -contains 'error') { [string]$parsed.error } else { $stdout.Trim() }
+        throw "Dev Router policy CLI '$Operation' returned an error: $message"
+    }
+
+    $result = ConvertFrom-DevRouterPolicyValue -Value $parsed.result
+    if ($cacheable -and $null -ne $cacheKey) {
+        $script:DevRouterPolicyCache[$cacheKey] = $result
+    }
+    return $result
+}
 
 function Invoke-DevRouterSynchronized {
     param(
@@ -100,67 +220,47 @@ function Resolve-DevRouterModel {
         [switch]$IncludeDisallowed
     )
 
-    $raw = $ModelNameOrId.Trim()
-    if ([string]::IsNullOrWhiteSpace($raw)) {
+    if ([string]::IsNullOrWhiteSpace($ModelNameOrId)) {
         return $null
     }
 
-    # If disallowed models are not explicitly included, reject immediately
-    if (-not $IncludeDisallowed) {
-        foreach ($disallowed in $script:DisallowedModels) {
-            if ($raw -eq $disallowed -or $raw -like "*$disallowed*") {
-                return $null
-            }
-        }
+    $resolved = Invoke-DevRouterPolicyCli -Operation 'resolveModel' -Request @{
+        nameOrId          = $ModelNameOrId
+        includeDisallowed = [bool]$IncludeDisallowed
+    }
+    if ($null -eq $resolved) {
+        return $null
     }
 
-    # 1. Check primary automatic routing catalog
-    foreach ($key in $script:DevRouterModelCatalog.Keys) {
-        $entry = $script:DevRouterModelCatalog[$key]
-        if ($raw -ceq [string]$entry.Name -or $raw -ceq [string]$entry.Id) {
-            return $entry
-        }
-        foreach ($alias in $entry.Aliases) {
-            if ($raw.Equals($alias, [System.StringComparison]::OrdinalIgnoreCase)) {
-                return $entry
-            }
-        }
+    return [ordered]@{
+        Id               = [string]$resolved.id
+        Name             = [string]$resolved.name
+        Aliases          = @($resolved.aliases)
+        SupportedEfforts = @($resolved.supportedEfforts)
+        Profile          = [string]$resolved.profile
+        Description      = [string]$resolved.description
     }
-
-    # 2. Check manual pass-through catalog if requested
-    if ($IncludeDisallowed) {
-        foreach ($key in $script:ManualPassThroughModels.Keys) {
-            $entry = $script:ManualPassThroughModels[$key]
-            if ($raw -ceq [string]$entry.Name -or $raw -ceq [string]$entry.Id) {
-                return $entry
-            }
-            foreach ($alias in $entry.Aliases) {
-                if ($raw.Equals($alias, [System.StringComparison]::OrdinalIgnoreCase)) {
-                    return $entry
-                }
-            }
-        }
-    }
-
-    return $null
 }
 
 function Test-DevRouterModelAllowed {
     param([Parameter(Mandatory)][string]$ModelNameOrId)
 
     # Strictly verifies model is in allowed catalog and NOT disallowed
-    $resolved = Resolve-DevRouterModel -ModelNameOrId $ModelNameOrId
-    return ($null -ne $resolved)
+    return [bool](Invoke-DevRouterPolicyCli -Operation 'isModelAllowedForAutomaticRouting' -Request @{
+            model = $ModelNameOrId
+        })
 }
 
 function Get-DevRouterModelEfforts {
     param([Parameter(Mandatory)][string]$ModelNameOrId)
 
-    $resolved = Resolve-DevRouterModel -ModelNameOrId $ModelNameOrId -IncludeDisallowed
-    if ($null -eq $resolved) {
+    $efforts = Invoke-DevRouterPolicyCli -Operation 'modelEfforts' -Request @{
+        modelOrName = $ModelNameOrId
+    }
+    if ($null -eq $efforts) {
         return @()
     }
-    return @($resolved.SupportedEfforts)
+    return @($efforts)
 }
 
 function Test-DevRouterEffortSupported {
@@ -169,8 +269,10 @@ function Test-DevRouterEffortSupported {
         [Parameter(Mandatory)][string]$Effort
     )
 
-    $efforts = Get-DevRouterModelEfforts -ModelNameOrId $ModelNameOrId
-    return ($efforts -contains $Effort.Trim().ToLowerInvariant())
+    return [bool](Invoke-DevRouterPolicyCli -Operation 'isEffortSupported' -Request @{
+            model  = $ModelNameOrId
+            effort = $Effort
+        })
 }
 
 function Get-DevRouterPaths {
@@ -266,6 +368,22 @@ function Set-DevRouterState {
             mode      = $Mode
             target    = $Target
             updatedAt = $now
+        }
+
+        # The proxy reads manual_base_model/manual_base_effort from this file.
+        # Switching mode/target must never wipe the operator's manual base.
+        if (Test-Path -LiteralPath $paths.StateFile -PathType Leaf) {
+            try {
+                $existingRaw = Get-Content -LiteralPath $paths.StateFile -Raw -Encoding UTF8
+                $existingState = $existingRaw | ConvertFrom-Json
+                if ($null -ne $existingState -and $existingState.PSObject.Properties.Name -contains 'manual_base_model' -and -not [string]::IsNullOrWhiteSpace([string]$existingState.manual_base_model)) {
+                    $stateObj['manual_base_model'] = [string]$existingState.manual_base_model
+                }
+                if ($null -ne $existingState -and $existingState.PSObject.Properties.Name -contains 'manual_base_effort' -and -not [string]::IsNullOrWhiteSpace([string]$existingState.manual_base_effort)) {
+                    $stateObj['manual_base_effort'] = [string]$existingState.manual_base_effort
+                }
+            }
+            catch {}
         }
 
         $json = ($stateObj | ConvertTo-Json -Depth 4) + [Environment]::NewLine
@@ -574,6 +692,12 @@ function Start-DevRouterProxy {
             [void][IO.Directory]::CreateDirectory($paths.KitDir)
         }
         Copy-Item -LiteralPath $repoProxyScript -Destination $targetProxyScript -Force
+        foreach ($policyFile in @('dev-router-policy.json', 'dev-router-policy.mjs', 'dev-router-policy-cli.mjs')) {
+            $policySrc = Join-Path (Split-Path -Parent $PSCommandPath) $policyFile
+            if (Test-Path -LiteralPath $policySrc -PathType Leaf) {
+                Copy-Item -LiteralPath $policySrc -Destination (Join-Path $paths.KitDir $policyFile) -Force
+            }
+        }
     }
     elseif (-not (Test-Path -LiteralPath $targetProxyScript -PathType Leaf)) {
         throw "Dev Router proxy script not found at '$targetProxyScript' or '$repoProxyScript'."
@@ -666,128 +790,229 @@ function ConvertTo-DevRouterReasoningLevels {
 $script:DevRouterShellTypes = @('default', 'local', 'unified_exec', 'disabled', 'shell_command')
 $script:DevRouterVisibility = @('list', 'hide', 'none')
 
+# The 12 fields Codex >= 0.145 REQUIRES on every ModelInfo. `base_instructions`
+# and `supports_parallel_tool_calls` are absent from models_cache.json and must
+# come from the bundled official catalog; they are never synthesized.
+$script:DevRouterRequiredCatalogFields = @('slug', 'display_name', 'supported_reasoning_levels', 'shell_type', 'visibility', 'supported_in_api', 'priority', 'base_instructions', 'support_verbosity', 'truncation_policy', 'supports_parallel_tool_calls', 'experimental_supported_tools')
+
+# Process-scoped memo for `codex debug models --bundled` (resolved at most once).
+$script:DevRouterBundledCatalog = $null
+
+# Slugs the last Export-DevRouterModelCatalog call omitted (and why).
+$script:DevRouterLastCatalogOmissions = @()
+
+# Neutral operational text for the Dev Router's OWN local alias. This is not an
+# official provider model, so the text is ours on purpose; it carries no
+# workflow/AGENTS behaviour and no provider model instructions.
+$script:DevRouterAdaptiveBaseInstructions = 'GPT-Adaptive is a local routing alias registered by the Codex Workflows Dev Router. It is not a model and defines no persona, workflow, or repository behaviour: requests addressed to this alias are forwarded by the local Dev Router to a concrete Codex model chosen for the turn. Behave as that model and answer the user directly.'
+
+function Get-DevRouterBundledCatalog {
+    <#
+    .SYNOPSIS
+    Returns the official compiled-in Codex model catalog, resolved once per process.
+
+    `models_cache.json` omits `base_instructions` and
+    `supports_parallel_tool_calls` (both REQUIRED by Codex >= 0.145), so the
+    bundled catalog printed by `codex debug models --bundled` is the ONLY
+    non-invented source for them. Fails closed (throws) when the catalog cannot
+    be obtained, so callers never fall back to synthesized model instructions.
+    #>
+    param()
+
+    if ($null -ne $script:DevRouterBundledCatalog) {
+        return , $script:DevRouterBundledCatalog
+    }
+
+    if ($null -eq (Get-Command -Name 'codex' -ErrorAction SilentlyContinue)) {
+        throw 'the codex CLI was not found on PATH; cannot read the bundled official model catalog (refusing to synthesize model instructions)'
+    }
+
+    # Native stderr (e.g. a leading "WARNING: ..." banner) must never become a
+    # terminating error just because the caller runs with -ErrorAction Stop.
+    $previousErrorActionPreference = $ErrorActionPreference
+    $output = $null
+    $exitCode = 0
+    try {
+        $ErrorActionPreference = 'Continue'
+        $output = (& codex debug models --bundled 2>&1 | Out-String)
+        $exitCode = $LASTEXITCODE
+    }
+    catch {
+        throw "failed to run 'codex debug models --bundled': $($_.Exception.Message)"
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    if ($exitCode -ne 0) {
+        throw "'codex debug models --bundled' exited with code $exitCode (refusing to synthesize model instructions)"
+    }
+    if ([string]::IsNullOrWhiteSpace($output)) {
+        throw "'codex debug models --bundled' produced no output"
+    }
+
+    # Some builds prefix stdout with a "WARNING: ..." banner; the JSON object
+    # starts at the first '{'.
+    $jsonStart = $output.IndexOf('{')
+    if ($jsonStart -lt 0) {
+        throw "'codex debug models --bundled' produced no JSON object"
+    }
+    $parsed = $null
+    try {
+        $parsed = ($output.Substring($jsonStart) | ConvertFrom-Json)
+    }
+    catch {
+        throw "'codex debug models --bundled' returned unparsable JSON: $($_.Exception.Message)"
+    }
+
+    $candidates = @()
+    if ($parsed -is [System.Collections.IEnumerable] -and -not ($parsed -is [string])) {
+        $candidates = @($parsed)
+    }
+    elseif (@($parsed.PSObject.Properties | ForEach-Object { $_.Name }) -contains 'models') {
+        $candidates = @($parsed.models)
+    }
+
+    $bundledModels = New-Object System.Collections.Generic.List[object]
+    foreach ($candidate in $candidates) {
+        if ($null -eq $candidate) { continue }
+        $candidateProps = @($candidate.PSObject.Properties | ForEach-Object { $_.Name })
+        if ($candidateProps -notcontains 'slug') { continue }
+        if ([string]::IsNullOrWhiteSpace([string]$candidate.slug)) { continue }
+        $bundledModels.Add($candidate)
+    }
+    if ($bundledModels.Count -eq 0) {
+        throw "'codex debug models --bundled' returned an empty model catalog"
+    }
+
+    $script:DevRouterBundledCatalog = $bundledModels.ToArray()
+    return , $script:DevRouterBundledCatalog
+}
+
 function ConvertTo-DevRouterCatalogModel {
     <#
     .SYNOPSIS
-    Normalizes a model descriptor into the ModelInfo shape Codex 0.145+ requires.
+    Merges a models-cache entry with its bundled official catalog entry.
 
-    Accepts either a raw Codex models-cache entry or a simple hashtable with
-    Slug/Display/Description/Efforts/Default/ModelProviderId keys, and always
-    emits every field Codex requires. Fields carrying values Codex would reject
-    are replaced with safe defaults rather than passed through.
+    The cache entry is preserved VERBATIM: every original key/value is kept
+    (Codex tolerates unknown keys and they may carry behaviour). Only the two
+    fields Codex >= 0.145 REQUIRES but the cache omits are overlaid from the
+    bundled catalog: `base_instructions` and `supports_parallel_tool_calls`.
+    Neither is ever synthesized from `description`, `model_messages`, or a
+    placeholder; a slug whose bundled entry lacks them is rejected so the
+    caller can omit it.
     #>
     param(
         [Parameter(Mandatory)]$Model,
-        [string]$Slug,
-        [string]$DisplayName,
-        [string]$Description,
-        [string[]]$Efforts,
-        [string]$DefaultEffort = 'medium',
-        [string]$ModelProviderId,
-        [int]$Priority = 0
+        [Parameter(Mandatory)]$BundledEntry
     )
 
-    $props = @($Model.PSObject.Properties | ForEach-Object { $_.Name })
-    $resolvedSlug = if (-not [string]::IsNullOrWhiteSpace($Slug)) { $Slug } elseif ($props -contains 'slug') { [string]$Model.slug } else { '' }
-    if ([string]::IsNullOrWhiteSpace($resolvedSlug)) { throw 'Catalog model is missing a slug' }
+    $cacheProps = New-Object System.Collections.Generic.List[string]
+    foreach ($property in $Model.PSObject.Properties) { $cacheProps.Add($property.Name) }
 
-    $resolvedDisplay = if (-not [string]::IsNullOrWhiteSpace($DisplayName)) { $DisplayName }
-        elseif ($props -contains 'display_name' -and -not [string]::IsNullOrWhiteSpace($Model.display_name)) { [string]$Model.display_name }
-        else { $resolvedSlug }
+    # `description` and `model_messages` are NOT substitutes for
+    # `base_instructions`, so nothing here may fall back to them.
+    $slug = if ($cacheProps -contains 'slug') { [string]$Model.slug } else { '' }
+    if ([string]::IsNullOrWhiteSpace($slug)) { throw 'catalog model entry is missing a slug' }
 
-    $resolvedDescription = if (-not [string]::IsNullOrWhiteSpace($Description)) { $Description }
-        elseif ($props -contains 'description') { [string]$Model.description }
-        else { '' }
+    $bundledProps = New-Object System.Collections.Generic.List[string]
+    foreach ($property in $BundledEntry.PSObject.Properties) { $bundledProps.Add($property.Name) }
 
-    # Reasoning levels: reuse the provider presets when they are well formed.
-    $levels = New-Object System.Collections.Generic.List[object]
-    if ($props -contains 'supported_reasoning_levels') {
-        foreach ($level in @($Model.supported_reasoning_levels)) {
-            $levelProps = @($level.PSObject.Properties | ForEach-Object { $_.Name })
-            if ($levelProps -contains 'effort' -and $levelProps -contains 'description') {
-                $levels.Add([ordered]@{ effort = [string]$level.effort; description = [string]$level.description })
-            }
+    if ($bundledProps -notcontains 'base_instructions') {
+        throw "bundled official catalog has no 'base_instructions' for slug '$slug'"
+    }
+    $baseInstructions = [string]$BundledEntry.base_instructions
+    if ([string]::IsNullOrWhiteSpace($baseInstructions)) {
+        throw "bundled official catalog has empty 'base_instructions' for slug '$slug'"
+    }
+    if ($bundledProps -notcontains 'supports_parallel_tool_calls' -or $BundledEntry.supports_parallel_tool_calls -isnot [bool]) {
+        throw "bundled official catalog has no boolean 'supports_parallel_tool_calls' for slug '$slug'"
+    }
+
+    # Verbatim copy of the cache entry.
+    $entry = [ordered]@{}
+    foreach ($property in $Model.PSObject.Properties) {
+        $entry[$property.Name] = $property.Value
+    }
+    $entry['base_instructions'] = $baseInstructions
+    $entry['supports_parallel_tool_calls'] = [bool]$BundledEntry.supports_parallel_tool_calls
+
+    # Any other required field missing from the cache comes from the bundled
+    # official entry when available; it is never invented.
+    foreach ($field in $script:DevRouterRequiredCatalogFields) {
+        if ($entry.Contains($field)) { continue }
+        if ($bundledProps -notcontains $field) {
+            throw "slug '$slug' has no cache value and no bundled value for required field '$field'"
         }
+        $entry[$field] = $BundledEntry.$field
     }
-    if ($levels.Count -eq 0) {
-        $effortList = if ($Efforts) { $Efforts } else { @('low', 'medium', 'high', 'xhigh') }
-        foreach ($level in (ConvertTo-DevRouterReasoningLevels -Efforts $effortList -DefaultEffort $DefaultEffort)) {
-            $levels.Add($level)
+
+    return [pscustomobject]$entry
+}
+
+function Get-DevRouterAdaptiveEfforts {
+    <#
+    .SYNOPSIS
+    Returns the efforts GPT-Adaptive may advertise.
+
+    The intersection of the eligible concrete models (Luna/Sol/Astra), so the
+    alias never offers an effort no real model supports.
+    #>
+    param()
+
+    $sets = New-Object System.Collections.Generic.List[object]
+    foreach ($name in @('Luna', 'Sol', 'Astra')) {
+        if (-not $script:DevRouterModelCatalog.Contains($name)) { continue }
+        $sets.Add(@($script:DevRouterModelCatalog[$name].SupportedEfforts))
+    }
+    if ($sets.Count -eq 0) {
+        throw 'no eligible concrete models are configured; cannot derive GPT-Adaptive efforts'
+    }
+    $intersection = New-Object System.Collections.Generic.List[string]
+    foreach ($effort in @($sets[0])) {
+        $supportedByAll = $true
+        for ($i = 1; $i -lt $sets.Count; $i++) {
+            if (@($sets[$i]) -notcontains $effort) { $supportedByAll = $false; break }
         }
+        if ($supportedByAll -and -not $intersection.Contains($effort)) { $intersection.Add($effort) }
     }
+    if ($intersection.Count -eq 0) {
+        throw 'the eligible concrete models share no reasoning effort; cannot build GPT-Adaptive'
+    }
+    return $intersection.ToArray()
+}
 
-    $shellType = if ($props -contains 'shell_type' -and $script:DevRouterShellTypes -contains [string]$Model.shell_type) { [string]$Model.shell_type } else { 'default' }
-    $visibility = if ($props -contains 'visibility' -and $script:DevRouterVisibility -contains [string]$Model.visibility) { [string]$Model.visibility } else { 'list' }
-    $supportedInApi = if ($props -contains 'supported_in_api' -and $Model.supported_in_api -is [bool]) { [bool]$Model.supported_in_api } else { $true }
-    $priorityValue = if ($Priority -ne 0) { $Priority } elseif ($props -contains 'priority' -and $null -ne $Model.priority) { [int]$Model.priority } else { 0 }
-    $supportVerbosity = if ($props -contains 'support_verbosity' -and $Model.support_verbosity -is [bool]) { [bool]$Model.support_verbosity } else { $true }
-    $parallelTools = if ($props -contains 'supports_parallel_tool_calls' -and $Model.supports_parallel_tool_calls -is [bool]) { [bool]$Model.supports_parallel_tool_calls } else { $true }
-    $truncation = if ($props -contains 'truncation_policy' -and $null -ne $Model.truncation_policy -and
-        (@($Model.truncation_policy.PSObject.Properties | ForEach-Object { $_.Name }) -contains 'mode') -and
-        (@($Model.truncation_policy.PSObject.Properties | ForEach-Object { $_.Name }) -contains 'limit')) {
-        [ordered]@{ mode = [string]$Model.truncation_policy.mode; limit = [int]$Model.truncation_policy.limit }
-    } else {
-        [ordered]@{ mode = 'tokens'; limit = 10000 }
-    }
-    $experimentalTools = if ($props -contains 'experimental_supported_tools' -and $null -ne $Model.experimental_supported_tools) { @($Model.experimental_supported_tools) } else { @() }
+function New-DevRouterAdaptiveCatalogModel {
+    <#
+    .SYNOPSIS
+    Builds the `gpt-adaptive` entry: the Dev Router's OWN local alias.
 
-    # `base_instructions` is REQUIRED by Codex 0.145+ and is absent from the
-    # models cache, so it is always synthesized here.
-    $baseInstructions = if ($props -contains 'base_instructions' -and -not [string]::IsNullOrWhiteSpace([string]$Model.base_instructions)) {
-        [string]$Model.base_instructions
-    } elseif (-not [string]::IsNullOrWhiteSpace($resolvedDescription)) {
-        $resolvedDescription
-    } else {
-        "Codex model $resolvedSlug"
-    }
+    Unlike official models this entry is ours, so its operational text is
+    written here on purpose. It carries no workflow/AGENTS behaviour and no
+    provider model instructions; the Dev Router proxy rewrites the alias to a
+    concrete model before the upstream call.
+    #>
+    param()
 
     $entry = [ordered]@{
-        slug                         = $resolvedSlug
-        display_name                 = $resolvedDisplay
-        description                  = $resolvedDescription
-        supported_reasoning_levels   = $levels.ToArray()
-        shell_type                   = $shellType
-        visibility                   = $visibility
-        supported_in_api             = $supportedInApi
-        priority                     = $priorityValue
-        base_instructions            = $baseInstructions
-        support_verbosity            = $supportVerbosity
-        truncation_policy            = $truncation
-        supports_parallel_tool_calls = $parallelTools
+        slug                         = 'gpt-adaptive'
+        display_name                 = 'GPT-Adaptive'
+        description                  = 'Adaptive intelligent model routing powered by TypeSafe/Jev'
+        supported_reasoning_levels   = (ConvertTo-DevRouterReasoningLevels -Efforts (Get-DevRouterAdaptiveEfforts) -DefaultEffort 'medium')
+        shell_type                   = 'default'
+        visibility                   = 'list'
+        supported_in_api             = $true
+        priority                     = 0
+        base_instructions            = $script:DevRouterAdaptiveBaseInstructions
+        support_verbosity            = $true
+        truncation_policy            = [ordered]@{ mode = 'tokens'; limit = 10000 }
+        supports_parallel_tool_calls = $true
     }
     # An empty array literal inside a hashtable literal collapses to $null, which
     # Codex rejects ("invalid type: null, expected a sequence"). Assign a real
     # typed array through the indexer instead.
-    $toolList = New-Object System.Collections.Generic.List[string]
-    foreach ($tool in @($experimentalTools)) {
-        if ($null -ne $tool -and -not [string]::IsNullOrWhiteSpace([string]$tool)) { $toolList.Add([string]$tool) }
-    }
-    $entry['experimental_supported_tools'] = $toolList.ToArray()
-    if ($props -contains 'default_reasoning_level' -and -not [string]::IsNullOrWhiteSpace([string]$Model.default_reasoning_level)) {
-        $entry['default_reasoning_level'] = [string]$Model.default_reasoning_level
-    }
-    $providerId = if (-not [string]::IsNullOrWhiteSpace($ModelProviderId)) { $ModelProviderId }
-        elseif ($props -contains 'model_provider_id') { [string]$Model.model_provider_id }
-        else { '' }
-    if (-not [string]::IsNullOrWhiteSpace($providerId)) {
-        $entry['model_provider_id'] = $providerId
-    }
+    $entry['experimental_supported_tools'] = (New-Object System.Collections.Generic.List[string]).ToArray()
+    $entry['model_provider_id'] = 'dev-router'
     return [pscustomobject]$entry
-}
-
-function New-DevRouterCatalogModel {
-    param(
-        [Parameter(Mandatory)][string]$Slug,
-        [string]$DisplayName,
-        [string]$Description,
-        [string[]]$Efforts = @('low', 'medium', 'high', 'xhigh'),
-        [string]$DefaultEffort = 'medium',
-        [string]$ModelProviderId,
-        [int]$Priority = 0
-    )
-    return ConvertTo-DevRouterCatalogModel -Model ([pscustomobject]@{}) -Slug $Slug -DisplayName $DisplayName `
-        -Description $Description -Efforts $Efforts -DefaultEffort $DefaultEffort `
-        -ModelProviderId $ModelProviderId -Priority $Priority
 }
 
 function Test-DevRouterModelCatalogShape {
@@ -840,7 +1065,7 @@ function Test-DevRouterModelCatalogShape {
     if ($models.Count -eq 0) {
         return @{ valid = $false; reason = 'catalog model group is empty' }
     }
-    $required = @('slug', 'display_name', 'supported_reasoning_levels', 'shell_type', 'visibility', 'supported_in_api', 'priority', 'base_instructions', 'support_verbosity', 'truncation_policy', 'supports_parallel_tool_calls', 'experimental_supported_tools')
+    $required = $script:DevRouterRequiredCatalogFields
     $seenSlugs = New-Object System.Collections.Generic.List[string]
     foreach ($model in $models) {
         $props = @($model.PSObject.Properties | ForEach-Object { $_.Name })
@@ -872,10 +1097,47 @@ function Test-DevRouterModelCatalogShape {
     return @{ valid = $true; reason = "catalog exposes $($models.Count) models: $($seenSlugs -join ', ')" }
 }
 
+function Restore-DevRouterCatalogFile {
+    <#
+    .SYNOPSIS
+    Fail-closed recovery for a `model_catalog_json` artifact.
+
+    Never leaves an incompatible catalog behind: restores the previous
+    `.invalid-backup` when present, otherwise removes the file. A catalog that
+    still passes structural validation is left untouched.
+    #>
+    param([Parameter(Mandatory)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return }
+    $shape = Test-DevRouterModelCatalogShape -Path $Path
+    if ($shape.valid) { return }
+
+    $backup = "$Path.invalid-backup"
+    if (Test-Path -LiteralPath $backup -PathType Leaf) {
+        Move-Item -LiteralPath $backup -Destination $Path -Force
+    }
+    else {
+        Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Export-DevRouterModelCatalog {
+    <#
+    .SYNOPSIS
+    Writes the composite `model_catalog_json` artifact (GPT-Adaptive + official models).
+
+    Official models are never normalized or synthesized: each models-cache entry
+    is preserved verbatim and only `base_instructions` /
+    `supports_parallel_tool_calls` are taken from the bundled official catalog.
+    Cache slugs absent from the bundled catalog are omitted and recorded. When
+    the bundled catalog cannot be obtained the export fails closed (throws)
+    without writing anything.
+    #>
+    [CmdletBinding()]
     param(
         [string]$CodexHome,
-        [string]$OutputPath
+        [string]$OutputPath,
+        [switch]$PassThru
     )
 
     $paths = Get-DevRouterPaths -CodexHome $CodexHome
@@ -885,59 +1147,95 @@ function Export-DevRouterModelCatalog {
         [void][IO.Directory]::CreateDirectory($targetDir)
     }
 
-    # Official models are read from the Codex cache and NORMALIZED: the cache is
-    # not a valid ModelInfo catalog on its own (it omits `base_instructions` and
-    # `supports_parallel_tool_calls`, which Codex 0.145+ requires), so passing
-    # entries through verbatim would break configuration loading.
-    $officialModels = New-Object System.Collections.Generic.List[object]
-    $modelsCachePath = Join-Path $paths.CodexHome 'models_cache.json'
-    $foundCached = $false
+    $omissions = New-Object System.Collections.Generic.List[object]
 
+    # Fail closed BEFORE writing anything: without the bundled official catalog
+    # there is no non-invented source for `base_instructions` /
+    # `supports_parallel_tool_calls`, and synthesized instructions silently
+    # change model behaviour.
+    try {
+        $bundledCatalog = Get-DevRouterBundledCatalog
+    }
+    catch {
+        $script:DevRouterLastCatalogOmissions = $omissions.ToArray()
+        Restore-DevRouterCatalogFile -Path $targetPath
+        throw "Dev Router model catalog export aborted (fail closed): $($_.Exception.Message)"
+    }
+
+    $bundledBySlug = [ordered]@{}
+    foreach ($bundled in $bundledCatalog) {
+        $slug = [string]$bundled.slug
+        if (-not [string]::IsNullOrWhiteSpace($slug) -and -not $bundledBySlug.Contains($slug)) {
+            $bundledBySlug[$slug] = $bundled
+        }
+    }
+
+    # Official models come from the Codex models cache. Each entry is preserved
+    # VERBATIM (unknown keys may matter); only the two REQUIRED fields the cache
+    # omits are overlaid from the bundled catalog. A cache slug absent from the
+    # bundled catalog is OMITTED and recorded: its instructions cannot be
+    # honestly produced.
+    $cacheEntries = New-Object System.Collections.Generic.List[object]
+    $cacheSlugs = New-Object System.Collections.Generic.List[string]
+    $modelsCachePath = Join-Path $paths.CodexHome 'models_cache.json'
     if (Test-Path -LiteralPath $modelsCachePath -PathType Leaf) {
         try {
             $cacheObj = (Get-Content -LiteralPath $modelsCachePath -Raw -Encoding UTF8) | ConvertFrom-Json
-            $entries = @()
+            $rawEntries = @()
             if ($cacheObj -is [System.Collections.IEnumerable] -and -not ($cacheObj -is [string])) {
-                $entries = @($cacheObj)
+                $rawEntries = @($cacheObj)
             }
-            elseif ($cacheObj.PSObject.Properties.Name -contains 'models') {
-                $entries = @($cacheObj.models)
+            elseif (@($cacheObj.PSObject.Properties | ForEach-Object { $_.Name }) -contains 'models') {
+                $rawEntries = @($cacheObj.models)
             }
             else {
-                $entries = @($cacheObj)
+                $rawEntries = @($cacheObj)
             }
-            foreach ($m in $entries) {
-                if ($null -eq $m) { continue }
-                $slug = [string]$m.slug
+            foreach ($raw in $rawEntries) {
+                if ($null -eq $raw) { continue }
+                $slug = if (@($raw.PSObject.Properties | ForEach-Object { $_.Name }) -contains 'slug') { [string]$raw.slug } else { '' }
                 if ([string]::IsNullOrWhiteSpace($slug) -or $slug -eq 'gpt-adaptive') { continue }
-                try {
-                    $officialModels.Add((ConvertTo-DevRouterCatalogModel -Model $m))
-                    $foundCached = $true
-                }
-                catch {}
+                $cacheEntries.Add($raw)
+                if (-not $cacheSlugs.Contains($slug)) { $cacheSlugs.Add($slug) }
             }
         }
-        catch {}
+        catch {
+            $reason = "models cache could not be parsed: $($_.Exception.Message)"
+            $omissions.Add([pscustomobject]@{ slug = '(models_cache.json)'; reason = $reason })
+            Write-Warning "Dev Router model catalog: ignoring unreadable models cache - $reason"
+        }
     }
 
-    if (-not $foundCached) {
-        # Structural fallback for a cold Codex home (no models cache yet).
-        $defaultOfficials = @(
-            @{ Slug = 'gpt-5.6-sol'; Display = 'gpt-5.6-sol'; Description = 'Latest frontier agentic coding model'; Efforts = @('low', 'medium', 'high', 'xhigh', 'max', 'ultra'); Default = 'medium' },
-            @{ Slug = 'gpt-6-astra'; Display = 'gpt-6-astra'; Description = 'Most capable model for complex work'; Efforts = @('low', 'medium', 'high', 'xhigh', 'max', 'ultra'); Default = 'low' },
-            @{ Slug = 'gpt-5.6-terra'; Display = 'gpt-5.6-terra'; Description = 'Balanced agentic coding model for everyday work'; Efforts = @('low', 'medium', 'high', 'xhigh', 'max', 'ultra'); Default = 'medium' },
-            @{ Slug = 'gpt-5.6-luna'; Display = 'gpt-5.6-luna'; Description = 'Fast and affordable agentic coding model'; Efforts = @('low', 'medium', 'high', 'xhigh', 'max'); Default = 'medium' }
-        )
-        foreach ($d in $defaultOfficials) {
-            $officialModels.Add((New-DevRouterCatalogModel -Slug $d.Slug -DisplayName $d.Display -Description $d.Description -Efforts $d.Efforts -DefaultEffort $d.Default))
+    $officialModels = New-Object System.Collections.Generic.List[object]
+    foreach ($cacheEntry in $cacheEntries) {
+        $slug = [string]$cacheEntry.slug
+        if (-not $bundledBySlug.Contains($slug)) {
+            $reason = "not present in the bundled official catalog ('codex debug models --bundled'); refusing to synthesize base_instructions"
+            $omissions.Add([pscustomobject]@{ slug = $slug; reason = $reason })
+            Write-Warning "Dev Router model catalog: omitting '$slug' - $reason"
+            continue
         }
+        try {
+            $officialModels.Add((ConvertTo-DevRouterCatalogModel -Model $cacheEntry -BundledEntry $bundledBySlug[$slug]))
+        }
+        catch {
+            $omissions.Add([pscustomobject]@{ slug = $slug; reason = [string]$_.Exception.Message })
+            Write-Warning "Dev Router model catalog: omitting '$slug' - $($_.Exception.Message)"
+        }
+    }
+
+    # Bundled models missing from the cache are still official: export them
+    # verbatim instead of leaving them out of the selector.
+    foreach ($bundled in $bundledCatalog) {
+        $slug = [string]$bundled.slug
+        if ([string]::IsNullOrWhiteSpace($slug) -or $slug -eq 'gpt-adaptive') { continue }
+        if ($cacheSlugs.Contains($slug)) { continue }
+        $officialModels.Add($bundled)
+        Write-Verbose "Dev Router model catalog: added bundled official model '$slug' (absent from the models cache)"
     }
 
     # Virtual model: GPT-Adaptive routes through the loopback Dev Router proxy.
-    $adaptiveEntry = New-DevRouterCatalogModel -Slug 'gpt-adaptive' -DisplayName 'GPT-Adaptive' `
-        -Description 'Adaptive intelligent model routing powered by TypeSafe/Jev' `
-        -Efforts @('none', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra') -DefaultEffort 'medium' `
-        -ModelProviderId 'dev-router' -Priority 0
+    $adaptiveEntry = New-DevRouterAdaptiveCatalogModel
 
     $group = New-Object System.Collections.Generic.List[object]
     $group.Add($adaptiveEntry)
@@ -957,16 +1255,22 @@ function Export-DevRouterModelCatalog {
     if (-not $shape.valid) {
         # Never leave an incompatible catalog behind: restore the previous one or
         # remove the file so Codex can still load its configuration.
-        $backup = "$targetPath.invalid-backup"
-        if (Test-Path -LiteralPath $backup -PathType Leaf) {
-            Move-Item -LiteralPath $backup -Destination $targetPath -Force
-        }
-        else {
-            Remove-Item -LiteralPath $targetPath -Force -ErrorAction SilentlyContinue
-        }
+        Restore-DevRouterCatalogFile -Path $targetPath
         throw "Dev Router model catalog failed structural validation: $($shape.reason)"
     }
 
+    $script:DevRouterLastCatalogOmissions = $omissions.ToArray()
+    if ($omissions.Count -gt 0) {
+        Write-Verbose ("Dev Router model catalog omitted: " + ((@($omissions | ForEach-Object { $_.slug })) -join ', '))
+    }
+
+    if ($PassThru) {
+        return [pscustomobject]@{
+            Path      = $targetPath
+            Omissions = $omissions.ToArray()
+            Models    = $group.ToArray()
+        }
+    }
     return $targetPath
 }
 
@@ -985,6 +1289,12 @@ function Register-DevRouterCodexIntegration {
     $repoProxyScript = Join-Path (Split-Path -Parent $PSCommandPath) 'dev-router-proxy.mjs'
     if (Test-Path -LiteralPath $repoProxyScript -PathType Leaf) {
         Copy-Item -LiteralPath $repoProxyScript -Destination $paths.ProxyScript -Force
+        foreach ($policyFile in @('dev-router-policy.json', 'dev-router-policy.mjs', 'dev-router-policy-cli.mjs')) {
+            $policySrc = Join-Path (Split-Path -Parent $PSCommandPath) $policyFile
+            if (Test-Path -LiteralPath $policySrc -PathType Leaf) {
+                Copy-Item -LiteralPath $policySrc -Destination (Join-Path $paths.KitDir $policyFile) -Force
+            }
+        }
     }
 
     # 3. Configure config.toml
@@ -1276,86 +1586,29 @@ function Invoke-DevRouterJevChoice {
         selected_raw       = $null
     }
 
-    # Formulate question and criteria mapping based on Target
-    $instructions = ''
-    $options = @()
-    $criteria = [ordered]@{}
+    # Formulate question, options and criteria through the canonical policy module
+    $optionSet = Invoke-DevRouterPolicyCli -Operation 'buildOptionSet' -Request @{
+        target         = $Target
+        baselineModel  = $baselineModelName
+        baselineEffort = $baselineEffortVal
+    }
 
-    switch ($Target) {
-        'effort_only' {
-            $supportedEfforts = Get-DevRouterModelEfforts -ModelNameOrId $baselineModelName
-            if ($supportedEfforts.Count -eq 0) {
-                $supportedEfforts = @('low', 'medium', 'high')
-            }
-            $options = @($supportedEfforts)
-            $instructions = "Select the appropriate reasoning effort for this task running on model '$baselineModelName'."
-            foreach ($eff in $options) {
-                $criteria[$eff] = switch ($eff) {
-                    'none'    { 'No reasoning effort: direct response without chain-of-thought.' }
-                    'minimal' { 'Minimal reasoning effort: trivial, simple tasks.' }
-                    'low'     { 'Low reasoning effort: straightforward mechanical task, clear requirements.' }
-                    'medium'  { 'Medium reasoning effort: standard implementation, balanced analysis.' }
-                    'high'    { 'High reasoning effort: intricate algorithms, deep debugging, complex reasoning.' }
-                    'xhigh'   { 'Extra high reasoning effort: critical architecture, subtle concurrency, high blast radius.' }
-                    'max'     { 'Maximum reasoning effort: most demanding multi-step reasoning.' }
-                    'ultra'   { 'Ultra reasoning effort: maximum computational budget.' }
-                    default   { "Reasoning effort: $eff" }
-                }
-            }
-        }
-        'model_only' {
-            # Allowlist: Luna, Sol, Astra (Terra strictly excluded from automatic routes)
-            # Filter models compatible with the baseline effort if set
-            $candidateModels = @()
-            foreach ($m in @('Luna', 'Sol', 'Astra')) {
-                if (Test-DevRouterEffortSupported -ModelNameOrId $m -Effort $baselineEffortVal) {
-                    $candidateModels += $m
-                }
-            }
-            if ($candidateModels.Count -eq 0) {
-                # SECTION 7: In model_only, if no permitted model supports effort, return bypass/incompatible instead of re-opening all models
-                return [ordered]@{
-                    model        = $baselineModelName
-                    effort       = $baselineEffortVal
-                    status       = 'incompatible'
-                    is_fallback  = $true
-                    reason       = "No permitted model supports effort '$baselineEffortVal'."
-                    confidence   = 0.0
-                    probabilities= $null
-                    selected_raw = $null
-                }
-            }
-            $options = @($candidateModels)
-            $instructions = "Select the best model from the allowlist for this task requiring reasoning effort '$baselineEffortVal'."
-            foreach ($m in $options) {
-                $mEntry = Resolve-DevRouterModel -ModelNameOrId $m
-                $desc = if ($null -ne $mEntry) { $mEntry.Description } else { "Model $m" }
-                $criteria[$m] = "$m - $desc"
-            }
-        }
-        'model_and_effort' {
-            # Candidate pairs of Model:Effort strictly from allowlist
-            $pairs = @()
-            foreach ($m in @('Luna', 'Sol', 'Astra')) {
-                $efforts = Get-DevRouterModelEfforts -ModelNameOrId $m
-                foreach ($eff in $efforts) {
-                    if ($eff -in @('minimal', 'low', 'medium', 'high', 'xhigh')) {
-                        $pairs += "$m`:$eff"
-                    }
-                }
-            }
-            $options = @($pairs)
-            $instructions = "Select the optimal model and reasoning effort pair from the allowlist for this task."
-            foreach ($p in $options) {
-                $parts = $p.Split(':')
-                $mName = $parts[0]
-                $eName = $parts[1]
-                $mEntry = Resolve-DevRouterModel -ModelNameOrId $mName
-                $profile = if ($null -ne $mEntry) { $mEntry.Profile } else { $mName }
-                $criteria[$p] = "Model $mName ($profile) paired with reasoning effort $eName."
-            }
+    if ([bool]$optionSet.incompatible) {
+        return [ordered]@{
+            model        = $baselineModelName
+            effort       = $baselineEffortVal
+            status       = 'incompatible'
+            is_fallback  = $true
+            reason       = [string]$optionSet.reason
+            confidence   = 0.0
+            probabilities= $null
+            selected_raw = $null
         }
     }
+
+    $instructions = [string]$optionSet.instructions
+    $options = @($optionSet.options)
+    $criteria = $optionSet.criteria
 
     # 1. Handle Mock Responses
     if ($null -ne $MockResponses) {
@@ -1422,11 +1675,12 @@ function Invoke-DevRouterJevChoice {
     $bodyJson = $bodyObj | ConvertTo-Json -Depth 6
 
     # 4. Invoke Transport
+    $jevEndpoint = if (-not [string]::IsNullOrWhiteSpace($env:DEV_ROUTER_JEV_ENDPOINT)) { $env:DEV_ROUTER_JEV_ENDPOINT } else { 'https://api.typesafe.ai/v1/systemone' }
     $responseObj = $null
     if ($null -ne $HttpTransportMock) {
         try {
             $mockReq = [pscustomobject]@{
-                Endpoint   = 'https://api.typesafe.ai/v1/systemone'
+                Endpoint   = $jevEndpoint
                 Method     = 'POST'
                 BodyJson   = $bodyJson
                 BodyObject = $bodyObj
@@ -1454,7 +1708,7 @@ function Invoke-DevRouterJevChoice {
         }
     }
     else {
-        $endpoint = 'https://api.typesafe.ai/v1/systemone'
+        $endpoint = $jevEndpoint
         $headers = @{
             'Authorization' = "Bearer $resolvedKey"
             'Content-Type'  = 'application/json'
@@ -1551,122 +1805,31 @@ function Parse-DevRouterChoice {
         [object]$Probabilities = $null
     )
 
-    if ([string]::IsNullOrWhiteSpace($Chosen)) {
-        return [ordered]@{
-            model        = $BaselineModel
-            effort       = $BaselineEffort
-            status       = 'invalid_choice'
-            is_fallback  = $true
-            reason       = 'Empty choice returned by Jev.'
-            confidence   = 0.0
-            probabilities= $null
-            selected_raw = $null
-        }
+    $result = Invoke-DevRouterPolicyCli -Operation 'parseChoice' -Request @{
+        choice         = $Chosen
+        target         = $Target
+        baselineModel  = $BaselineModel
+        baselineEffort = $BaselineEffort
     }
 
-    $cleanChosen = $Chosen.Trim()
-
-    # Must be in options
-    $matchedOption = $null
-    foreach ($opt in $Options) {
-        if ($cleanChosen.Equals($opt, [System.StringComparison]::OrdinalIgnoreCase)) {
-            $matchedOption = $opt
-            break
-        }
+    $status = if ([bool]$result.ok) { 'ok' } else { [string]$result.status }
+    if ($status -eq 'pair_incompatible') {
+        $status = 'incompatible'
     }
 
-    if ($null -eq $matchedOption) {
-        return [ordered]@{
-            model        = $BaselineModel
-            effort       = $BaselineEffort
-            status       = 'invalid_choice'
-            is_fallback  = $true
-            reason       = "Choice '$cleanChosen' was not in permitted options: ($($Options -join ', '))."
-            confidence   = 0.0
-            probabilities= $null
-            selected_raw = $cleanChosen
-        }
-    }
+    $resolvedModel = if ([string]::IsNullOrWhiteSpace([string]$result.model)) { $BaselineModel } else { [string]$result.model }
+    $resolvedEffort = if ([string]::IsNullOrWhiteSpace([string]$result.effort)) { $BaselineEffort } else { [string]$result.effort }
+    $selectedRaw = if ($null -eq $result.selectedRaw) { $null } else { [string]$result.selectedRaw }
 
-    switch ($Target) {
-        'effort_only' {
-            # STRICT AUTHORITY: Model is NEVER modified, even under high risk!
-            return [ordered]@{
-                model        = $BaselineModel
-                effort       = $matchedOption.ToLowerInvariant()
-                status       = 'ok'
-                is_fallback  = $false
-                reason       = 'jev_choice'
-                confidence   = $Confidence
-                probabilities= $Probabilities
-                selected_raw = $matchedOption
-            }
-        }
-        'model_only' {
-            # STRICT AUTHORITY: Effort is NEVER modified!
-            # Ensure model is strictly allowed (Luna, Sol, Astra)
-            if (-not (Test-DevRouterModelAllowed -ModelNameOrId $matchedOption)) {
-                return [ordered]@{
-                    model        = $BaselineModel
-                    effort       = $BaselineEffort
-                    status       = 'disallowed_model'
-                    is_fallback  = $true
-                    reason       = "Model '$matchedOption' is not in allowlist."
-                    confidence   = 0.0
-                    probabilities= $null
-                    selected_raw = $matchedOption
-                }
-            }
-            return [ordered]@{
-                model        = $matchedOption
-                effort       = $BaselineEffort
-                status       = 'ok'
-                is_fallback  = $false
-                reason       = 'jev_choice'
-                confidence   = $Confidence
-                probabilities= $Probabilities
-                selected_raw = $matchedOption
-            }
-        }
-        'model_and_effort' {
-            $parts = $matchedOption.Split(':')
-            if ($parts.Length -ne 2) {
-                return [ordered]@{
-                    model        = $BaselineModel
-                    effort       = $BaselineEffort
-                    status       = 'invalid_format'
-                    is_fallback  = $true
-                    reason       = "Invalid Model:Effort pair '$matchedOption'."
-                    confidence   = 0.0
-                    probabilities= $null
-                    selected_raw = $matchedOption
-                }
-            }
-            $m = $parts[0].Trim()
-            $e = $parts[1].Trim().ToLowerInvariant()
-            if (-not (Test-DevRouterModelAllowed -ModelNameOrId $m)) {
-                return [ordered]@{
-                    model        = $BaselineModel
-                    effort       = $BaselineEffort
-                    status       = 'disallowed_model'
-                    is_fallback  = $true
-                    reason       = "Model '$m' is not in allowlist."
-                    confidence   = 0.0
-                    probabilities= $null
-                    selected_raw = $matchedOption
-                }
-            }
-            return [ordered]@{
-                model        = $m
-                effort       = $e
-                status       = 'ok'
-                is_fallback  = $false
-                reason       = 'jev_choice'
-                confidence   = $Confidence
-                probabilities= $Probabilities
-                selected_raw = $matchedOption
-            }
-        }
+    return [ordered]@{
+        model        = $resolvedModel
+        effort       = $resolvedEffort
+        status       = $status
+        is_fallback  = -not [bool]$result.ok
+        reason       = [string]$result.reason
+        confidence   = if ([bool]$result.ok) { $Confidence } else { 0.0 }
+        probabilities= if ([bool]$result.ok) { $Probabilities } else { $null }
+        selected_raw = $selectedRaw
     }
 }
 
@@ -1712,56 +1875,40 @@ function Invoke-DevRouterTurn {
 
     # 1. Check if Mode is OFF
     if ($state.mode -eq 'off') {
+        $offDecision = Invoke-DevRouterPolicyCli -Operation 'decideRoute' -Request @{
+            mode            = 'off'
+            target          = [string]$state.target
+            baseline        = @{ model = $resolvedBaselineModel; effort = $resolvedBaselineEffort }
+            requestedEffort = $resolvedBaselineEffort
+        }
         return [ordered]@{
             conversation_id   = $ConversationId
             configured_mode   = 'off'
             effective_mode    = 'off'
             target            = [string]$state.target
-            applied_model     = $resolvedBaselineModel
-            applied_effort    = $resolvedBaselineEffort
+            applied_model     = [string]$offDecision.model
+            applied_effort    = [string]$offDecision.effort
             recommended_model = $null
             recommended_effort= $null
-            status            = 'off'
+            status            = [string]$offDecision.status
             is_locked         = $false
             lock_scope        = 'none'
-            reason            = 'router_off'
-            jev_called        = $false
+            reason            = [string]$offDecision.reason
+            jev_called        = [bool]$offDecision.jevCalled
         }
     }
 
     # 2. Check Existing Active Lock for this conversation (Thread Isolation & Precedence)
     $existingLock = Get-DevRouterLock -ConversationId $ConversationId -CodexHome $CodexHome
     if ($null -ne $existingLock) {
-        $lockValid = $true
-
-        # Invalidate lock if mode or target changed
-        if ($existingLock.PSObject.Properties.Name -contains 'mode' -and [string]$existingLock.mode -ne [string]$state.mode) {
-            $lockValid = $false
-        }
-        if ($existingLock.PSObject.Properties.Name -contains 'target' -and [string]$existingLock.target -ne [string]$state.target) {
-            $lockValid = $false
-        }
-
-        # Scope validation:
-        if ($lockValid) {
-            if ($Surface -eq 'workflow') {
-                if ([string]$existingLock.scope -ne 'workflow') {
-                    $lockValid = $false
-                }
-                elseif (-not [string]::IsNullOrWhiteSpace($ExecutionId) -and $existingLock.PSObject.Properties.Name -contains 'execution_id' -and [string]$existingLock.execution_id -ne $ExecutionId) {
-                    $lockValid = $false
-                }
-            }
-            else {
-                # In alignment
-                if ([string]$existingLock.scope -ne 'turn') {
-                    $lockValid = $false
-                }
-                elseif (-not [string]::IsNullOrWhiteSpace($TurnId) -and $existingLock.PSObject.Properties.Name -contains 'turn_id' -and [string]$existingLock.turn_id -ne $TurnId) {
-                    $lockValid = $false
-                }
-            }
-        }
+        $lockValid = [bool](Invoke-DevRouterPolicyCli -Operation 'isLockValid' -Request @{
+                lock        = $existingLock
+                mode        = [string]$state.mode
+                target      = [string]$state.target
+                surface     = $Surface
+                executionId = $ExecutionId
+                turnId      = $TurnId
+            })
 
         if ($lockValid) {
             return [ordered]@{
@@ -1806,28 +1953,43 @@ function Invoke-DevRouterTurn {
     $recommendedModel = [string]$jevResult.model
     $recommendedEffort = [string]$jevResult.effort
 
-    # 5. Handle Shadow Mode
+    # 5. Take the routing decision from the canonical policy module
+    $decision = Invoke-DevRouterPolicyCli -Operation 'decideRoute' -Request @{
+        mode            = [string]$state.mode
+        target          = [string]$state.target
+        baseline        = @{ model = $resolvedBaselineModel; effort = $resolvedBaselineEffort }
+        requestedEffort = $resolvedBaselineEffort
+        jevChoice       = $jevResult.selected_raw
+        jevStatus       = [string]$jevResult.status
+    }
+    $decisionModel = if ([string]::IsNullOrWhiteSpace([string]$decision.model)) { $resolvedBaselineModel } else { [string]$decision.model }
+    $decisionEffort = if ([string]::IsNullOrWhiteSpace([string]$decision.effort)) { $resolvedBaselineEffort } else { [string]$decision.effort }
+
+    # 6. Handle Shadow Mode
     if ($state.mode -eq 'shadow') {
         return [ordered]@{
             conversation_id   = $ConversationId
             configured_mode   = 'shadow'
             effective_mode    = 'shadow'
             target            = [string]$state.target
-            applied_model     = $resolvedBaselineModel
-            applied_effort    = $resolvedBaselineEffort
+            applied_model     = $decisionModel
+            applied_effort    = $decisionEffort
             recommended_model = $recommendedModel
             recommended_effort= $recommendedEffort
-            status            = [string]$jevResult.status
+            status            = [string]$decision.status
             is_locked         = $false
             lock_scope        = 'none'
-            reason            = 'shadow_observation'
-            jev_called        = $true
+            reason            = [string]$decision.reason
+            jev_called        = [bool]$decision.jevCalled
         }
     }
 
-    # 6. Revalidate Final Pair Compatibility
-    $pairSupported = Test-DevRouterEffortSupported -ModelNameOrId $recommendedModel -Effort $recommendedEffort
-    if (-not $pairSupported) {
+    # 7. Revalidate Final Pair Compatibility through the canonical policy
+    $pairSupported = $true
+    if (-not [string]::IsNullOrWhiteSpace($decisionEffort)) {
+        $pairSupported = Test-DevRouterEffortSupported -ModelNameOrId $decisionModel -Effort $decisionEffort
+    }
+    if (-not $pairSupported -or ([bool]$decision.isFallback -and [string]$decision.status -eq 'incompatible')) {
         return [ordered]@{
             conversation_id   = $ConversationId
             configured_mode   = [string]$state.mode
@@ -1840,12 +2002,12 @@ function Invoke-DevRouterTurn {
             status            = 'incompatible'
             is_locked         = $false
             lock_scope        = 'none'
-            reason            = "Incompatible model and effort pair: $recommendedModel with $recommendedEffort."
-            jev_called        = $true
+            reason            = [string]$decision.reason
+            jev_called        = [bool]$decision.jevCalled
         }
     }
 
-    # 7. Check Desktop GUI Surface vs CLI Harness
+    # 8. Check Desktop GUI Surface vs CLI Harness
     $statusInfo = Get-DevRouterStatus -CodexHome $CodexHome -ConversationId $ConversationId
     if ($AdapterSurface -eq 'codex_app_gui' -and $statusInfo.integration_status -ne 'integrated') {
         return [ordered]@{
@@ -1861,13 +2023,13 @@ function Invoke-DevRouterTurn {
             is_locked         = $false
             lock_scope        = 'none'
             reason            = 'codex_desktop_app_unintegrated'
-            jev_called        = $true
+            jev_called        = [bool]$decision.jevCalled
         }
     }
 
-    # Active Route Applied:
-    $appliedModel = $recommendedModel
-    $appliedEffort = $recommendedEffort
+    # Active Route Applied (decision from the canonical policy module):
+    $appliedModel = $decisionModel
+    $appliedEffort = $decisionEffort
 
     # Acquire Lock
     $scope = if ($Surface -eq 'workflow') { 'workflow' } else { 'turn' }
@@ -1892,11 +2054,11 @@ function Invoke-DevRouterTurn {
         applied_effort    = $appliedEffort
         recommended_model = $recommendedModel
         recommended_effort= $recommendedEffort
-        status            = [string]$jevResult.status
+        status            = [string]$decision.status
         is_locked         = $true
         lock_scope        = $scope
-        reason            = [string]$jevResult.reason
-        jev_called        = $true
+        reason            = [string]$decision.reason
+        jev_called        = [bool]$decision.jevCalled
     }
 }
 

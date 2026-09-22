@@ -5,6 +5,54 @@ O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Política única do Dev Router** (`scripts/dev-router-policy.json` +
+  `scripts/dev-router-policy.mjs` + `scripts/dev-router-policy-cli.mjs`): o
+  catálogo de modelos, os esforços suportados, o allow/deny de roteamento
+  automático (Terra nunca é escolhido automaticamente), os conjuntos de opções
+  por `target`, o parsing da escolha do Jev, `decideRoute` e a validação de lock
+  passam a ter uma única fonte de verdade. O proxy Node importa o módulo e o
+  PowerShell consome o mesmo módulo via CLI JSON, eliminando duas
+  implementações que podiam divergir.
+- **Sticky routing no proxy real**: lock por fronteira derivada de
+  `conversation_id` / cadeia de `previous_response_id` / `session_id`,
+  compartilhando o mesmo `dev-router-locks.json` do core. Uma continuação de
+  ferramenta dentro do mesmo turno reutiliza a rota e NÃO chama o Jev de novo;
+  uma fronteira nova permite nova decisão. Sem fronteira confiável o proxy
+  preserva a rota ativa (ou falha fechado), nunca inventa.
+- **`manual_base_model` / `manual_base_effort`** no estado do Dev Router, para
+  separar a base concreta escolhida manualmente do alias `gpt-adaptive`.
+- **`DEV_ROUTER_UPSTREAM_PATH`** e resolução correta do caminho upstream:
+  bases que já carregam caminho (ex.: `https://chatgpt.com/backend-api/codex`,
+  autenticação ChatGPT) recebem `/responses`, enquanto hosts nus mantêm
+  `/v1/responses`.
+- **`DEV_ROUTER_JEV_ENDPOINT` / `DEV_ROUTER_JEV_TIMEOUT_MS`** para permitir
+  testes determinísticos com mock do Jev sem tocar a rede.
+- `scripts/test-dev-router-proxy.ps1`: 39 asserções de conformidade do proxy
+  real contra upstream e Jev mockados, incluindo guarda de alias, rota sticky,
+  base ausente (fail-closed), Terra e caminho upstream com path.
+
+### Fixed
+
+- **`gpt-adaptive` nunca chega ao upstream**: guarda estrutural antes do
+  encaminhamento; sem base concreta o proxy responde 400 local
+  (`dev_router_missing_base`) sem contatar o upstream, em vez de reutilizar o
+  alias ou inventar `Sol`.
+- **`effort_only` funciona com modelo concreto**: um modelo selecionado
+  manualmente (Sol/Astra/Luna) passa a ser roteado no esforço — antes o proxy só
+  agia quando o modelo era exatamente `gpt-adaptive`.
+- **Catálogo não inventa mais metadados oficiais**: `base_instructions` e
+  `supports_parallel_tool_calls` vêm exclusivamente de
+  `codex debug models --bundled`. Modelos do cache sem contraparte bundled
+  (`gpt-6-astra`, `gpt-reserve` no codex-cli 0.145.0) são OMITIDOS com motivo
+  registrado, em vez de receberem texto sintético que alteraria o comportamento
+  do modelo. A entrada `gpt-adaptive` (alias local nosso) mantém texto neutro de
+  roteamento e anuncia apenas os esforços realmente suportados pelos modelos
+  concretos elegíveis.
+- `scripts/test-dev-router.ps1` não vaza mais chamada live ao TypeSafe/Jev e o
+  cenário end-to-end usa base concreta explícita.
+
 ### Fixed
 
 - Catálogo de modelos do Dev Router (`model_catalog_json`) reescrito para o

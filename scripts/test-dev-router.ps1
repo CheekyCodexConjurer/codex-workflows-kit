@@ -40,6 +40,56 @@ function Assert-Test {
     }
 }
 
+function Get-BundledCatalogForTest {
+    $previousErrorActionPreference = $ErrorActionPreference
+    $raw = $null
+    $exitCode = 0
+    try {
+        $ErrorActionPreference = 'Continue'
+        $raw = (& codex debug models --bundled 2>$null | Out-String)
+        $exitCode = $LASTEXITCODE
+    }
+    catch {
+        return $null
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    if ($exitCode -ne 0 -or [string]::IsNullOrWhiteSpace($raw)) { return $null }
+    $jsonStart = $raw.IndexOf('{')
+    if ($jsonStart -lt 0) { return $null }
+    try {
+        $parsed = ($raw.Substring($jsonStart) | ConvertFrom-Json)
+    }
+    catch {
+        return $null
+    }
+    if ($null -eq $parsed.models) { return $null }
+    return @($parsed.models)
+}
+
+function Assert-BundledFidelity {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $false)][object[]]$Entries = @(),
+        [Parameter(Mandatory = $true)][hashtable]$BundledBySlug
+    )
+
+    $violations = New-Object System.Collections.Generic.List[string]
+    foreach ($entry in @($Entries)) {
+        if ($null -eq $entry) { continue }
+        $slug = [string]$entry.slug
+        if (-not $BundledBySlug.ContainsKey($slug)) { continue }
+        if ([string]$entry.base_instructions -cne [string]$BundledBySlug[$slug].base_instructions) {
+            $violations.Add("$slug/base_instructions")
+        }
+        if ([bool]$entry.supports_parallel_tool_calls -ne [bool]$BundledBySlug[$slug].supports_parallel_tool_calls) {
+            $violations.Add("$slug/supports_parallel_tool_calls")
+        }
+    }
+    Assert-Test $Name ($violations.Count -eq 0) ($violations -join '; ')
+}
+
 Write-Host "Running Dev Router Contract and Integration Tests..." -ForegroundColor Cyan
 
 $tempTestDir = Join-Path ([IO.Path]::GetTempPath()) ("dev-router-test-" + [Guid]::NewGuid().ToString('N'))
@@ -712,8 +762,17 @@ base_url = "http://127.0.0.1:4040/v1"
     # ------------------------------------------------------------------------
     Write-Host "`nSection 19: Composite Model Catalog Generation" -ForegroundColor Yellow
 
-    $catalogPath = Export-DevRouterModelCatalog -CodexHome $testCodexHome
+    # The compiled-in catalog is the ONLY non-invented source of
+    # `base_instructions` / `supports_parallel_tool_calls`; fetch it once for comparison.
+    $bundledCatalog = Get-BundledCatalogForTest
+    Assert-Test "Bundled official catalog is available for comparison" ($null -ne $bundledCatalog -and @($bundledCatalog).Count -gt 0)
+    $bundledBySlug = @{}
+    foreach ($bundledModel in @($bundledCatalog)) { $bundledBySlug[[string]$bundledModel.slug] = $bundledModel }
+
+    $catalogResult = Export-DevRouterModelCatalog -CodexHome $testCodexHome -PassThru -WarningAction SilentlyContinue
+    $catalogPath = $catalogResult.Path
     Assert-Test "Model catalog file created" (Test-Path -LiteralPath $catalogPath -PathType Leaf)
+    Assert-Test "Cold Codex home exports every bundled model with zero omissions" (@($catalogResult.Omissions).Count -eq 0)
 
     # Codex >= 0.145 requires UTF-8 without BOM; a BOM breaks configuration load.
     $catalogBytes = [IO.File]::ReadAllBytes($catalogPath)
@@ -739,18 +798,40 @@ base_url = "http://127.0.0.1:4040/v1"
 
     $foundAdaptive = $null
     $foundSol = $null
-    $foundAstra = $null
     foreach ($entry in $catEntries) {
         if ($entry.slug -eq 'gpt-adaptive') { $foundAdaptive = $entry }
         if ($entry.slug -eq 'gpt-5.6-sol') { $foundSol = $entry }
-        if ($entry.slug -eq 'gpt-6-astra') { $foundAstra = $entry }
     }
 
     Assert-Test "Catalog contains gpt-adaptive entry" ($null -ne $foundAdaptive)
     Assert-Test "GPT-Adaptive has exact display_name 'GPT-Adaptive'" ($foundAdaptive.display_name -eq 'GPT-Adaptive')
     Assert-Test "GPT-Adaptive has model_provider_id 'dev-router'" ($foundAdaptive.model_provider_id -eq 'dev-router')
     Assert-Test "Catalog preserves official model Sol" ($null -ne $foundSol)
-    Assert-Test "Catalog preserves official model Astra" ($null -ne $foundAstra)
+
+    # Every bundled official slug must be present. `gpt-6-astra` is NOT bundled in
+    # codex-cli 0.145.0, so it may legitimately be absent (it must not be required).
+    $catalogSlugs = @($catEntries | ForEach-Object { [string]$_.slug })
+    $missingBundledSlugs = @($bundledBySlug.Keys | Where-Object { $catalogSlugs -notcontains $_ })
+    Assert-Test "Catalog contains every bundled official slug (missing=$($missingBundledSlugs -join ','))" ((@($bundledBySlug.Keys).Count -gt 0) -and ($missingBundledSlugs.Count -eq 0))
+    Assert-Test "Catalog never requires the unbundled gpt-6-astra" (($catalogSlugs -notcontains 'gpt-6-astra') -or $bundledBySlug.ContainsKey('gpt-6-astra'))
+
+    # GPT-Adaptive must advertise exactly the eligible concrete-model effort
+    # intersection (Luna/Sol/Astra) and never max/ultra if no eligible model has them.
+    $routerEffortSets = New-Object System.Collections.Generic.List[object]
+    foreach ($eligibleName in @('Luna', 'Sol', 'Astra')) {
+        $routerEffortSets.Add(@(Get-DevRouterModelEfforts -ModelNameOrId $eligibleName))
+    }
+    $expectedAdaptiveEfforts = New-Object System.Collections.Generic.List[string]
+    foreach ($candidateEffort in @($routerEffortSets[0])) {
+        $sharedByAll = $true
+        for ($setIndex = 1; $setIndex -lt $routerEffortSets.Count; $setIndex++) {
+            if (@($routerEffortSets[$setIndex]) -notcontains $candidateEffort) { $sharedByAll = $false; break }
+        }
+        if ($sharedByAll) { $expectedAdaptiveEfforts.Add($candidateEffort) }
+    }
+    $adaptiveEfforts = @($foundAdaptive.supported_reasoning_levels | ForEach-Object { [string]$_.effort })
+    Assert-Test "GPT-Adaptive advertises exactly the eligible effort intersection ([$($adaptiveEfforts -join ',')])" (($adaptiveEfforts -join '|') -ceq ($expectedAdaptiveEfforts.ToArray() -join '|'))
+    Assert-Test "GPT-Adaptive advertises neither max nor ultra" (($adaptiveEfforts -notcontains 'max') -and ($adaptiveEfforts -notcontains 'ultra'))
 
     # Every entry must carry the fields Codex 0.145+ rejects configuration without.
     $requiredCatalogFields = @('slug', 'display_name', 'supported_reasoning_levels', 'shell_type', 'visibility', 'supported_in_api', 'priority', 'base_instructions', 'support_verbosity', 'truncation_policy', 'supports_parallel_tool_calls', 'experimental_supported_tools')
@@ -765,7 +846,103 @@ base_url = "http://127.0.0.1:4040/v1"
     }
     Assert-Test "No entry is missing a field required by Codex 0.145+ (missing=$missingFieldCount)" ($missingFieldCount -eq 0)
     Assert-Test "No entry uses the rejected legacy catalog keys (legacy=$legacyKeyCount)" ($legacyKeyCount -eq 0)
+
+    # Anti-invention invariant: no entry may carry a `base_instructions` copied
+    # from its `description` or from the old "Codex model <slug>" placeholder.
+    $inventedBaseCount = 0
+    foreach ($entry in $catEntries) {
+        $entryProps = @($entry.PSObject.Properties | ForEach-Object { $_.Name })
+        $base = [string]$entry.base_instructions
+        $slug = [string]$entry.slug
+        if ([string]::IsNullOrWhiteSpace($base)) { $inventedBaseCount++ }
+        if ($entryProps -contains 'description' -and $base -ceq [string]$entry.description) { $inventedBaseCount++ }
+        if ($base -ceq "Codex model $slug") { $inventedBaseCount++ }
+    }
+    Assert-Test "No entry synthesizes base_instructions from description/placeholder (violations=$inventedBaseCount)" ($inventedBaseCount -eq 0)
+    Assert-BundledFidelity -Name "Every bundled slug keeps the exact bundled base_instructions and supports_parallel_tool_calls" -Entries $catEntries -BundledBySlug $bundledBySlug
+
     Assert-Test "experimental_supported_tools is an empty array, never null" ($null -ne $foundAdaptive.experimental_supported_tools -and @($foundAdaptive.experimental_supported_tools).Count -eq 0)
+
+    # ------------------------------------------------------------------------
+    # SECTION 19B: Bundled Fidelity Against a Deterministic Cache (Anti-Invention)
+    # ------------------------------------------------------------------------
+    Write-Host "`nSection 19B: Bundled Fidelity Against a Deterministic Cache" -ForegroundColor Yellow
+
+    $inventionCodexHome = Join-Path $tempTestDir 'codex-invention'
+    [void][IO.Directory]::CreateDirectory($inventionCodexHome)
+
+    # Adversarial synthetic cache:
+    # - `gpt-5.6-sol` is bundled, and its two REQUIRED fields carry deliberately
+    #   wrong synthesized values that MUST be replaced by the bundled truth;
+    # - `gpt-6-astra` is NOT bundled and MUST be omitted, never invented;
+    # - an unknown key and the original description must survive verbatim.
+    $seedCacheJson = @'
+{
+  "models": [
+    {
+      "slug": "gpt-5.6-sol",
+      "display_name": "Synthetic Sol",
+      "description": "SYNTHETIC description that must never become base_instructions",
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        { "effort": "low", "description": "low" },
+        { "effort": "medium", "description": "medium (default)" }
+      ],
+      "shell_type": "unified_exec",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 5,
+      "base_instructions": "SYNTHETIC CACHE BASE INSTRUCTIONS - MUST BE REPLACED",
+      "support_verbosity": true,
+      "truncation_policy": { "mode": "tokens", "limit": 10000 },
+      "supports_parallel_tool_calls": false,
+      "experimental_supported_tools": [],
+      "custom_cache_marker": "preserve-me"
+    },
+    {
+      "slug": "gpt-6-astra",
+      "display_name": "Synthetic Astra",
+      "description": "Unbundled model that must be omitted",
+      "supported_reasoning_levels": [
+        { "effort": "low", "description": "low" }
+      ],
+      "shell_type": "unified_exec",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 99,
+      "base_instructions": "SYNTHETIC ASTRA BASE INSTRUCTIONS",
+      "support_verbosity": true,
+      "truncation_policy": { "mode": "tokens", "limit": 10000 },
+      "supports_parallel_tool_calls": true,
+      "experimental_supported_tools": []
+    }
+  ]
+}
+'@
+    [IO.File]::WriteAllText((Join-Path $inventionCodexHome 'models_cache.json'), $seedCacheJson, (New-Object System.Text.UTF8Encoding($false)))
+
+    $inventionResult = Export-DevRouterModelCatalog -CodexHome $inventionCodexHome -PassThru -WarningAction SilentlyContinue
+    $inventionJson = Get-Content -LiteralPath $inventionResult.Path -Raw -Encoding UTF8 | ConvertFrom-Json
+    $inventionEntries = @($inventionJson)
+    $inventionBySlug = @{}
+    foreach ($inventionEntry in $inventionEntries) { $inventionBySlug[[string]$inventionEntry.slug] = $inventionEntry }
+
+    Assert-Test "Deterministic export keeps the seeded bundled slug" ($inventionBySlug.ContainsKey('gpt-5.6-sol'))
+    Assert-Test "Deterministic export omits the unbundled cache slug" (-not $inventionBySlug.ContainsKey('gpt-6-astra'))
+
+    $bundledSol = $bundledBySlug['gpt-5.6-sol']
+    $exportedSol = $inventionBySlug['gpt-5.6-sol']
+    Assert-Test "Merged base_instructions equals the bundled value exactly" (($null -ne $exportedSol) -and [string]$exportedSol.base_instructions -ceq [string]$bundledSol.base_instructions)
+    Assert-Test "Merged supports_parallel_tool_calls equals the bundled value exactly" (($null -ne $exportedSol) -and [bool]$exportedSol.supports_parallel_tool_calls -eq [bool]$bundledSol.supports_parallel_tool_calls)
+    Assert-Test "Merged entry discards the synthetic cache base_instructions" (($null -ne $exportedSol) -and [string]$exportedSol.base_instructions -cne 'SYNTHETIC CACHE BASE INSTRUCTIONS - MUST BE REPLACED')
+    Assert-Test "Cache entry is preserved verbatim (unknown key kept)" (($null -ne $exportedSol) -and [string]$exportedSol.custom_cache_marker -ceq 'preserve-me')
+    Assert-Test "Cache entry is preserved verbatim (description kept)" (($null -ne $exportedSol) -and [string]$exportedSol.description -ceq 'SYNTHETIC description that must never become base_instructions')
+    Assert-Test "Cache entry keeps its own priority (cache wins over bundled)" (($null -ne $exportedSol) -and [int]$exportedSol.priority -eq 5)
+
+    $inventionOmittedSlugs = @($inventionResult.Omissions | ForEach-Object { [string]$_.slug })
+    Assert-Test "Unbundled slug omission is recorded with a reason" (($inventionOmittedSlugs -contains 'gpt-6-astra') -and (@($inventionResult.Omissions | Where-Object { $_.slug -eq 'gpt-6-astra' -and -not [string]::IsNullOrWhiteSpace($_.reason) }).Count -eq 1))
+    Assert-Test "Omitted slug never appears as invented base text" (-not (@($inventionEntries | ForEach-Object { [string]$_.base_instructions }) -contains 'SYNTHETIC ASTRA BASE INSTRUCTIONS'))
+    Assert-BundledFidelity -Name "Deterministic export invents no bundled model instructions" -Entries $inventionEntries -BundledBySlug $bundledBySlug
 
     # ------------------------------------------------------------------------
     # SECTION 20: Real Proxy Lifecycle & Integration
@@ -811,6 +988,20 @@ base_url = "http://127.0.0.1:4040/v1"
     # this end-to-end test and the asserted model would depend on a live answer.
     # Pin the state to `off` and blank the key so the run is byte-deterministic
     # and consumes no provider quota.
+    # The hardened proxy FAILS CLOSED when it must rewrite `gpt-adaptive` and no
+    # concrete base exists, so seed the manual base it must resolve to.
+    $devRouterStateFile = Join-Path $testCodexHome 'codex-workflows-kit\dev-router-state.json'
+    $presetState = [ordered]@{
+        version           = 1
+        product           = 'codex-workflows-kit'
+        component         = 'dev-router'
+        mode              = 'off'
+        target            = 'effort_only'
+        manual_base_model = 'gpt-5.6-sol'
+        manual_base_effort= 'medium'
+        updatedAt         = [datetime]::UtcNow.ToString('o')
+    }
+    [IO.File]::WriteAllText($devRouterStateFile, (($presetState | ConvertTo-Json -Depth 4) + [Environment]::NewLine), (New-Object System.Text.UTF8Encoding($false)))
     $null = Set-DevRouterState -Mode 'off' -Target 'effort_only' -CodexHome $testCodexHome
     $origZdrKey = $env:TYPESAFE_API_KEY
     $env:TYPESAFE_API_KEY = ''

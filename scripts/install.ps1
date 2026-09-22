@@ -1246,6 +1246,12 @@ function Save-InstallState {
         $proxyDest = Join-Path $CodexHome 'codex-workflows-kit\dev-router-proxy.mjs'
         if (Test-Path -LiteralPath $proxySrc -PathType Leaf) {
             Copy-Item -LiteralPath $proxySrc -Destination $proxyDest -Force
+            foreach ($policyFile in @('dev-router-policy.json', 'dev-router-policy.mjs', 'dev-router-policy-cli.mjs')) {
+                $policySrc = Join-Path $repo "scripts\$policyFile"
+                if (Test-Path -LiteralPath $policySrc -PathType Leaf) {
+                    Copy-Item -LiteralPath $policySrc -Destination (Join-Path $CodexHome "codex-workflows-kit\$policyFile") -Force
+                }
+            }
         }
         [void](Export-DevRouterModelCatalog -CodexHome $CodexHome)
     }

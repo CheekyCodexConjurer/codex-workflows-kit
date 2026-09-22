@@ -208,9 +208,20 @@ The proxy is a dependency-free Node.js service running locally on `127.0.0.1:404
 - **`GET /v1/models`**: Returns the active model catalog for Codex App Server.
 - **`POST /v1/responses`**: Receives requests from Codex Desktop with the user's authentic ChatGPT session bearer token:
   - If `body.model` is `gpt-adaptive`: sanitizes objective, checks Dev Router state, resolves concrete model and reasoning effort via Jev choice or baseline, updates `body.model` and `body.reasoning.effort`.
-  - Upstream request is forwarded transparently with original headers to the upstream provider (`api.openai.com`).
+  - With `state.target = effort_only` the proxy ALSO routes a manually selected concrete model (Sol/Astra/Luna): only the reasoning effort changes, the model never does. `gpt-adaptive` is not required to activate effort routing.
+  - **Sticky routing**: the decision is locked per boundary (`conversation_id`, response-chain `previous_response_id`, or `session_id`) in the same `dev-router-locks.json` the PowerShell core uses. Tool continuations inside the same turn reuse the locked route and never re-query Jev; a new boundary allows a new decision. Without a reliable boundary the proxy preserves the active route, and fails closed (local HTTP 400) if there is none.
+  - **Alias guard**: `gpt-adaptive` is a local alias and can NEVER reach the upstream. If no concrete base model is configured (`manual_base_model` in the state, or a concrete top-level `model` in `config.toml`), the proxy answers `400 dev_router_missing_base` locally instead of inventing `Sol`.
+  - Upstream request is forwarded transparently with original headers. The upstream path is derived from the base URL: a base with a path keeps it and gets `/responses` appended, while a bare host gets `/v1/responses`. ChatGPT auth uses `DEV_ROUTER_UPSTREAM=https://chatgpt.com/backend-api/codex`; API-key auth keeps the default `https://api.openai.com` (`/v1/responses`). Override the suffix entirely with `DEV_ROUTER_UPSTREAM_PATH`.
   - Response chunks are streamed back to Codex Desktop in real time.
   - Abort handling attaches to `res.on('close')` guarded by `!res.writableEnded` to prevent premature client socket resets.
+
+### Deterministic testing
+
+`DEV_ROUTER_JEV_ENDPOINT` redirects the Jev call to a local mock so conformance
+tests never touch the live TypeSafe endpoint. `scripts/test-dev-router-proxy.ps1`
+drives the real proxy against a mock upstream and a mock Jev and asserts routing,
+stickiness, the alias guard, fail-closed cases, Terra handling and the upstream
+path shape (39 assertions, zero live calls).
 
 ### Surface Status Inspection
 
