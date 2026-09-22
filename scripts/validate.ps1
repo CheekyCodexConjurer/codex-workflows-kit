@@ -2310,12 +2310,6 @@ function Assert-InstalledState {
         }
         Assert-CodexContinuationState -ContinuationState $State.codexContinuation
     }
-    if ($State.PSObject.Properties.Name -contains 'codexDevRouter') {
-        if ($null -eq $State.codexDevRouter) {
-            throw "Installed state contains an invalid codexDevRouter property."
-        }
-        Assert-CodexDevRouterState -DevRouterState $State.codexDevRouter
-    }
 
     if ($schema -ge 5) {
         if (-not ($State.PSObject.Properties.Name -contains 'codexBackend') -or $null -eq $State.codexBackend) {
@@ -2633,7 +2627,6 @@ function Test-PermittedLegacyRoleSurface {
         $RelativePath -eq 'skills/workflows/references/validation.md' -or
         $RelativePath -eq 'skills/workflows/references/skill-routing.md' -or
         $RelativePath -eq 'skills/workflows/references/context-reranking.md' -or
-        $RelativePath -eq 'skills/workflows/references/dev-router.md' -or
         $RelativePath.StartsWith('skills/workflows/scripts/') -or
         $RelativePath -eq 'skills/codebase-memory-mcp/SKILL.md' -or
         $RelativePath -eq 'skills/codebase-memory-mcp/references/scenarios.md' -or
@@ -2755,12 +2748,6 @@ $expectedPromptMap = [ordered]@{
     '^Numpad8' = '.\scripts\switch-subagent-strategy.ps1 -Strategy critical'
     '^Numpad9' = '.\scripts\switch-subagent-continuation.ps1 -Continuation park_and_wake'
     '^Numpad0' = '.\scripts\switch-subagent-backend.ps1 -Status'
-    '!Numpad1' = '.\scripts\switch-dev-router.ps1 -Mode off'
-    '!Numpad2' = '.\scripts\switch-dev-router.ps1 -Mode shadow'
-    '!Numpad3' = '.\scripts\switch-dev-router.ps1 -Mode on -Target effort_only'
-    '!Numpad4' = '.\scripts\switch-dev-router.ps1 -Mode on -Target model_only'
-    '!Numpad5' = '.\scripts\switch-dev-router.ps1 -Mode on -Target model_and_effort'
-    '!Numpad0' = '.\scripts\switch-dev-router.ps1 -Status'
 }
 
 $promptBindings = @([regex]::Matches($promptPad, '(?m)^([^^;\r\n:]+|\^[^\r\n:]+)::PastePrompt\("([^\"]+)"\)'))

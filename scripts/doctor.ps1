@@ -184,12 +184,6 @@ function Assert-InstallState {
         }
         Assert-CodexContinuationState -ContinuationState $State.codexContinuation
     }
-    if ($State.PSObject.Properties.Name -contains 'codexDevRouter') {
-        if ($null -eq $State.codexDevRouter) {
-            throw "Install state contains an invalid codexDevRouter property."
-        }
-        Assert-CodexDevRouterState -DevRouterState $State.codexDevRouter
-    }
 
     if ($schema -ge 5) {
         if (-not ($State.PSObject.Properties.Name -contains 'codexBackend') -or $null -eq $State.codexBackend) {
@@ -762,27 +756,6 @@ if ($installedProfile -eq 'safe') {
         }
     }
 
-    $devRouterStateFile = Join-Path $CodexHome 'codex-workflows-kit\dev-router-state.json'
-    if (Test-Path -LiteralPath $devRouterStateFile -PathType Leaf) {
-        try {
-            $dState = Get-Content -LiteralPath $devRouterStateFile -Raw -Encoding UTF8 | ConvertFrom-Json
-            Assert-CodexDevRouterState -DevRouterState $dState
-            Write-Check -Name 'Dev Router configuration' -Passed $true -Detail "mode=$($dState.mode), target=$($dState.target)"
-        }
-        catch {
-            Write-Check -Name 'Dev Router configuration' -Passed $false -Detail $_.Exception.Message
-        }
-    }
-    elseif ($null -ne $state -and ($state.PSObject.Properties.Name -contains 'codexDevRouter') -and $null -ne $state.codexDevRouter) {
-        try {
-            Assert-CodexDevRouterState -DevRouterState $state.codexDevRouter
-            Write-Check -Name 'Dev Router configuration' -Passed $true -Detail "mode=$($state.codexDevRouter.mode), target=$($state.codexDevRouter.target)"
-        }
-        catch {
-            Write-Check -Name 'Dev Router configuration' -Passed $false -Detail $_.Exception.Message
-        }
-    }
-
     $agentsMdContent = Read-SurfaceText -Path $agentsMdPath
     $managedBlockCount = @([regex]::Matches($agentsMdContent, '(?m)^# BEGIN CODEX-WORKFLOWS-KIT\r?$')).Count
     Write-Check -Name 'Unique managed policy (AGENTS)' -Passed ($managedBlockCount -eq 1) -Detail $agentsMdPath
@@ -1113,27 +1086,6 @@ if ($null -ne $cbmServer) {
 }
 else {
     Write-Check -Name 'Codebase Memory MCP' -Passed $true -Detail 'Not configured (optional free rollout)' -Optional
-}
-
-$devRouterStatePath = Join-Path $CodexHome 'codex-workflows-kit\dev-router-state.json'
-if (Test-Path -LiteralPath $devRouterStatePath -PathType Leaf) {
-    try {
-        $drRaw = Get-Content -LiteralPath $devRouterStatePath -Raw -Encoding UTF8 | ConvertFrom-Json
-        $drMode = [string]$drRaw.mode
-        $drTarget = [string]$drRaw.target
-        $drDetail = "Mode=$drMode; Target=$drTarget"
-        $drCatalogPath = Join-Path $CodexHome 'codex-workflows-kit\model-catalog.json'
-        if (Test-Path -LiteralPath $drCatalogPath -PathType Leaf) {
-            $drDetail += '; Composite catalog present'
-        }
-        Write-Check -Name 'Dev Router' -Passed $true -Detail $drDetail -Optional
-    }
-    catch {
-        Write-Check -Name 'Dev Router' -Passed $false -Detail "State file invalid: $($_.Exception.Message)" -Optional
-    }
-}
-else {
-    Write-Check -Name 'Dev Router' -Passed $true -Detail 'Default unconfigured (mode=off)' -Optional
 }
 
 $taskFilter = "(?i)(codex|prompt|deepseek|$tOc|$tRly|workflow)"

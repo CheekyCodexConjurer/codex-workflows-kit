@@ -35,15 +35,15 @@ O contrato único e detalhado é skills/workflows/SKILL.md (ciclo de vida,
 semântica das ferramentas MCP/nativas, modos pela tripla capacidades | permissão |
 gate de pronto e auditoria final); skills/workflows/references/ contém apenas
 referências especializadas abertas sob demanda (delegation, delivery-review, research, observability,
-validation, commit, quality-ratchet, skill-routing, context-reranking e dev-router).
+validation, commit, quality-ratchet, skill-routing e context-reranking).
 
 ## Requisitos
 
 - Windows 10 ou 11;
-- PowerShell 5.1+ ou PowerShell 7+ (totalmente suportado em ambas as versões de runtime para workflows, skill routing, context reranking e dev router);
+- PowerShell 5.1+ ou PowerShell 7+ (totalmente suportado em ambas as versões de runtime para workflows, skill routing e context reranking);
 - Codex (o perfil safe gerencia o seletor `subagent_backend` — `native` com `gpt-5.6-luna` ou `deepseek` via SubAgents MCP);
 - opcionalmente, AutoHotkey v2 para o prompt pad;
-- opcionalmente, chave `TYPESAFE_API_KEY` para otimização semântica via TypeSafe/Jev (skill routing, context reranking e dev router com fallbacks locais seguros).
+- opcionalmente, chave `TYPESAFE_API_KEY` para otimização semântica via TypeSafe/Jev (skill routing e context reranking com fallbacks locais seguros).
 
 Se a política de execução exigir, permita apenas o escopo do usuário depois de
 revisar o conteúdo. Nunca use bypass nem pipelines remotos.
@@ -176,27 +176,11 @@ O kit oferece comandos transacionais com verificação de drift (divergências n
 .\scripts\switch-subagent-policy.ps1 -Status
 .\scripts\switch-subagent-strategy.ps1 -Status
 .\scripts\switch-subagent-continuation.ps1 -Status
-
-# Dev Router: modo (off, shadow, on) e alvo (effort_only, model_only, model_and_effort)
-.\scripts\switch-dev-router.ps1 -Mode off
-.\scripts\switch-dev-router.ps1 -Mode shadow
-.\scripts\switch-dev-router.ps1 -Mode on
-.\scripts\switch-dev-router.ps1 -Target effort_only
-.\scripts\switch-dev-router.ps1 -Target model_only
-.\scripts\switch-dev-router.ps1 -Target model_and_effort
-.\scripts\switch-dev-router.ps1 -Status
-
-# Controle explícito do proxy de loopback (GPT-Adaptive)
-.\scripts\switch-dev-router.ps1 -StartProxy
-.\scripts\switch-dev-router.ps1 -StopProxy
 ~~~
-
-> [!TIP]
-> **GPT-Adaptive no Codex Desktop**: O Dev Router registra a opção **GPT-Adaptive** diretamente no dropdown "Selecionar modelo" do aplicativo Codex Desktop através de catálogo composto (`model_catalog_json`) e provedor local em loopback (`127.0.0.1:4040`). Ao selecionar `GPT-Adaptive`, o Dev Router intercepta as requisições em tempo real, consulta o TypeSafe/Jev conforme o `mode` e `target` ativos, reescreve modelo/reasoning effort e faz streaming contínuo das respostas com fallback seguro para o baseline.
 
 ### Prompt Pad (AutoHotkey)
 
-Com o Prompt Pad ativado (`ScrollLock`), o teclado numérico oferece atalhos diretos para workflows, atalhos com modificador `Ctrl` para backend/política e atalhos com modificador `Alt` para Dev Router:
+Com o Prompt Pad ativado (`ScrollLock`), o teclado numérico oferece atalhos diretos para workflows e atalhos com modificador `Ctrl` para controle dos seletores:
 
 | Atalho | Ação / Comando Injetado |
 |---|---|
@@ -207,12 +191,6 @@ Com o Prompt Pad ativado (`ScrollLock`), o teclado numérico oferece atalhos dir
 | `Ctrl + Numpad5` (`^Numpad5`) | `.\scripts\switch-subagent-policy.ps1 -Policy aggressive` |
 | `Ctrl + Numpad6` (`^Numpad6`) | `.\scripts\switch-subagent-policy.ps1 -Policy swarm` |
 | `Ctrl + Numpad0` (`^Numpad0`) | `.\scripts\switch-subagent-backend.ps1 -Status` |
-| `Alt + Numpad1` (`!Numpad1`) | `.\scripts\switch-dev-router.ps1 -Mode off` |
-| `Alt + Numpad2` (`!Numpad2`) | `.\scripts\switch-dev-router.ps1 -Mode shadow` |
-| `Alt + Numpad3` (`!Numpad3`) | `.\scripts\switch-dev-router.ps1 -Target effort_only` |
-| `Alt + Numpad4` (`!Numpad4`) | `.\scripts\switch-dev-router.ps1 -Target model_only` |
-| `Alt + Numpad5` (`!Numpad5`) | `.\scripts\switch-dev-router.ps1 -Target model_and_effort` |
-| `Alt + Numpad0` (`!Numpad0`) | `.\scripts\switch-dev-router.ps1 -Status` |
 
 > [!NOTE]
 > Os comandos de controle injetados pelo Prompt Pad assumem que o shell ativo está posicionado no diretório raiz do repositório (`checkout root`).
