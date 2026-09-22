@@ -3,7 +3,7 @@ Set-StrictMode -Version Latest
 $script:BackendKeyDefinitions = @(
     [ordered]@{ Path = 'features.multi_agent'; Table = 'features'; Key = 'multi_agent'; NativeValue = 'true'; ValueKind = 'bool' },
     [ordered]@{ Path = 'features.fast_mode'; Table = 'features'; Key = 'fast_mode'; NativeValue = 'false'; ValueKind = 'bool' },
-    [ordered]@{ Path = 'agents.default_subagent_model'; Table = 'agents'; Key = 'default_subagent_model'; NativeValue = '"gpt-5.6-luna"'; ValueKind = 'string' },
+    [ordered]@{ Path = 'agents.default_subagent_model'; Table = 'agents'; Key = 'default_subagent_model'; NativeValue = '"gpt-6-luna"'; ValueKind = 'string' },
     [ordered]@{ Path = 'agents.default_subagent_reasoning_effort'; Table = 'agents'; Key = 'default_subagent_reasoning_effort'; NativeValue = '"max"'; ValueKind = 'string' },
     [ordered]@{ Path = 'mcp_servers.subagents.enabled'; Table = 'mcp_servers.subagents'; Key = 'enabled'; NativeValue = 'false'; ValueKind = 'bool'; AliasPath = 'mcp_servers.deepseek-subagent.enabled'; AliasTable = 'mcp_servers.deepseek-subagent' }
 )

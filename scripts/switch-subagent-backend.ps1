@@ -520,7 +520,7 @@ catch {
 
 Write-Host "Selected subagent backend: $Backend"
 if ($Backend -ceq 'native') {
-    Write-Host 'Native children: model="gpt-5.6-luna", reasoning_effort="max", normal/default mode; Fast mode disabled.'
+    Write-Host 'Native children: model="gpt-6-luna", reasoning_effort="max", normal/default mode; Fast mode disabled.'
 }
 else {
     Write-Host 'DeepSeek/Gemini bridge route restored from its captured configuration values.'

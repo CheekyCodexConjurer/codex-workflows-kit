@@ -10,7 +10,7 @@ Existem quatro seletores globais ortogonais e independentes:
 
 1. **`subagent_backend` (`native` | `deepseek`)**:
    - Governa estritamente a família de ferramentas autorizada para delegação.
-   - `native`: autoriza subagentes nativos do Codex (`multi_agent_v1__spawn_agent`/`spawn_agent`/`wait_agent`) com `model="gpt-5.6-luna"`, `reasoning_effort="max"` e modo default/normal (`fast_mode = false`); proíbe contato com o SubAgents MCP. Não requer solicitação explícita prévia do usuário.
+   - `native`: autoriza subagentes nativos do Codex (`multi_agent_v1__spawn_agent`/`spawn_agent`/`wait_agent`) com `model="gpt-6-luna"`, `reasoning_effort="max"` e modo default/normal (`fast_mode = false`); proíbe contato com o SubAgents MCP. Não requer solicitação explícita prévia do usuário.
    - `deepseek`: autoriza as ferramentas do SubAgents MCP (`subagents_spawn`, `subagents_spawn_batch`, `subagents_continue`, `subagents_follow`, onde `subagents_spawn_batch` é a tool canônica de swarm e o spawn unitário `subagents_spawn` continua válido fora de ondas ou para uma única frente; compatível com `deepseek_continue` como identificador de continuação legado do backend e compatibilidade com aliases `deepseek_*` incluindo `deepseek_spawn_batch`); proíbe o uso de ferramentas nativas de trabalho pelo parent.
    - Fixação estrita de rota (*route pinning*): fallback silencioso entre backends é estritamente proibido.
 

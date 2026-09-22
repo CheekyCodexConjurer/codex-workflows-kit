@@ -2130,7 +2130,7 @@ command = "sample"
     Assert-Condition 'S15 reports selected backend and running-task boundary' ($nativeResult.Output -match '(?i)native' -and $nativeResult.Output -match '(?i)already-running|already running|running tasks.*unchanged') $nativeResult.Output
     Assert-Condition 'S15 enables native multi-agent matrix' ((Get-MultiAgentValue $nativeConfig) -ceq 'true') $nativeConfig
     Assert-Condition 'S15 explicitly disables fast mode' ($nativeConfig -match '(?m)^\s*fast_mode\s*=\s*false\s*(?:#.*)?$') $nativeConfig
-    Assert-Condition 'S15 pins native model and max reasoning' ($nativeConfig -match '(?m)^\s*default_subagent_model\s*=\s*"gpt-5\.6-luna"\s*(?:#.*)?$' -and $nativeConfig -match '(?m)^\s*default_subagent_reasoning_effort\s*=\s*"max"\s*(?:#.*)?$') $nativeConfig
+    Assert-Condition 'S15 pins native model and max reasoning' ($nativeConfig -match '(?m)^\s*default_subagent_model\s*=\s*"gpt-6-luna"\s*(?:#.*)?$' -and $nativeConfig -match '(?m)^\s*default_subagent_reasoning_effort\s*=\s*"max"\s*(?:#.*)?$') $nativeConfig
     $hasCanonicalMcp = ($nativeConfig -match '(?ms)\[mcp_servers\.subagents\].*?enabled\s*=\s*false' -and $nativeConfig -notmatch '\[mcp_servers\.deepseek-subagent\]')
     $hasLegacyMcp = ($nativeConfig -match '(?ms)\[mcp_servers\.deepseek-subagent\].*?enabled\s*=\s*false' -and $nativeConfig -notmatch '\[mcp_servers\.subagents\]')
     Assert-Condition 'S15 disables the DeepSeek MCP without deleting its table' (($hasCanonicalMcp -or $hasLegacyMcp) -and $nativeConfig -match '(?ms)\[mcp_servers\.sample\].*?command\s*=\s*"sample"') $nativeConfig
@@ -2210,7 +2210,7 @@ enabled = true
     Invoke-SafeInstall -Root $root
     $nativeAfterReinstall17 = Read-Config $root
     $stateAfterReinstall17 = Get-InstallState $root
-    Assert-Condition 'S17 safe reinstall preserves the selected native backend' ($nativeAfterReinstall17 -match '(?m)^\s*multi_agent\s*=\s*true\s*$' -and $nativeAfterReinstall17 -match '(?m)^\s*fast_mode\s*=\s*false\s*$' -and $nativeAfterReinstall17 -match '(?m)^\s*default_subagent_model\s*=\s*"gpt-5\.6-luna"\s*$' -and [string]$stateAfterReinstall17.codexBackend.selected -ceq 'native') $nativeAfterReinstall17
+    Assert-Condition 'S17 safe reinstall preserves the selected native backend' ($nativeAfterReinstall17 -match '(?m)^\s*multi_agent\s*=\s*true\s*$' -and $nativeAfterReinstall17 -match '(?m)^\s*fast_mode\s*=\s*false\s*$' -and $nativeAfterReinstall17 -match '(?m)^\s*default_subagent_model\s*=\s*"gpt-6-luna"\s*$' -and [string]$stateAfterReinstall17.codexBackend.selected -ceq 'native') $nativeAfterReinstall17
 
     $deepseek17 = Invoke-BackendSwitch -Root $root -Backend deepseek
     Assert-Condition 'S17 deepseek switch succeeds after reinstall' ($deepseek17.ExitCode -eq 0 -and (Read-Config $root) -match '(?m)^\s*multi_agent\s*=\s*false\s*$') $deepseek17.Output
@@ -2241,13 +2241,13 @@ enabled = true
     Assert-Condition 'S18 native switch succeeds before safety checks' ($nativeSafety.ExitCode -eq 0) $nativeSafety.Output
 
     $configPath18 = Join-Path (Get-CodexHome $root) 'config.toml'
-    $nativeTampered = (Read-Config $root).Replace('default_subagent_model = "gpt-5.6-luna"', 'default_subagent_model = "user-tampered-model"')
+    $nativeTampered = (Read-Config $root).Replace('default_subagent_model = "gpt-6-luna"', 'default_subagent_model = "user-tampered-model"')
     Write-FixtureFile -Path $configPath18 -Content $nativeTampered
     $driftResult18 = Invoke-BackendSwitch -Root $root -Backend deepseek
     Assert-Condition 'S18 user config drift blocks switching' ($driftResult18.ExitCode -ne 0 -and $driftResult18.Output -match '(?i)drift') $driftResult18.Output
     Assert-Condition 'S18 drift block leaves config untouched' ((Read-Config $root) -ceq $nativeTampered) ''
 
-    Write-FixtureFile -Path $configPath18 -Content (Read-Config $root).Replace('user-tampered-model', 'gpt-5.6-luna')
+    Write-FixtureFile -Path $configPath18 -Content (Read-Config $root).Replace('user-tampered-model', 'gpt-6-luna')
     $statePath18 = Join-Path (Get-CodexHome $root) 'codex-workflows-kit\install-state.json'
     $tamperedState18 = Get-InstallState $root
     $tamperedState18.codexBackend.selected = 'deepseek'
@@ -2302,7 +2302,7 @@ enabled = true
         $nativeExact = $nativeHostFirst.ExitCode -eq 0 -and
             (Get-TomlTableKeyCount -Text $nativeHostConfig -Table 'features' -Key 'multi_agent') -eq 1 -and $featuresHostBody -match '(?m)^\s*multi_agent\s*=\s*true\s*$' -and
             (Get-TomlTableKeyCount -Text $nativeHostConfig -Table 'features' -Key 'fast_mode') -eq 1 -and $featuresHostBody -match '(?m)^\s*fast_mode\s*=\s*false\s*$' -and
-            (Get-TomlTableKeyCount -Text $nativeHostConfig -Table 'agents' -Key 'default_subagent_model') -eq 1 -and $agentsHostBody -match '(?m)^\s*default_subagent_model\s*=\s*"gpt-5\.6-luna"\s*$' -and
+            (Get-TomlTableKeyCount -Text $nativeHostConfig -Table 'agents' -Key 'default_subagent_model') -eq 1 -and $agentsHostBody -match '(?m)^\s*default_subagent_model\s*=\s*"gpt-6-luna"\s*$' -and
             (Get-TomlTableKeyCount -Text $nativeHostConfig -Table 'agents' -Key 'default_subagent_reasoning_effort') -eq 1 -and $agentsHostBody -match '(?m)^\s*default_subagent_reasoning_effort\s*=\s*"max"\s*$' -and
             (Get-TomlTableKeyCount -Text $nativeHostConfig -Table 'mcp_servers.deepseek-subagent' -Key 'enabled') -eq 1 -and $deepseekHostBody -match '(?m)^\s*enabled\s*=\s*false\s*$'
         Assert-Condition "S19 $hostLabel first native switch has exact five-key matrix and one managed key each" $nativeExact $nativeHostFirst.Output
@@ -3013,7 +3013,7 @@ enabled = true
     Assert-Condition 'S31 switch-subagent-backend to native succeeds after unmanaged model change' ($switchNatResult31.ExitCode -eq 0) $switchNatResult31.Output
     $configAfterNat31 = Read-Config $root
     Assert-Condition 'S31 native switch preserves unmanaged model byte/value' ($configAfterNat31 -match '(?m)^\s*model\s*=\s*"custom-unmanaged-model-v4"\s*$') $configAfterNat31
-    Assert-Condition 'S31 native switch updates native backend matrix' ($configAfterNat31 -match '(?m)^\s*multi_agent\s*=\s*true\s*$' -and $configAfterNat31 -match '(?m)^\s*default_subagent_model\s*=\s*"gpt-5\.6-luna"\s*$') $configAfterNat31
+    Assert-Condition 'S31 native switch updates native backend matrix' ($configAfterNat31 -match '(?m)^\s*multi_agent\s*=\s*true\s*$' -and $configAfterNat31 -match '(?m)^\s*default_subagent_model\s*=\s*"gpt-6-luna"\s*$') $configAfterNat31
     $actualHashAfterNat31 = (Get-FileHash -LiteralPath $configPath31 -Algorithm SHA256).Hash
     $stateAfterNat31 = Get-InstallState $root
     $cfgEntryAfterNat31 = @($stateAfterNat31.files) | Where-Object { [string]$_.path -eq $configPath31 } | Select-Object -First 1
@@ -3236,7 +3236,7 @@ enabled = true
     # Requirement 2: subagent_backend selected (native) is also preserved
     Assert-Condition 'S33 update preserves selected native backend in state' ($stateAfterUpdate33.codexBackend.selected -ceq 'native') ''
     Assert-Condition 'S33 update preserves subagent_backend = native in global AGENTS.md' ($rtAfterUpdate33.Backend -ceq 'native') $agentsAfterUpdate33
-    Assert-Condition 'S33 update preserves native backend matrix in config.toml' ($configAfterUpdate33 -match '(?m)^\s*multi_agent\s*=\s*true\s*$' -and $configAfterUpdate33 -match '(?m)^\s*fast_mode\s*=\s*false\s*$' -and $configAfterUpdate33 -match '(?m)^\s*default_subagent_model\s*=\s*"gpt-5\.6-luna"\s*$') $configAfterUpdate33
+    Assert-Condition 'S33 update preserves native backend matrix in config.toml' ($configAfterUpdate33 -match '(?m)^\s*multi_agent\s*=\s*true\s*$' -and $configAfterUpdate33 -match '(?m)^\s*fast_mode\s*=\s*false\s*$' -and $configAfterUpdate33 -match '(?m)^\s*default_subagent_model\s*=\s*"gpt-6-luna"\s*$') $configAfterUpdate33
 
     # Requirement 3: Global kit artifacts are updated/present, and consumer repo AGENTS.md has NO runtime flags
     $wfSkillAgents33 = Join-Path (Get-AgentsHome $root33) 'skills\workflows\SKILL.md'

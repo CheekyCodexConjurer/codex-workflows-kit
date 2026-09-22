@@ -9,7 +9,7 @@
     The unmanaged footer of GEMINI.md previously preserved 3 proven conflicts:
     1. Native subagents / custom roles (5.6 Sol Medium, scout/reviewer/researcher role restrictions,
        omitting model/fork_context/reasoning_effort), which conflict with the managed subagent_backend
-       routing (DeepSeek via SubAgents MCP or native gpt-5.6-luna max reasoning) and Adaptive Swarm.
+       routing (DeepSeek via SubAgents MCP or native gpt-6-luna max reasoning) and Adaptive Swarm.
     2. Delivery review veto (forbidding independent reviewers before all phases are frozen, and
        forbidding reviewers per phase), which directly contradicts the managed rule:
        "revisor final integrado e único não proíbe o estilhaçamento intermediário independente útil".

@@ -6,7 +6,7 @@
 - Preserve mudanças existentes e evite operações destrutivas.
 - O padrão para logs novos é none; qualquer exceção exige obs-gate.
 - A governança de subagentes é regida por quatro seletores globais ortogonais:
-  `subagent_backend` (`native` com `gpt-5.6-luna` ou `deepseek` técnico via SubAgents MCP),
+  `subagent_backend` (`native` com `gpt-6-luna` ou `deepseek` técnico via SubAgents MCP),
   `delegation_policy` (`balanced` otimizando wall-clock time, `aggressive` otimizando desoneração de tokens, ou `swarm` com ondas do DAG, fan-out lógico elástico, dynamic wake e fail-closed batch preflight),
   `subagent_strategy` (`worker` padrão ou `critical` com análise independente e adaptativa por profundidade internamente, identificação de contradições/lacunas, síntese GPT, fencing e sem edição concorrente; sem troca automática de rota/provedor e sem concessão de escrita no ALINHAMENTO), e
   `subagent_continuation` (`active_follow` ou `park_and_wake` com Sub-agent Autonomy).

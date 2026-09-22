@@ -1730,7 +1730,7 @@ function Test-OrchestrationPolicy {
     $requiredPatterns = @(
         '(?i)seletor global de backend.{0,120}autorit(?:[a\u00e1]rio|ativa|ativo)',
         '(?i)matriz ausente,? inv[a\u00e1]lida ou inconsistente bloqueia.{0,80}fallback silencioso',
-        '(?i)native.{0,180}gpt-5\.6-luna.{0,100}reasoning_effort.{0,80}normal/default',
+        '(?i)native.{0,180}gpt-6-luna.{0,100}reasoning_effort.{0,80}normal/default',
         '(?i)deepseek.{0,120}(?:subagents_spawn|deepseek_spawn).{0,100}(?:subagents_continue|deepseek_continue).{0,100}(?:subagents_follow|deepseek_follow)',
         '(?i)delegation_policy',
         '(?i)balanced',
