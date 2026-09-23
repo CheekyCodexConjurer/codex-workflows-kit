@@ -1225,6 +1225,68 @@ function Test-SubagentAutonomySemantics {
     return $true
 }
 
+function Test-ProgressChecklistSemantics {
+    param(
+        [Parameter(Mandatory)][string]$DelegationText,
+        [Parameter(Mandatory)][string]$SkillText,
+        [Parameter(Mandatory)][string]$AgentsText
+    )
+
+    $script:ProgressChecklistFailure = ''
+    $delegationNorm = [regex]::Replace($DelegationText, '\s+', ' ').Trim().ToLowerInvariant()
+    $skillNorm = [regex]::Replace($SkillText, '\s+', ' ').Trim().ToLowerInvariant()
+    $agentsNorm = [regex]::Replace($AgentsText, '\s+', ' ').Trim().ToLowerInvariant()
+
+    $delegationRequired = @(
+        'checklist de andamento do codex',
+        'numeração hierárquica estável',
+        '`✓` concluído',
+        '`◌` em andamento',
+        'pendente fica sem símbolo',
+        'a cada resposta consumida do worker',
+        'antes de cada pausa e retomada',
+        'marque `✓` somente após conferir a evidência',
+        'sem inventar progresso',
+        'sem polling'
+    )
+    foreach ($needle in $delegationRequired) {
+        if (-not $delegationNorm.Contains($needle)) {
+            $script:ProgressChecklistFailure = "delegation.md is missing: $needle"
+            return $false
+        }
+    }
+
+    $skillRequired = @(
+        'checklist de andamento',
+        'resposta do worker for consumida',
+        'antes de pausar ou retomar',
+        'confira evidência antes de marcar',
+        'sem polling'
+    )
+    foreach ($needle in $skillRequired) {
+        if (-not $skillNorm.Contains($needle)) {
+            $script:ProgressChecklistFailure = "SKILL.md is missing: $needle"
+            return $false
+        }
+    }
+
+    $agentsRequired = @(
+        'checklist curta de andamento',
+        'resposta do worker for consumida',
+        'antes de pausar e ao retomar',
+        'confira evidência antes de marcar',
+        'sem polling ou progresso inventado'
+    )
+    foreach ($needle in $agentsRequired) {
+        if (-not $agentsNorm.Contains($needle)) {
+            $script:ProgressChecklistFailure = "AGENTS.md is missing: $needle"
+            return $false
+        }
+    }
+
+    return $true
+}
+
 $currentScenario = 0
 $fixtures = New-Object System.Collections.Generic.List[string]
 
@@ -2968,6 +3030,11 @@ enabled = true
         $canonicalReadme41 = Get-Content -LiteralPath (Join-Path $repo 'README.md') -Raw -Encoding UTF8
 
         Assert-Condition 'S41 canonical policies satisfy subagent autonomy hybrid lifecycle semantics' (Test-SubagentAutonomySemantics -DelegationText $canonicalDelegation41 -DeliveryReviewText $canonicalDelivery41 -SkillText $canonicalSkill41 -AgentsText $canonicalAgents41 -GeminiText $canonicalGemini41 -ReadmeText $canonicalReadme41) ''
+        $canonicalProgressChecklist = Test-ProgressChecklistSemantics -DelegationText $canonicalDelegation41 -SkillText $canonicalSkill41 -AgentsText $canonicalAgents41
+        Assert-Condition 'S41 canonical policies define the parent-owned progress checklist' $canonicalProgressChecklist $script:ProgressChecklistFailure
+
+        $tamperProgressNoEvidence = $canonicalDelegation41.Replace('Marque `✓` somente após', 'Marque `✓` assim que o worker disser que acabou')
+        Assert-Condition 'S41 detects progress marked complete without evidence' (-not (Test-ProgressChecklistSemantics -DelegationText $tamperProgressNoEvidence -SkillText $canonicalSkill41 -AgentsText $canonicalAgents41)) ''
 
         # 2. Tampers against autonomy invariants (7 required: in-turn wait, missing SUSPENDED, premature wake, invalid quorum/required, duplicate wake, worker text, auto-resume goal)
         $tamperInTurnWait = $canonicalDelegation41 + $nl + 'Sob park_and_wake, em task carregada o subagents_park aguarda no mesmo turno com wait in-turn até o evento retornar.'
@@ -3015,6 +3082,10 @@ enabled = true
         Assert-Condition 'S41 safe install records schema-6 backend and default continuation without retired selectors' ($null -ne $state41 -and [int]$state41.schemaVersion -eq 6 -and $state41.PSObject.Properties.Name -contains 'codexBackend' -and $state41.PSObject.Properties.Name -contains 'codexContinuation' -and [string]$state41.codexContinuation.selected -ceq 'active_follow' -and -not ($state41.PSObject.Properties.Name -contains 'codexDelegation') -and -not ($state41.PSObject.Properties.Name -contains 'codexStrategy')) ''
 
         $agents41 = Get-Content -LiteralPath (Join-Path (Get-CodexHome $root41) 'AGENTS.md') -Raw -Encoding UTF8
+        $installedSkill41 = Get-Content -LiteralPath (Join-Path (Get-AgentsHome $root41) 'skills\workflows\SKILL.md') -Raw -Encoding UTF8
+        $installedDelegation41 = Get-Content -LiteralPath (Join-Path (Get-AgentsHome $root41) 'skills\workflows\references\delegation.md') -Raw -Encoding UTF8
+        $installedProgressChecklist = Test-ProgressChecklistSemantics -DelegationText $installedDelegation41 -SkillText $installedSkill41 -AgentsText $agents41
+        Assert-Condition 'S41 safe install carries the progress checklist into the Codex skill mirrors' $installedProgressChecklist $script:ProgressChecklistFailure
         $rt41 = Get-AgentsRuntimeBlock -Text $agents41
         Assert-Condition 'S41 safe install establishes subagent_continuation = active_follow in AGENTS.md' ($rt41.Continuation -ceq 'active_follow') $rt41.Continuation
 

@@ -1678,6 +1678,30 @@ Assert-Contains -Label 'workflow skill' -Text $skill -Needles @(
     'references/delivery-review.md'
 )
 Assert-ModeMatrix -Label 'workflow skill' -Text $skill
+$progressChecklistRequirements = @(
+    'Checklist de andamento do Codex nas pausas',
+    'numeração hierárquica estável',
+    '`✓` concluído',
+    '`◌` em andamento',
+    'pendente fica sem símbolo',
+    'a cada resposta consumida do worker',
+    'Marque `✓` somente após',
+    'conferir a evidência; o relato do worker sozinho não confirma a conclusão',
+    'Inclua a checklist na mensagem visível antes de estacionar'
+)
+Assert-Contains -Label 'delegation progress checklist' -Text $delegationRef -Needles $progressChecklistRequirements
+Assert-Contains -Label 'workflow skill progress checklist' -Text $skill -Needles @(
+    'Checklist de andamento do parent',
+    'uma resposta do worker for consumida',
+    'Confira evidência antes de marcar',
+    'sem polling'
+)
+Assert-Contains -Label 'codex AGENTS.md progress checklist' -Text $agentsText -Needles @(
+    'checklist curta de andamento',
+    'resposta do worker for consumida',
+    'Confira evidência antes de marcar',
+    'sem polling ou progresso inventado'
+)
 $implAutoRow = [regex]::Match($skill, '(?m)^\| `IMPL\.AUTO` \|[^\r\n]+')
 if (-not $implAutoRow.Success -or $implAutoRow.Value -notmatch '\| write \|') {
     throw "Workflow skill does not grant IMPL.AUTO write permission"
@@ -1867,7 +1891,8 @@ function Test-PermittedLegacyRoleSurface {
         'scripts/migrate-legacy-gemini.ps1',
         'scripts/tests/gemini-legacy-migration.Tests.ps1',
         'scripts/tests/promptpad-optimization.Tests.ps1',
-        'scripts/tests/swarm-doctor-contract.Tests.ps1'
+        'scripts/tests/swarm-doctor-contract.Tests.ps1',
+        'scripts/tests/fixtures/gemini-legacy-footer.txt'
     )
     if ($Token -in @('scout', 'researcher') -and $permittedLegacyScoutResearcherPaths -contains $RelativePath) {
         return $true

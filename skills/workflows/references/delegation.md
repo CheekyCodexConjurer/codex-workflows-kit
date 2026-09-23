@@ -82,6 +82,39 @@ negado, falha, validação ausente, evidência velha ou conflito não somem do
 resumo. Se houver defeito, continue na mesma trilha com orientação específica
 e nova observação discriminante; não repita o trabalho inteiro.
 
+### Checklist de andamento do Codex nas pausas
+
+O parent Codex mantém uma checklist curta e visível para cada tarefa delegada.
+Use numeração hierárquica estável (`1`, `1.1`, `2.1`): não renumere etapas já
+mostradas e acrescente novas subtarefas no próximo índice disponível. Cada
+descrição termina com `✓` concluído, `◌` em andamento ou fica sem símbolo se
+estiver pendente. Um item pendente fica sem símbolo. Use apenas esses dois
+símbolos; descreva um bloqueio em texto.
+
+Atualize a checklist a cada resposta consumida do worker, ao retomar após um
+wake e antes de cada pausa e retomada. Mostre o que foi concluído, o trabalho
+atual, o que falta e qualquer bloqueio ou etapa nova. Marque `✓` somente após
+conferir a evidência; o relato do worker sozinho não confirma a conclusão. Se
+nada mudou, diga isso brevemente. Sem polling para produzir atualizações e sem
+inventar progresso; use apenas respostas e evidências já recebidas.
+
+Exemplo:
+
+```text
+Andamento
+1. Preparar os dados ✓
+  1.1 Conferir histórico e cache ✓
+  1.2 Corrigir o calendário ◌
+2. Atualizar a base
+  2.1 Incluir os contratos pendentes
+3. Validar o Live
+  3.1 Conferir o carregamento dos ativos
+```
+
+Inclua a checklist na mensagem visível antes de estacionar a execução e na
+atualização após o wake. O bridge continua transportando somente metadados
+confiáveis; o parent compõe a checklist depois de consumir cada resposta.
+
 ## Fronteiras
 
 ### Continuação e liveness

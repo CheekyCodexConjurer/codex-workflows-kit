@@ -279,6 +279,8 @@ Assert-Test "4.5 Scanner predicate accepts exact observed sanitizer support path
     (Test-PermittedLegacyRoleSurface -RelativePath 'scripts/migrate-legacy-gemini.ps1' -Token $tokS) -and
     (Test-PermittedLegacyRoleSurface -RelativePath 'scripts/tests/gemini-legacy-migration.Tests.ps1' -Token $tokS) -and
     (Test-PermittedLegacyRoleSurface -RelativePath 'scripts/tests/promptpad-optimization.Tests.ps1' -Token $tokS) -and
+    (Test-PermittedLegacyRoleSurface -RelativePath 'scripts/tests/fixtures/gemini-legacy-footer.txt' -Token $tokS) -and
+    (-not (Test-PermittedLegacyRoleSurface -RelativePath 'scripts/tests/fixtures/untrusted-footer.txt' -Token $tokS)) -and
     (Test-PermittedLegacyRoleSurface -RelativePath 'scripts/backend-routing.psm1' -Token $tokR) -and
     (Test-PermittedLegacyRoleSurface -RelativePath 'scripts/migrate-legacy-gemini.ps1' -Token $tokR) -and
     (Test-PermittedLegacyRoleSurface -RelativePath 'scripts/tests/gemini-legacy-migration.Tests.ps1' -Token $tokR) -and
