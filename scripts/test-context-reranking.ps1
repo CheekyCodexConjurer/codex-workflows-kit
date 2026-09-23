@@ -1281,4 +1281,5 @@ if ($script:FailedCount -gt 0) {
 }
 else {
     Write-Host 'All TypeSafe/Jev context reranking tests passed deterministically.' -ForegroundColor Green
+    exit 0
 }

@@ -1,6 +1,6 @@
 # Orquestração adaptativa
 
-A orquestração adaptativa é o comportamento padrão. Os únicos seletores
+A orquestração adaptativa é o padrão. Os únicos seletores
 persistidos são `subagent_backend` (`native` ou `deepseek`) e
 `subagent_continuation` (`active_follow` ou `park_and_wake`). O backend
 selecionado fixa a família de ferramentas, modelo e rota; nenhuma decisão
@@ -51,6 +51,37 @@ execução. Ambos são controles técnicos, não modos públicos de orquestraç�
 Timeout, resposta inválida ou indisponibilidade mantêm regras conservadoras e
 julgamento GPT. Jev não inventa dependência, não concede permissão, não escolhe
 backend nem aprova código. Confira o contrato oficial antes de mudar chamadas.
+
+### Gate técnico de delegação e revisão
+
+O comando `skills/workflows/scripts/subagent-gate.ps1` oferece dois usos:
+`-Gate delegation` antes de uma frente material e `-Gate review` após o retorno
+de um worker e as checagens determinísticas. É uma ajuda técnica à decisão
+adaptativa, não um seletor persistido nem uma fonte de permissão. O parent
+mantém a decisão final; verificações de modo, dependências, ownership,
+capacidade, rota e revisão independente continuam obrigatórias.
+
+O modo técnico padrão é `on`; `CODEX_SUBAGENT_JEV_MODE` ou `-Mode` pode usar
+`off` (sem chamada ao Jev) ou `shadow` (registra a recomendação sem alterar a
+decisão). Falha, timeout, resposta inválida ou confiança baixa preservam a
+decisão atual, sem troca de backend ou provedor. A delegação em lote exige
+frentes realmente independentes; a reutilização exige worker relacionado,
+ocioso e na mesma rota. No gate de revisão, somente uma leitura semântica extra
+do parent pode ser dispensada para resultado obviamente seguro; revisão
+independente de entrega nunca é dispensada.
+
+A chamada usa `scripts/invoke-safe-powershell.ps1` com `-File`,
+`-NoProfile` e `-NonInteractive`. Passe apenas enumerações, contagens e flags;
+nunca texto do usuário, caminhos, código, diffs, credenciais ou resposta bruta
+do Jev. Os campos de entrada incluem `policy` (`balanced|aggressive|swarm`,
+somente argumento local do gate), `workflow_mode`, `backend`,
+`current_decision`, `task_type`, `scope`, `estimated_files`, `material`,
+`trivial`, `requires_edit`, `requires_tests`, `requires_architecture`,
+`independent_fronts`, `fronts_independent`, `context_load`,
+`relevant_worker_available`, `worker_context_warm`, `worker_route_matches` e
+`delegation_cost_high`. O resultado é telemetria compacta: decisão, motivo,
+latência, rota já selecionada e recomendação, sem registrar o conteúdo da
+pergunta ou resposta do Jev.
 
 ## Ordem de serviço e retorno
 

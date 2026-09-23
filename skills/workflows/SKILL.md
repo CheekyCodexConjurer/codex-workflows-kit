@@ -104,6 +104,14 @@ native exposed capacity. For MCP parallel dispatch, prove the callable batch
 tool and authoritative `batch_scheduler` capability. No automatic backend,
 model, or provider switch.
 
+Before material FANOUT, compute the adaptive decision first, then call
+`scripts/subagent-gate.ps1 -Gate delegation` with compact metadata only. Treat
+Jev's bounded choice as advice for the parent GPT's final decision; it cannot
+override permissions, dependencies, ownership, capacity, or backend selection.
+The technical gate defaults to `on`; `off` makes no Jev call and `shadow`
+reports a recommendation without changing the decision. See
+`references/delegation.md` for its input and failure contract.
+
 Jev advises only on narrow ambiguous questions with a short sanitized objective,
 valid candidates, and relevant signals. Deterministic rules make no Jev call.
 Jev cannot invent dependencies, grant permission, select the backend, or approve
@@ -160,6 +168,12 @@ FRAME -> FANOUT -> [PARK -> SUSPENDED -> WAKE ->] COLLECT -> ACT -> VERIFY -> RE
   via `subagents_continue` (or native follow-up), re-plan, or stop.
 - VERIFY: prove the affected behavior with deterministic validation; inspect the
   integrated diff. Prioritize fast local CLI linters/formatters (e.g. `ruff` for Python, `biome` for JS/TS) and AST transforms (`ast-grep`) directly via terminal when available to handle mechanical cleanup and multi-file structural edits quickly without MCP overhead; fail open cleanly if unavailable.
+- After a worker result and deterministic checks, run
+  `scripts/subagent-gate.ps1 -Gate review` with compact metadata. It may only
+  waive an extra parent semantic reading of an obviously safe result; failure,
+  uncertainty, scope drift, architecture changes, or missing evidence require
+  GPT review. It never waives independent delivery review or another workflow
+  gate.
 - REVIEW: after material write output in write modes, collect bounded operational proof on the frozen target when risk-triggered (live process/daemon/service, persistence/migration, concurrency/exactly-once, routing, external integration, or scale/volume), and run independent review over target and runtime evidence (`references/delivery-review.md`). Independent approval allows idle open writers with consumed jobs (`independent approval allows idle open writers with consumed jobs`), while commit/final requires closure (`commit/final requires closure`). The final unique integrated reviewer does not prohibit useful intermediate independent sharding (`final unique integrated reviewer does not prohibit useful intermediate independent sharding`).
 - DONE: in write modes, run final audit, close open agents/obligations, and close the local commit series before the final response; in no-write modes (PLAN, PLAN.AUTO, RESEARCH.DEEP, BUG.INV, REVIEW, CONSULT), close immediately upon delivering the proven mode deliverable without delivery review or commit series.
 
